@@ -7,7 +7,7 @@ Status: approved design, 2026-10-24.
 A seller runs one command and learns, from the outside, whether their x402 endpoint issues a challenge that real clients can read, and if not, why and how to fix it.
 
 ```
-npx op8x check <url> [--method GET|POST] [--json] [--timeout <seconds>]
+npx @op8x/cli check <url> [--method GET|POST] [--json] [--timeout <seconds>]
 ```
 
 Focus is **dialect diagnosis**: where the challenge lives (header, body, both), whether the official client can read it, whether header and body agree, whether v1/v2 conventions are mixed, and whether GET and POST behave alike. Directory and listing concerns (CORS, Bazaar, `/.well-known/x402`, OpenAPI) are out of scope; the report points to `npx x402-listing-check <url>` for those.
@@ -113,5 +113,5 @@ Exit codes: `0` no errors, `1` at least one `error` finding, `2` usage error or 
 
 ## Distribution
 
-- npm package `op8x` (unscoped), MIT license, `bin: { "op8x": "dist/cli.js" }`, README in English with one command and an example report.
+- npm package `@op8x/cli`, owned by the `@op8x` organization, MIT license, `bin: { "op8x": "dist/bin.js" }` (global install gives the `op8x` command). The unscoped name `op8x` was rejected by npm on 2026-10-24 as too similar to `opn`, `open` and `cpx` (typosquatting protection). README in English with one command and an example report.
 - The report links back to op8x.com once, in the footer.
