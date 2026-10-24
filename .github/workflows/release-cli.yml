@@ -1,6 +1,7 @@
 name: Release CLI
 
-# Publishes packages/cli to npm via trusted publishing (OIDC), no token.
+# Stages packages/cli on npm via trusted publishing (OIDC), no token.
+# A maintainer approves the staged version on npmjs.com (2FA) before it goes live.
 # Trigger: push a tag like cli-v0.0.2 whose version matches packages/cli/package.json.
 
 on:
@@ -36,4 +37,4 @@ jobs:
           fi
       - run: npm ci
       # prepublishOnly runs typecheck, tests and build.
-      - run: npm publish --access public
+      - run: npm stage publish .
