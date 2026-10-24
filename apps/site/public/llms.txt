@@ -1,0 +1,16 @@
+# op8x
+
+> op8x builds free tools for x402 sellers (APIs that get paid over HTTP 402).
+
+op8x does not hold customer funds and is not a facilitator. Every check op8x publishes states its method, target list, result, date and denominator, so it can be re-derived.
+
+## Status
+
+- 402 analytics for sellers: in development
+- Verified first purchase: planned
+- Badge: planned
+
+## Contact
+
+- General: hello@op8x.com
+- Security: https://op8x.com/.well-known/security.txt

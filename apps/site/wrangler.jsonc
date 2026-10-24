@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "op8x-site",
+  "compatibility_date": "2026-10-01",
+  // Static only: no Worker script, every request is served from ./public.
+  "assets": {
+    "directory": "./public",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  },
+  // Custom domains create their own DNS records and certificates.
+  // Existing A/CNAME records for these hostnames must be deleted first.
+  "routes": [
+    { "pattern": "op8x.com", "custom_domain": true },
+    { "pattern": "www.op8x.com", "custom_domain": true }
+  ],
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": { "enabled": false }
+}

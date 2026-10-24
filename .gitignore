@@ -1,0 +1,15 @@
+# Internal: strategy, analysis, founder notes. Never push.
+/intern/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Build and tooling
+node_modules/
+.wrangler/
+dist/
+
+# Local tooling
+.semgrep/
