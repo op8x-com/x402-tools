@@ -1,10 +1,12 @@
-# op8x
+# @op8x/cli
 
 Check an x402 endpoint from the outside: can real clients read its 402 challenge?
 
 ```
-npx op8x check https://api.example.com/weather
+npx @op8x/cli check https://api.example.com/weather
 ```
+
+Or install it once and use the short command: `npm install -g @op8x/cli`, then `op8x check <url>`.
 
 `op8x check` makes two unpaid requests (GET and POST) and reports dialect problems that make paying clients fail silently:
 

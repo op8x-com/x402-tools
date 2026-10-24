@@ -1,11 +1,12 @@
 {
-  "name": "op8x",
+  "name": "@op8x/cli",
   "version": "0.0.1",
   "description": "Check an x402 endpoint from the outside: can real clients read its 402 challenge?",
   "license": "MIT",
   "type": "module",
   "bin": { "op8x": "dist/bin.js" },
   "files": ["dist", "README.md", "LICENSE"],
+  "publishConfig": { "access": "public" },
   "engines": { "node": ">=20" },
   "homepage": "https://op8x.com",
   "repository": {
