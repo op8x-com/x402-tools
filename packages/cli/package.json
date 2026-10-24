@@ -21,7 +21,7 @@
   "homepage": "https://op8x.com",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/op8x-com/op8x.git",
+    "url": "git+https://github.com/op8x-com/x402-tools.git",
     "directory": "packages/cli"
   },
   "keywords": [
