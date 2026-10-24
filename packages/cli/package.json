@@ -1,20 +1,36 @@
 {
   "name": "@op8x/cli",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Check an x402 endpoint from the outside: can real clients read its 402 challenge?",
   "license": "MIT",
   "type": "module",
-  "bin": { "op8x": "dist/bin.js" },
-  "files": ["dist", "README.md", "LICENSE"],
-  "publishConfig": { "access": "public" },
-  "engines": { "node": ">=20" },
+  "bin": {
+    "op8x": "dist/bin.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "homepage": "https://op8x.com",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/op8x-com/op8x.git",
     "directory": "packages/cli"
   },
-  "keywords": ["x402", "http-402", "payments", "cli", "agents"],
+  "keywords": [
+    "x402",
+    "http-402",
+    "payments",
+    "cli",
+    "agents"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.test.json",

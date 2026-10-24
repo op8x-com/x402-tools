@@ -33,8 +33,15 @@ test("renderText orders by severity and includes fix, repro and pointers", () =>
   assert.match(text, /curl -i -X GET 'https:\/\/api\.example\.com\/x'/);
   assert.match(text, /curl -i -X POST -H 'Content-Type: application\/json' -d '\{\}' 'https:\/\/api\.example\.com\/x'/);
   assert.match(text, /npx x402-listing-check https:\/\/api\.example\.com\/x/);
-  assert.match(text, /Summary: 1 error\(s\), 1 warning\(s\)/);
+  assert.match(text, /Summary: 1 error, 1 warning\n/);
   assert.equal(text.includes("\x1b["), false);
+});
+
+test("renderText pluralises the summary", () => {
+  const none = buildReport("https://api.example.com/x", "0.0.1", probes, []);
+  assert.match(renderText(none, false), /Summary: 0 errors, 0 warnings\n/);
+  const two = buildReport("https://api.example.com/x", "0.0.1", probes, [findings[1], findings[1]]);
+  assert.match(renderText(two, false), /Summary: 2 errors, 0 warnings\n/);
 });
 
 test("renderText adds ANSI colours when asked", () => {

@@ -47,7 +47,7 @@ Reproduce:
   curl -i -X GET 'https://api.example.com/weather'
   curl -i -X POST -H 'Content-Type: application/json' -d '{}' 'https://api.example.com/weather'
 
-Summary: 2 error(s), 0 warning(s)
+Summary: 2 errors, 0 warnings
 Listing, CORS and Bazaar checks: npx x402-listing-check https://api.example.com/weather
 op8x · https://op8x.com
 ```

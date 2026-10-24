@@ -45,6 +45,7 @@ export function renderJson(r: Report): string {
 }
 
 const quote = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
+const count = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 export function renderText(r: Report, color: boolean): string {
   const paint = (code: string, s: string) => (color ? `\x1b[${code}m${s}\x1b[0m` : s);
@@ -72,7 +73,7 @@ export function renderText(r: Report, color: boolean): string {
   }
   lines.push(
     "",
-    `Summary: ${r.summary.errors} error(s), ${r.summary.warnings} warning(s)`,
+    `Summary: ${count(r.summary.errors, "error")}, ${count(r.summary.warnings, "warning")}`,
     `Listing, CORS and Bazaar checks: npx x402-listing-check ${r.url}`,
     "op8x · https://op8x.com",
   );

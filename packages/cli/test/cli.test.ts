@@ -2,6 +2,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { run, type Io } from "../src/cli.ts";
 import { startServer } from "./server.ts";
+import { VERSION } from "../src/version.ts";
 
 let server: Awaited<ReturnType<typeof startServer>>;
 before(async () => {
@@ -85,6 +86,6 @@ test("usage errors exit 2", async () => {
 test("--version and --help exit 0", async () => {
   const io = capture();
   assert.equal(await run(["--version"], io), 0);
-  assert.equal(io.stdout().trim(), "0.0.1");
+  assert.equal(io.stdout().trim(), VERSION);
   assert.equal(await run(["--help"], capture()), 0);
 });
