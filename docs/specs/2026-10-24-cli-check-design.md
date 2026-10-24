@@ -107,7 +107,7 @@ Exit codes: `0` no errors, `1` at least one `error` finding, `2` usage error or 
 
 ## Testing
 
-- Unit tests (vitest) for `extract` and every rule, with JSON fixtures: valid v2, valid v1, v2 body-only, drift, base64url header, string version, legacy network in v2, mixed dialect.
+- Unit tests (Node's built-in `node:test`, run on TypeScript sources via Node's type stripping; no test framework dependency) for `extract` and every rule, with JSON fixtures: valid v2, valid v1, v2 body-only, drift, base64url header, string version, legacy network in v2, mixed dialect.
 - Integration test: a local `node:http` server serving those fixtures; run the CLI pipeline against it and assert findings and exit codes.
 - No tests against third-party live endpoints in CI.
 
