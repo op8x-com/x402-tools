@@ -1,0 +1,90 @@
+import { test, before, after } from "node:test";
+import assert from "node:assert/strict";
+import { run, type Io } from "../src/cli.ts";
+import { startServer } from "./server.ts";
+
+let server: Awaited<ReturnType<typeof startServer>>;
+before(async () => {
+  server = await startServer();
+});
+after(async () => {
+  await server.close();
+});
+
+function capture(): Io & { stdout: () => string; stderr: () => string } {
+  let out = "";
+  let err = "";
+  return {
+    out: (s) => {
+      out += s;
+    },
+    err: (s) => {
+      err += s;
+    },
+    color: false,
+    stdout: () => out,
+    stderr: () => err,
+  };
+}
+
+test("valid v2 endpoint exits 0", async () => {
+  const io = capture();
+  const code = await run(["check", `${server.url}/v2-good`], io);
+  assert.equal(code, 0);
+  assert.match(io.stdout(), /Official x402 client can read the challenge/);
+});
+
+test("v2 body-only exits 1 and is reported in JSON", async () => {
+  const io = capture();
+  const code = await run(["check", `${server.url}/v2-body-only`, "--json"], io);
+  assert.equal(code, 1);
+  const report = JSON.parse(io.stdout());
+  assert.ok(report.findings.some((f: { id: string }) => f.id === "v2-body-only"));
+  assert.equal(report.requests.length, 2);
+});
+
+test("drift is detected end to end", async () => {
+  const io = capture();
+  assert.equal(await run(["check", `${server.url}/drift`, "--json"], io), 1);
+  assert.ok(JSON.parse(io.stdout()).findings.some((f: { id: string }) => f.id === "header-body-drift"));
+});
+
+test("GET 405 with POST 402 warns but does not fail", async () => {
+  const io = capture();
+  assert.equal(await run(["check", `${server.url}/get-405`, "--json"], io), 0);
+  assert.ok(JSON.parse(io.stdout()).findings.some((f: { id: string }) => f.id === "verb-mismatch"));
+});
+
+test("free endpoint is no-402 and exits 1", async () => {
+  const io = capture();
+  assert.equal(await run(["check", `${server.url}/free`], io), 1);
+  assert.match(io.stdout(), /No 402 challenge/);
+});
+
+test("--method limits the probe to one request", async () => {
+  const io = capture();
+  await run(["check", `${server.url}/v1-good`, "--method", "get", "--json"], io);
+  assert.equal(JSON.parse(io.stdout()).requests.length, 1);
+});
+
+test("unreachable host exits 2", async () => {
+  const io = capture();
+  assert.equal(await run(["check", "http://127.0.0.1:9/", "--timeout", "2"], io), 2);
+});
+
+test("usage errors exit 2", async () => {
+  assert.equal(await run([], capture()), 2);
+  assert.equal(await run(["check"], capture()), 2);
+  assert.equal(await run(["check", "not a url"], capture()), 2);
+  assert.equal(await run(["check", "ftp://example.com"], capture()), 2);
+  assert.equal(await run(["check", "https://example.com", "--method", "PUT"], capture()), 2);
+  assert.equal(await run(["check", "https://example.com", "--timeout", "0"], capture()), 2);
+  assert.equal(await run(["check", "https://example.com", "--nope"], capture()), 2);
+});
+
+test("--version and --help exit 0", async () => {
+  const io = capture();
+  assert.equal(await run(["--version"], io), 0);
+  assert.equal(io.stdout().trim(), "0.0.1");
+  assert.equal(await run(["--help"], capture()), 0);
+});
