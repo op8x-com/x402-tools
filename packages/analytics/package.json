@@ -47,7 +47,7 @@
     "prepublishOnly": "npm run typecheck && npm test && npm run build"
   },
   "peerDependencies": {
-    "hono": ">=4.9.9"
+    "hono": "^4.8.0"
   },
   "devDependencies": {
     "@types/node": "^24",
