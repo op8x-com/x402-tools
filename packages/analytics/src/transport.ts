@@ -18,7 +18,7 @@ const MIN_TIMEOUT_MS = 100;
 const MAX_TIMEOUT_MS = 10000;
 const WARN_INTERVAL_MS = 60_000;
 
-function clampTimeout(value: number | undefined): number {
+export function clampTimeout(value: number | undefined): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_TIMEOUT_MS;
   return Math.min(MAX_TIMEOUT_MS, Math.max(MIN_TIMEOUT_MS, value));
 }
@@ -90,6 +90,8 @@ export function createTransport(options: AnalyticsOptions, deps: TransportDeps =
           method: "POST",
           headers: { "content-type": "application/json", "user-agent": `op8x-analytics/${VERSION}` },
           body,
+          // Never follow: a redirect would bypass the endpoint rule, and a loop would repeat the POST.
+          redirect: "manual",
           signal: AbortSignal.timeout(timeoutMs),
         });
         try {

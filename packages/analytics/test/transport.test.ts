@@ -220,3 +220,54 @@ test("uses globals at call time", async () => {
   assert.equal(fetched, 1);
   assert.equal(lines.length, 1);
 });
+
+async function redirectServer(): Promise<{ base: string; hits: string[]; close(): Promise<void> }> {
+  const { createServer } = await import("node:http");
+  const hits: string[] = [];
+  const server = createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      hits.push(`${req.method} ${req.url}`);
+      if (req.url === "/away") res.writeHead(307, { location: "http://localhost:1/elsewhere" });
+      else if (req.url === "/loop") res.writeHead(307, { location: "/loop" });
+      else res.writeHead(204);
+      res.end();
+    });
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const { port } = server.address() as { port: number };
+  return {
+    base: `http://127.0.0.1:${port}`,
+    hits,
+    close: () =>
+      new Promise<void>((r) => {
+        server.closeAllConnections();
+        server.close(() => r());
+      }),
+  };
+}
+
+for (const path of ["/away", "/loop"]) {
+  test(`redirects are not followed (${path}): exactly one POST, counted as a failure`, async () => {
+    const srv = await redirectServer();
+    try {
+      const s = spies();
+      await createTransport({ endpoint: `${srv.base}${path}`, timeoutMs: 500 }, s).send(record);
+      assert.deepEqual(srv.hits, [`POST ${path}`]);
+      assert.equal(s.warns.length, 1);
+      assert.match(String(s.warns[0]![0]), /^op8x\.analytics: send failed \(status \d+\)$/);
+    } finally {
+      await srv.close();
+    }
+  });
+}
+
+test("fetch is called with redirect: manual", async () => {
+  let init: RequestInit | undefined;
+  const f = (async (_u: unknown, i?: RequestInit) => {
+    init = i;
+    return new Response(null, { status: 204 });
+  }) as typeof fetch;
+  await createTransport({ endpoint: "https://collector.example/x" }, { fetch: f }).send(record);
+  assert.equal(init?.redirect, "manual");
+});

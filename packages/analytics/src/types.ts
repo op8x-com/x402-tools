@@ -7,6 +7,8 @@ export interface AnalyticsOptions {
   salt?: string;
   /** Default 2000, clamped to 100..10000. */
   timeoutMs?: number;
+  /** Default false; true adds receipt.transaction so the collector can confirm settlement on-chain. */
+  chainCheck?: boolean;
 }
 
 export type UaClass =
@@ -49,6 +51,7 @@ export interface ReceiptInfo {
   header: "PAYMENT-RESPONSE" | "X-PAYMENT-RESPONSE";
   decodable: boolean;
   success?: boolean;
+  /** Only with the chainCheck option. */
   transaction?: string;
   network?: string;
   errorReason?: string;

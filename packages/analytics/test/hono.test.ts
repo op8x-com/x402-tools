@@ -6,11 +6,11 @@ import { analytics } from "../src/hono.ts";
 import { hashPayer } from "../src/hash.ts";
 import type { AnalyticsOptions, AnalyticsRecord } from "../src/types.ts";
 import { startCollector } from "./collector.ts";
-import { b64, PAYER, v1Challenge, v2Challenge, v2Payment, v2Receipt } from "./fixtures.ts";
+import { b64, PAYER, TX, v1Challenge, v2Challenge, v2Payment, v2Receipt } from "./fixtures.ts";
 
 const BIG = 1024 * 1024;
-/** Variable content for the streamed 402 route, fixed per test run so both apps match. */
-const streamSeed = String(1000 + Math.floor(Math.random() * 9000));
+/** Unusual fixed amount for the streamed 402 route, so a match cannot come from a default. */
+const streamSeed = "7319042";
 const CHUNK = 16 * 1024;
 
 interface FakeCtx {
@@ -164,9 +164,10 @@ for (const path of PATHS) {
   });
 }
 
-test("a thrown seller error reaches app.onError exactly once, unchanged", async () => {
+test("a thrown seller error reaches app.onError exactly once, unchanged", async (t) => {
+  t.mock.method(console, "log", () => {});
   const hooks: Hooks = { errors: [] };
-  const app = buildApp(analytics(), hooks);
+  const app = buildApp(analytics({ log: true }), hooks);
   const { ctx, promises } = fakeCtx();
   const res = await app.request("/throw", undefined, {}, ctx);
   assert.equal(res.status, 500);
@@ -397,8 +398,8 @@ test("salt hashes the payer", async () => {
   }
 });
 
-for (const salt of ["", "   "]) {
-  test(`blank salt ${JSON.stringify(salt)}: no payer, one warning on first request`, async (t) => {
+for (const salt of ["", "   ", 5, null, {}] as unknown as string[]) {
+  test(`blank or non-string salt ${JSON.stringify(salt)}: no payer, one warning on first request`, async (t) => {
     const warn = t.mock.method(console, "warn", () => {});
     const collector = await startCollector("ok");
     try {
@@ -411,7 +412,7 @@ for (const salt of ["", "   "]) {
       await app.request("/paid", { headers: { "PAYMENT-SIGNATURE": b64(v2Payment) } }, {}, ctx);
       await settleWithin(promises, 3000);
       const salted = warn.mock.calls.filter(
-        (c) => c.arguments[0] === "op8x.analytics: empty salt, payer hashing disabled",
+        (c) => c.arguments[0] === "op8x.analytics: salt must be a non-empty string, payer hashing disabled",
       );
       assert.equal(salted.length, 1);
       assert.equal(collector.records.length, 2);
@@ -551,3 +552,241 @@ test("setup failure disables analytics with one fixed warning and leaves the res
   const setup = warn.mock.calls.filter((c) => c.arguments[0] === "op8x.analytics: setup failed, analytics disabled");
   assert.equal(setup.length, 1);
 });
+
+test("neither endpoint nor log: one warning on the first request, no background work", async (t) => {
+  const warn = t.mock.method(console, "warn", () => {});
+  const mw = analytics({});
+  assert.equal(warn.mock.callCount(), 0, "no warning at construction");
+  const plain = buildApp(undefined);
+  const app = buildApp(mw);
+  const { ctx, promises } = fakeCtx();
+  for (const path of ["/items/abc123", "/json"]) {
+    const expected = await snapshot(await plain.request(path));
+    const actual = await snapshot(await app.request(path, undefined, {}, ctx));
+    assert.deepEqual(actual, expected);
+  }
+  assert.equal(promises.length, 0);
+  const nothing = warn.mock.calls.filter(
+    (c) => c.arguments[0] === "op8x.analytics: no endpoint and log disabled, nothing is recorded",
+  );
+  assert.equal(nothing.length, 1);
+  assert.equal(warn.mock.callCount(), 1);
+});
+
+test("a non-finalized context is left untouched and nothing is recorded", async (t) => {
+  const log = t.mock.method(console, "log", () => {});
+  const build = (mw?: MiddlewareHandler) => {
+    const app = new Hono();
+    app.use(async (c, next) => {
+      await next();
+      if (!c.finalized) c.res = new Response("fallback", { status: 503 });
+    });
+    if (mw) app.use(mw);
+    app.use(async (c) => {
+      // A middleware that forgets to return a response.
+      c.header("x-internal-debug", "1");
+      c.status(201);
+    });
+    return app;
+  };
+  const expected = await snapshot(await build().request("/"));
+  const { ctx, promises } = fakeCtx();
+  const actual = await snapshot(await build(analytics({ log: true })).request("/", undefined, {}, ctx));
+  assert.deepEqual(actual, expected);
+  assert.equal(actual.status, 503);
+  assert.equal(promises.length, 0);
+  assert.equal(log.mock.callCount(), 0);
+});
+
+test("decoding runs only after the response has resolved", async (t) => {
+  t.mock.method(console, "log", () => {});
+  const order: string[] = [];
+  const realAtob = globalThis.atob;
+  t.mock.method(globalThis, "atob", (s: string) => {
+    order.push("decode");
+    return realAtob(s);
+  });
+  const app = buildApp(analytics({ log: true }));
+  const { ctx, promises } = fakeCtx();
+  const big = { ...v2Payment, payload: { ...v2Payment.payload, pad: "a".repeat(12_000) } };
+  await app.request("/json", { headers: { "PAYMENT-SIGNATURE": b64(big) } }, {}, ctx);
+  order.push("resolved");
+  await settleWithin(promises, 1000);
+  assert.deepEqual(order, ["resolved", "decode"]);
+});
+
+test("a stalled 402 body: the copy gives up after timeoutMs, so a client cancel reaches the source", async (t) => {
+  const log = t.mock.method(console, "log", () => {});
+  const timeoutMs = 200;
+  let sourceCancelled = false;
+  const app = new Hono();
+  app.use(analytics({ log: true, timeoutMs }));
+  app.get(
+    "/",
+    () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"x402'));
+          },
+          pull() {
+            return new Promise<void>(() => {}); // never yields again
+          },
+          cancel() {
+            sourceCancelled = true;
+          },
+        }),
+        { status: 402 },
+      ),
+  );
+  const { ctx, promises } = fakeCtx();
+  const res = await app.request("/", undefined, {}, ctx);
+  let cancelled = false;
+  void (res.body as ReadableStream).cancel().then(() => {
+    cancelled = true;
+  });
+  await settleWithin(promises, timeoutMs + 500);
+  await waitFor(() => sourceCancelled && cancelled, 500);
+  const line = log.mock.calls.find((c) => c.arguments[0] === "op8x.analytics");
+  assert.ok(line, "a record was still written");
+  assert.equal((JSON.parse(String(line.arguments[1])) as AnalyticsRecord).challenge?.location, "none");
+});
+
+test("a non-byte chunk in a 402 body ends the copy", async (t) => {
+  const log = t.mock.method(console, "log", () => {});
+  let pulls = 0;
+  const app = new Hono();
+  app.use(analytics({ log: true }));
+  app.get(
+    "/",
+    () =>
+      new Response(
+        new ReadableStream<unknown>(
+          {
+            pull(controller) {
+              pulls++;
+              if (pulls === 1) controller.enqueue("not bytes");
+              else if (pulls === 2) controller.enqueue(new TextEncoder().encode(JSON.stringify(v1Challenge)));
+              else controller.close();
+            },
+          },
+          { highWaterMark: 0 },
+        ) as ReadableStream<Uint8Array>,
+        { status: 402 },
+      ),
+  );
+  const { ctx, promises } = fakeCtx();
+  const res = await app.request("/", undefined, {}, ctx);
+  await settleWithin(promises, 1000);
+  await (res.body as ReadableStream).cancel();
+  const line = log.mock.calls.find((c) => c.arguments[0] === "op8x.analytics");
+  assert.ok(line, "a record was still written");
+  assert.equal((JSON.parse(String(line.arguments[1])) as AnalyticsRecord).challenge?.location, "none");
+});
+
+/**
+ * Simulates a request object from a second hono copy: same public API, but without this copy's
+ * module-private Symbol that `matchedRoutes` from "hono/route" reads. `hide` also removes
+ * named public members (for the case where the deprecated getter is gone as well).
+ */
+function foreignRequest(hide: string[] = []): MiddlewareHandler {
+  return async (c, next) => {
+    const real = c.req;
+    const proxy = new Proxy(real, {
+      get(target, prop) {
+        if (typeof prop === "symbol" || hide.includes(prop)) return undefined;
+        const value: unknown = Reflect.get(target, prop, target);
+        return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+      },
+      set(target, prop, value) {
+        return Reflect.set(target, prop, value, target);
+      },
+    });
+    Object.defineProperty(c, "req", { value: proxy, configurable: true });
+    await next();
+  };
+}
+
+test("route falls back to the request's own matchedRoutes when hono/route cannot read it", async (t) => {
+  const warn = t.mock.method(console, "warn", () => {});
+  const app = new Hono();
+  app.use(foreignRequest());
+  app.use(analytics({ log: true }));
+  app.get("/items/:id", (c) => c.text(`item ${c.req.param("id")}`));
+  assert.equal((await routeOf(app, "/items/7")).route, "/items/:id");
+  assert.equal(warn.mock.callCount(), 0);
+});
+
+test("route unavailable both ways: empty route and one warning", async (t) => {
+  const warn = t.mock.method(console, "warn", () => {});
+  const app = new Hono();
+  app.use(foreignRequest(["matchedRoutes"]));
+  app.use(analytics({ log: true }));
+  app.get("/items/:id", (c) => c.text("item"));
+  assert.equal((await routeOf(app, "/items/7")).route, "");
+  assert.equal((await routeOf(app, "/items/8")).route, "");
+  const unavailable = warn.mock.calls.filter(
+    (c) => c.arguments[0] === "op8x.analytics: route unavailable (duplicate hono copy?)",
+  );
+  assert.equal(unavailable.length, 1);
+  assert.equal(warn.mock.callCount(), 1);
+});
+
+for (const chainCheck of [undefined, false, true]) {
+  test(`chainCheck ${String(chainCheck)}: receipt transaction ${chainCheck === true ? "included" : "omitted"}`, async () => {
+    const collector = await startCollector("ok");
+    try {
+      const options: AnalyticsOptions = { endpoint: collector.url };
+      if (chainCheck !== undefined) options.chainCheck = chainCheck;
+      const app = buildApp(analytics(options));
+      const { ctx, promises } = fakeCtx();
+      await app.request("/paid", { headers: { "PAYMENT-SIGNATURE": b64(v2Payment) } }, {}, ctx);
+      await settleWithin(promises, 3000);
+      assert.equal(collector.records.length, 1);
+      assert.equal(collector.records[0]?.receipt?.success, true);
+      const raw = JSON.stringify(collector.requests);
+      if (chainCheck === true) {
+        assert.equal(collector.records[0]?.receipt?.transaction, TX);
+      } else {
+        assert.equal(collector.records[0]?.receipt?.transaction, undefined);
+        assert.ok(!raw.includes(TX), "transaction hash sent without chainCheck");
+      }
+    } finally {
+      await collector.close();
+    }
+  });
+}
+
+const disabled: Array<[string, () => MiddlewareHandler]> = [
+  ["no endpoint and no log", () => analytics({})],
+  [
+    "failed setup",
+    () =>
+      analytics({
+        get endpoint(): string {
+          throw new Error("hostile options");
+        },
+      } as unknown as AnalyticsOptions),
+  ],
+];
+
+for (const [name, make] of disabled) {
+  test(`disabled middleware (${name}) does not return next()'s value into a non-finalized context`, async (t) => {
+    t.mock.method(console, "warn", () => {});
+    const build = (mw?: MiddlewareHandler) => {
+      const app = new Hono();
+      app.use(async (c, next) => {
+        await next();
+        if (!c.finalized) c.res = new Response("fallback", { status: 503 });
+      });
+      if (mw) app.use(mw);
+      app.use(async (c) => {
+        c.status(201);
+      });
+      return app;
+    };
+    const expected = await snapshot(await build().request("/"));
+    const actual = await snapshot(await build(make()).request("/"));
+    assert.deepEqual(actual, expected);
+  });
+}

@@ -94,3 +94,9 @@ test("clean trims, caps length, and rejects non-strings and empties", () => {
   assert.equal(clean(null), undefined);
   assert.equal(clean({}), undefined);
 });
+
+test("clean strips Unicode bidi controls", () => {
+  assert.equal(clean("a\u200eb\u200fc\u202ad\u202be\u202cf\u202dg\u202eh"), "abcdefgh");
+  assert.equal(clean("x\u2066y\u2067z\u2068w\u2069v"), "xyzwv");
+  assert.equal(clean("\u202e\u2066"), undefined);
+});

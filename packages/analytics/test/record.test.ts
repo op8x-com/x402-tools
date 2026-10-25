@@ -177,7 +177,6 @@ test("receipt v2 and v1, failure fields", async () => {
     header: "PAYMENT-RESPONSE",
     decodable: true,
     success: true,
-    transaction: TX,
     network: "eip155:84532",
   });
   const v1 = await buildRecord(input({ res: { "x-payment-response": b64(v1Receipt) } }));
@@ -323,4 +322,24 @@ test("__proto__ keys in payment and receipt payloads are harmless", async () => 
   assert.equal(r.receipt?.transaction, undefined);
   assert.equal(r.receipt?.network, "n");
   assert.ok(!JSON.stringify(r).includes("evil"));
+});
+
+test("undecodable payment header still hashes the receipt payer (only with a hash fn)", async () => {
+  const over: Over = { req: { "x-payment": "!!!notbase64" }, res: { "payment-response": b64(v2Receipt) } };
+  const hashed = await buildRecord(input(over), fakeHash);
+  assert.deepEqual(hashed.payment, { header: "X-PAYMENT", decodable: false, payer: `h(${PAYER})` });
+  const plain = await buildRecord(input(over));
+  assert.deepEqual(plain.payment, { header: "X-PAYMENT", decodable: false });
+});
+
+test("receipt transaction only with chainCheck; never read or serialised by default", async () => {
+  const over: Over = { res: { "payment-response": b64(v2Receipt) }, req: { "payment-signature": b64(v2Payment) } };
+  for (const opts of [undefined, {}, { chainCheck: false }]) {
+    const r = await buildRecord(input(over), fakeHash, opts);
+    assert.equal(r.receipt?.transaction, undefined);
+    assert.ok(!JSON.stringify(r).includes(TX), "transaction hash leaked");
+    assert.equal(r.receipt?.success, true);
+  }
+  const checked = await buildRecord(input(over), undefined, { chainCheck: true });
+  assert.equal(checked.receipt?.transaction, TX);
 });

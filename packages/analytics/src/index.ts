@@ -6,7 +6,7 @@ export type {
   ReceiptInfo,
   UaClass,
 } from "./types.ts";
-export type { RecordInput } from "./record.ts";
+export type { RecordInput, RecordOptions } from "./record.ts";
 export type { Transport, TransportDeps } from "./transport.ts";
 export { buildRecord } from "./record.ts";
 export { hashPayer } from "./hash.ts";

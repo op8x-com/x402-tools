@@ -108,9 +108,15 @@ function authorizationFrom(payload: Obj | undefined): string | undefined {
   return typeof from === "string" ? from : undefined;
 }
 
+export interface RecordOptions {
+  /** Include receipt.transaction; without it the field is never read. */
+  chainCheck?: boolean;
+}
+
 export async function buildRecord(
   input: RecordInput,
   hashPayer?: (address: string) => Promise<string>,
+  options?: RecordOptions,
 ): Promise<AnalyticsRecord> {
   const { requestHeaders: req, responseHeaders: res, status } = input;
 
@@ -151,8 +157,10 @@ export async function buildRecord(
     if (decoded) {
       const success = own(decoded, "success");
       if (typeof success === "boolean") receipt.success = success;
-      const transaction = clean(own(decoded, "transaction"));
-      if (transaction !== undefined) receipt.transaction = transaction;
+      if (options?.chainCheck === true) {
+        const transaction = clean(own(decoded, "transaction"));
+        if (transaction !== undefined) receipt.transaction = transaction;
+      }
       const network = clean(own(decoded, "network"));
       if (network !== undefined) receipt.network = network;
       const errorReason = clean(own(decoded, "errorReason"), LONG);
@@ -179,16 +187,17 @@ export async function buildRecord(
       if (network !== undefined) payment.network = network;
       if (amount !== undefined) payment.amount = amount;
       if (asset !== undefined) payment.asset = asset;
+    }
 
-      const fromAuth = authorizationFrom(decoded);
-      const payer = receiptPayer ?? (fromAuth !== undefined && fromAuth.trim() !== "" ? fromAuth.trim() : undefined);
-      if (hashPayer !== undefined && payer !== undefined) {
-        try {
-          const hashed = await hashPayer(payer.toLowerCase());
-          if (typeof hashed === "string" && hashed !== "") payment.payer = hashed;
-        } catch {
-          // omit payer; never fail the record
-        }
+    // The receipt payer counts even when the payment header itself is undecodable.
+    const fromAuth = authorizationFrom(decoded);
+    const payer = receiptPayer ?? (fromAuth !== undefined && fromAuth.trim() !== "" ? fromAuth.trim() : undefined);
+    if (hashPayer !== undefined && payer !== undefined) {
+      try {
+        const hashed = await hashPayer(payer.toLowerCase());
+        if (typeof hashed === "string" && hashed !== "") payment.payer = hashed;
+      } catch {
+        // omit payer; never fail the record
       }
     }
     record.payment = payment;

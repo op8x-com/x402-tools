@@ -1,7 +1,8 @@
-const CONTROL = /[\u0000-\u001f\u007f-\u009f]/g;
+/** C0/C1 controls and Unicode bidi controls (LRM, RLM, embeddings, overrides, isolates). */
+const CONTROL = /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
 const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
 
-/** Strings only: strips C0/C1 control characters, trims, caps length. Empty becomes undefined. */
+/** Strings only: strips C0/C1 and bidi control characters, trims, caps length. Empty becomes undefined. */
 export function clean(value: unknown, max = 128): string | undefined {
   if (typeof value !== "string") return undefined;
   const out = value.replace(CONTROL, "").trim().slice(0, max).trim();
