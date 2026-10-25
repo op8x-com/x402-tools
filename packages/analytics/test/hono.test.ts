@@ -9,6 +9,8 @@ import { startCollector } from "./collector.ts";
 import { b64, PAYER, v1Challenge, v2Challenge, v2Payment, v2Receipt } from "./fixtures.ts";
 
 const BIG = 1024 * 1024;
+/** Variable content for the streamed 402 route, fixed per test run so both apps match. */
+const streamSeed = String(1000 + Math.floor(Math.random() * 9000));
 const CHUNK = 16 * 1024;
 
 interface FakeCtx {
@@ -81,6 +83,19 @@ function buildApp(middleware: MiddlewareHandler | undefined, hooks: Hooks = { er
     });
     return new Response(stream, { status: 200, headers: { "content-type": "text/plain" } });
   });
+  app.get("/stream402", () => {
+    const enc = new TextEncoder();
+    const parts = ['{"x402Version":1,', '"error":"pay first",', `"accepts":[{"scheme":"exact","network":"base-sepolia","maxAmountRequired":"${streamSeed}"}]}`];
+    let i = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        const part = parts[i++];
+        if (part === undefined) controller.close();
+        else controller.enqueue(enc.encode(part));
+      },
+    });
+    return new Response(stream, { status: 402, headers: { "content-type": "application/json" } });
+  });
   app.get("/throw", () => {
     throw new Error("seller boom");
   });
@@ -97,7 +112,8 @@ function buildApp(middleware: MiddlewareHandler | undefined, hooks: Hooks = { er
 }
 
 async function snapshot(res: Response) {
-  const headers = [...res.headers.entries()].sort((a, b) => (a[0] + a[1] < b[0] + b[1] ? -1 : 1));
+  const cmp = (x: string, y: string) => (x < y ? -1 : x > y ? 1 : 0);
+  const headers = [...res.headers.entries()].sort((a, b) => cmp(a[0], b[0]) || cmp(a[1], b[1]));
   const body = new Uint8Array(await res.arrayBuffer());
   return { status: res.status, headers, body };
 }
@@ -122,7 +138,7 @@ async function waitFor(check: () => boolean, ms = 3000): Promise<void> {
   }
 }
 
-const PATHS = ["/json", "/items/abc123", "/v1", "/stream", "/throw"];
+const PATHS = ["/json", "/items/abc123", "/v1", "/stream", "/stream402", "/throw"];
 
 for (const path of PATHS) {
   test(`response is byte-identical with and without the middleware: ${path}`, async () => {
@@ -282,7 +298,8 @@ for (const mode of ["hang", "fail", "unreachable"] as const) {
   });
 }
 
-test("the response resolves while the background task is still pending", async () => {
+test("the response resolves while the background task is still pending", async (t) => {
+  t.mock.method(console, "warn", () => {});
   const collector = await startCollector("hang");
   try {
     const timeoutMs = 300;
@@ -293,16 +310,20 @@ test("the response resolves while the background task is still pending", async (
     assert.ok(Date.now() - started < timeoutMs, "response must not wait for the collector");
     assert.equal(res.status, 200);
     assert.equal(promises.length, 1);
-    const marker = Symbol("marker");
-    const first = await Promise.race([(promises[0] as Promise<unknown>).then(() => "background"), Promise.resolve(marker)]);
-    assert.equal(first, marker, "background must still be pending");
+    let settled = false;
+    void (promises[0] as Promise<unknown>).then(() => {
+      settled = true;
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(settled, false, "background must still be pending 50 ms after the response");
     await settleWithin(promises, timeoutMs + 500);
   } finally {
     await collector.close();
   }
 });
 
-test("background promise never rejects", async () => {
+test("background promise never rejects", async (t) => {
+  t.mock.method(console, "warn", () => {});
   const app = buildApp(analytics({ endpoint: "http://127.0.0.1:1/ingest", timeoutMs: 100 }));
   const { ctx, promises } = fakeCtx();
   await app.request("/items/abc123", undefined, {}, ctx);
@@ -495,4 +516,38 @@ test("payment-style middleware registered after the route still yields the route
   const rec = await routeOf(app, "/items/7");
   assert.equal(rec.status, 402);
   assert.equal(rec.route, "/items/:id");
+});
+
+test("streamed 402 body: challenge is read from the clone", async () => {
+  const collector = await startCollector("ok");
+  try {
+    const app = buildApp(analytics({ endpoint: collector.url }));
+    const { ctx, promises } = fakeCtx();
+    const res = await app.request("/stream402", undefined, {}, ctx);
+    assert.equal((await res.json()).accepts[0].maxAmountRequired, streamSeed);
+    await settleWithin(promises, 3000);
+    assert.equal(collector.records[0]?.challenge?.location, "body");
+    assert.equal(collector.records[0]?.challenge?.accepts?.[0]?.amount, streamSeed);
+  } finally {
+    await collector.close();
+  }
+});
+
+test("setup failure disables analytics with one fixed warning and leaves the response alone", async (t) => {
+  const warn = t.mock.method(console, "warn", () => {});
+  const hostile = {
+    get endpoint(): string {
+      throw new Error("hostile options");
+    },
+  } as unknown as AnalyticsOptions;
+  const mw = analytics(hostile);
+  const plain = buildApp(undefined);
+  const app = buildApp(mw);
+  const { ctx, promises } = fakeCtx();
+  const expected = await snapshot(await plain.request("/json"));
+  const actual = await snapshot(await app.request("/json", undefined, {}, ctx));
+  assert.deepEqual(actual, expected);
+  assert.equal(promises.length, 0);
+  const setup = warn.mock.calls.filter((c) => c.arguments[0] === "op8x.analytics: setup failed, analytics disabled");
+  assert.equal(setup.length, 1);
 });

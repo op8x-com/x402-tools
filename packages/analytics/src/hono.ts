@@ -16,7 +16,7 @@ const BODY_CAP = 64 * 1024;
 async function readCapped(res: Response): Promise<string | undefined> {
   const stream = res.body;
   if (stream === null) return undefined;
-  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let reader: ReadableStreamDefaultReader<unknown> | undefined;
   try {
     reader = stream.getReader();
     const decoder = new TextDecoder();
@@ -28,9 +28,11 @@ async function readCapped(res: Response): Promise<string | undefined> {
         reader = undefined;
         break;
       }
-      if (!(value instanceof Uint8Array)) continue;
+      // isView instead of instanceof: chunks may come from another realm.
+      if (!ArrayBuffer.isView(value)) continue;
+      const bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
       const room = BODY_CAP - total;
-      const part = value.byteLength > room ? value.subarray(0, room) : value;
+      const part = bytes.byteLength > room ? bytes.subarray(0, room) : bytes;
       total += part.byteLength;
       text += decoder.decode(part, { stream: true });
     }
@@ -94,6 +96,11 @@ export function analytics(options: AnalyticsOptions = {}): MiddlewareHandler {
     }
   } catch {
     transport = undefined;
+    try {
+      console.warn("op8x.analytics: setup failed, analytics disabled");
+    } catch {
+      // ignore
+    }
   }
 
   return async (c, next) => {
