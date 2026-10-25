@@ -8,7 +8,7 @@ npx @op8x/cli check https://api.example.com/weather
 
 Or install it once and use the short command: `npm install -g @op8x/cli`, then `op8x check <url>`.
 
-`op8x check` makes two unpaid requests (GET and POST) and reports dialect problems that make paying clients fail silently:
+`op8x check` makes two unpaid requests (GET and POST), repeats each 402 once with an `Origin` header as a browser would, sends a CORS preflight (`OPTIONS`) when the 402 is CORS-enabled, and reports problems that make paying clients fail silently:
 
 - v2 challenge only in the body (the official v2 client reads the `PAYMENT-REQUIRED` header only)
 - `PAYMENT-REQUIRED` header that is not standard base64 or not JSON
@@ -16,8 +16,10 @@ Or install it once and use the short command: `npm install -g @op8x/cli`, then `
 - `x402Version` missing or a string, mixed v1/v2 fields, legacy network names in v2
 - GET and POST behaving differently, redirects, missing `Cache-Control: no-store`
 - schema errors, checked with the official `@x402/core` schemas
+- `extra.paymentFlow` that clients do not recognize (not `authorization`, `upfront` or `escrow`), or missing where the scheme default is not `authorization` (`auth-capture`, `upto` on Solana, `exact` on Lightning)
+- CORS for browser clients (never errors): `PAYMENT-REQUIRED`/`PAYMENT-RESPONSE` not in `Access-Control-Expose-Headers`, `PAYMENT-SIGNATURE`/`Content-Type` not in `Access-Control-Allow-Headers`, missing v1 spellings (`X-PAYMENT`, `X-PAYMENT-RESPONSE`) on dual-version endpoints, a preflight that requires payment. A `*` does not count on credentialed requests. An endpoint without `Access-Control-Allow-Origin`, or one that refuses browser origins, only gets a hint: servers and agents need no CORS.
 
-It never pays, needs no wallet and sends no telemetry. It only talks to the URL you give it.
+The plain requests carry no `Origin`, so a server that refuses browsers is still checked correctly; the repeat and the preflight send `Origin: https://op8x.com`. It never pays, needs no wallet and sends no telemetry. It only talks to the URL you give it.
 
 ## Options
 
@@ -36,24 +38,31 @@ op8x check https://api.example.com/weather
 
   GET  402  38 ms
   POST 402  5 ms
+  GET  402  6 ms  (with Origin)
+  POST 402  5 ms  (with Origin)
 
 ✖ error [both] v2 challenge only in the response body
         The body contains an x402Version 2 challenge, but the PAYMENT-REQUIRED header is missing. The official v2 client reads v2 challenges only from the header and fails before signing.
         Fix: Send the challenge in the PAYMENT-REQUIRED header (base64 JSON). A body copy is optional.
 ✖ error [both] Official x402 client cannot read the challenge
         The official client would fail before signing; see the other findings.
+i info  [both] 402 without Access-Control-Allow-Origin
+        A browser hides the whole 402 from cross-origin pages, so a web app cannot read the price. Fine if only servers and agents should pay. Affects browser clients only.
+        Fix: If browser apps should pay this endpoint, send Access-Control-Allow-Origin on the 402 and on the preflight.
 
 Reproduce:
   curl -i -X GET 'https://api.example.com/weather'
   curl -i -X POST -H 'Content-Type: application/json' -d '{}' 'https://api.example.com/weather'
+  curl -i -X GET -H 'Origin: https://op8x.com' 'https://api.example.com/weather'
+  curl -i -X POST -H 'Origin: https://op8x.com' -H 'Content-Type: application/json' -d '{}' 'https://api.example.com/weather'
 
 Summary: 2 errors, 0 warnings
-Listing, CORS and Bazaar checks: npx x402-listing-check https://api.example.com/weather
+Listing and Bazaar checks: npx x402-listing-check https://api.example.com/weather
 op8x · https://op8x.com
 ```
 
 ## Related
 
-For listing checks (CORS, Bazaar metadata, `/.well-known/x402`, OpenAPI), run [`x402-listing-check`](https://www.npmjs.com/package/x402-listing-check).
+For listing checks (Bazaar metadata, `/.well-known/x402`, OpenAPI), run [`x402-listing-check`](https://www.npmjs.com/package/x402-listing-check).
 
 MIT · [op8x.com](https://op8x.com)

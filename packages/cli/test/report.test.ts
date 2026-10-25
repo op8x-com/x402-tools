@@ -1,11 +1,21 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildReport, renderJson, renderText } from "../src/report.ts";
-import type { Finding, ProbeResult } from "../src/types.ts";
+import type { Finding, PreflightResult, ProbeResult } from "../src/types.ts";
 
-const probes: ProbeResult[] = [
+const probes: (ProbeResult | PreflightResult)[] = [
   { method: "GET", url: "https://api.example.com/x", status: 402, headers: {}, bodyText: "", ms: 12 },
   { method: "POST", url: "https://api.example.com/x", status: 405, headers: {}, bodyText: "", ms: 8 },
+  { method: "GET", url: "https://api.example.com/x", status: 402, headers: {}, bodyText: "", ms: 9, origin: "https://op8x.com" },
+  {
+    method: "OPTIONS",
+    url: "https://api.example.com/x",
+    requestMethod: "GET",
+    requestHeaders: "payment-signature",
+    status: 204,
+    headers: {},
+    ms: 3,
+  },
 ];
 const findings: Finding[] = [
   { id: "official-client", level: "pass", method: "GET", title: "Official x402 client can read the challenge", detail: "ok" },
@@ -19,6 +29,17 @@ test("buildReport counts errors and warnings", () => {
   assert.equal(report.tool, "op8x");
   assert.equal(report.checkedAt, "2026-10-24T18:00:00.000Z");
   assert.deepEqual(report.requests[1], { method: "POST", status: 405, ms: 8 });
+  assert.deepEqual(report.requests[2], { method: "GET", status: 402, ms: 9, origin: "https://op8x.com" });
+  assert.deepEqual(report.requests[3], {
+    method: "OPTIONS",
+    status: 204,
+    ms: 3,
+    origin: "https://op8x.com",
+    requestHeaders: {
+      "access-control-request-method": "GET",
+      "access-control-request-headers": "payment-signature",
+    },
+  });
 });
 
 test("renderJson is the report as JSON", () => {
@@ -30,8 +51,15 @@ test("renderText orders by severity and includes fix, repro and pointers", () =>
   assert.ok(text.indexOf("✖ error") < text.indexOf("! warn"));
   assert.ok(text.indexOf("! warn") < text.indexOf("✓ pass"));
   assert.match(text, /Fix: f/);
+  assert.match(text, /GET {2}402 {2}9 ms {2}\(with Origin\)/);
+  assert.match(text, /GET {2}402 {2}12 ms\n/);
   assert.match(text, /curl -i -X GET 'https:\/\/api\.example\.com\/x'/);
+  assert.match(text, /curl -i -X GET -H 'Origin: https:\/\/op8x\.com' 'https:\/\/api\.example\.com\/x'/);
   assert.match(text, /curl -i -X POST -H 'Content-Type: application\/json' -d '\{\}' 'https:\/\/api\.example\.com\/x'/);
+  assert.match(
+    text,
+    /curl -i -X OPTIONS -H 'Origin: https:\/\/op8x\.com' -H 'Access-Control-Request-Method: GET' -H 'Access-Control-Request-Headers: payment-signature' 'https:\/\/api\.example\.com\/x'/,
+  );
   assert.match(text, /npx x402-listing-check https:\/\/api\.example\.com\/x/);
   assert.match(text, /Summary: 1 error, 1 warning\n/);
   assert.equal(text.includes("\x1b["), false);

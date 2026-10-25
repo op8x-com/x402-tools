@@ -34,6 +34,9 @@ export function extract(p: ProbeResult): Extracted {
     location: "none",
     cacheControl: p.headers["cache-control"],
     redirectTo: p.headers["location"],
+    allowOrigin: p.headers["access-control-allow-origin"],
+    exposeHeaders: p.headers["access-control-expose-headers"],
+    allowCredentials: p.headers["access-control-allow-credentials"],
   };
 
   const headerRaw = p.headers["payment-required"];
@@ -59,6 +62,18 @@ export function extract(p: ProbeResult): Extracted {
   out.challenge = out.header ?? out.bodyChallenge;
   out.version = versionOf(out.challenge);
   return out;
+}
+
+/** Takes the CORS headers from the browser-like probe of the same method. */
+export function withBrowserView(e: Extracted, browser: ProbeResult): Extracted {
+  return {
+    ...e,
+    allowOrigin: browser.headers["access-control-allow-origin"],
+    exposeHeaders: browser.headers["access-control-expose-headers"],
+    allowCredentials: browser.headers["access-control-allow-credentials"],
+    ...(browser.status !== undefined ? { originStatus: browser.status } : {}),
+    ...(browser.error ? { originError: browser.error } : {}),
+  };
 }
 
 /**

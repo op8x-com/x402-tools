@@ -41,7 +41,16 @@ test("v2 body-only exits 1 and is reported in JSON", async () => {
   assert.equal(code, 1);
   const report = JSON.parse(io.stdout());
   assert.ok(report.findings.some((f: { id: string }) => f.id === "v2-body-only"));
-  assert.equal(report.requests.length, 2);
+  // GET and POST, each repeated once as a browser.
+  assert.deepEqual(
+    report.requests.map((r: { method: string; origin?: string }) => [r.method, r.origin !== undefined]),
+    [
+      ["GET", false],
+      ["POST", false],
+      ["GET", true],
+      ["POST", true],
+    ],
+  );
 });
 
 test("drift is detected end to end", async () => {
@@ -62,10 +71,11 @@ test("free endpoint is no-402 and exits 1", async () => {
   assert.match(io.stdout(), /No 402 challenge/);
 });
 
-test("--method limits the probe to one request", async () => {
+test("--method limits the probe to one method", async () => {
   const io = capture();
   await run(["check", `${server.url}/v1-good`, "--method", "get", "--json"], io);
-  assert.equal(JSON.parse(io.stdout()).requests.length, 1);
+  const methods = JSON.parse(io.stdout()).requests.map((r: { method: string }) => r.method);
+  assert.deepEqual(methods, ["GET", "GET"]); // plain, then as a browser
 });
 
 test("unreachable host exits 2", async () => {
@@ -88,4 +98,60 @@ test("--version and --help exit 0", async () => {
   assert.equal(await run(["--version"], io), 0);
   assert.equal(io.stdout().trim(), VERSION);
   assert.equal(await run(["--help"], capture()), 0);
+});
+
+type JsonFinding = { id: string; level: string };
+
+test("CORS-ready endpoint gets a preflight and no CORS findings", async () => {
+  const io = capture();
+  assert.equal(await run(["check", `${server.url}/cors-good`, "--json"], io), 0);
+  const report = JSON.parse(io.stdout());
+  assert.deepEqual(
+    report.requests.map((r: { method: string; origin?: string }) => [r.method, r.origin !== undefined]),
+    [
+      ["GET", false],
+      ["POST", false],
+      ["GET", true],
+      ["POST", true],
+      ["OPTIONS", true],
+    ],
+  );
+  assert.deepEqual(report.requests[4].requestHeaders, {
+    "access-control-request-method": "POST",
+    "access-control-request-headers": "payment-signature,content-type",
+  });
+  assert.deepEqual(
+    report.findings.filter((f: JsonFinding) => f.id.startsWith("cors-")),
+    [],
+  );
+});
+
+test("endpoint without CORS gets one hint and no preflight", async () => {
+  const io = capture();
+  assert.equal(await run(["check", `${server.url}/v2-good`, "--json"], io), 0);
+  const report = JSON.parse(io.stdout());
+  assert.equal(report.requests.length, 4);
+  assert.equal(report.summary.warnings, 0);
+  const cors = report.findings.filter((f: JsonFinding) => f.id.startsWith("cors-"));
+  assert.deepEqual(cors.map((f: JsonFinding) => [f.id, f.level]), [["cors-allow-origin", "info"]]);
+});
+
+test("server that refuses browser origins is still diagnosed from the plain probes", async () => {
+  const io = capture();
+  assert.equal(await run(["check", `${server.url}/refuses-browsers`, "--json"], io), 0);
+  const report = JSON.parse(io.stdout());
+  const ids = report.findings.map((f: JsonFinding) => f.id);
+  assert.equal(ids.includes("no-402"), false);
+  assert.ok(ids.includes("official-client"));
+  const cors = report.findings.filter((f: JsonFinding) => f.id.startsWith("cors-"));
+  assert.deepEqual(cors.map((f: JsonFinding) => [f.id, f.level]), [["cors-origin-refused", "info"]]);
+  assert.equal(report.requests.some((r: { method: string }) => r.method === "OPTIONS"), false);
+});
+
+test("preflight that requires payment is reported, but only as a warning", async () => {
+  const io = capture();
+  assert.equal(await run(["check", `${server.url}/cors-paid-preflight`, "--json"], io), 0);
+  const ids = JSON.parse(io.stdout()).findings.map((f: JsonFinding) => f.id);
+  assert.ok(ids.includes("cors-preflight"));
+  assert.ok(ids.includes("cors-expose-headers"));
 });
