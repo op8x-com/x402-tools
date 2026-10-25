@@ -449,3 +449,50 @@ test("log option writes one line per record without an endpoint", async (t) => {
   const rec = JSON.parse(String(lines[0]?.arguments[1])) as AnalyticsRecord;
   assert.equal(rec.route, "/json");
 });
+
+async function routeOf(app: Hono, path: string): Promise<AnalyticsRecord> {
+  const { ctx, promises } = fakeCtx();
+  const log = console.log;
+  const lines: unknown[][] = [];
+  console.log = (...a: unknown[]) => void lines.push(a);
+  try {
+    await (await app.request(path, undefined, {}, ctx)).arrayBuffer();
+    await settleWithin(promises, 1000);
+  } finally {
+    console.log = log;
+  }
+  const line = lines.find((l) => l[0] === "op8x.analytics");
+  assert.ok(line, "a record was logged");
+  return JSON.parse(String(line[1])) as AnalyticsRecord;
+}
+
+test("unmatched path: route is empty", async () => {
+  const app = buildApp(analytics({ log: true }));
+  const rec = await routeOf(app, "/nope");
+  assert.equal(rec.status, 404);
+  assert.equal(rec.route, "");
+});
+
+test("unmatched path with a later catch-all middleware: route is empty", async () => {
+  const app = new Hono();
+  app.use("*", analytics({ log: true }));
+  app.use("*", async (_c, next) => {
+    await next();
+  });
+  app.get("/items/:id", (c) => c.text("item"));
+  assert.equal((await routeOf(app, "/nope")).route, "");
+  assert.equal((await routeOf(app, "/items/7")).route, "/items/:id");
+});
+
+test("payment-style middleware registered after the route still yields the route pattern", async () => {
+  const app = new Hono();
+  app.use("*", analytics({ log: true }));
+  app.use("/items/*", async (c, next) => {
+    if (!c.req.header("payment-signature")) return c.json({}, 402);
+    await next();
+  });
+  app.get("/items/:id", (c) => c.text("item"));
+  const rec = await routeOf(app, "/items/7");
+  assert.equal(rec.status, 402);
+  assert.equal(rec.route, "/items/:id");
+});

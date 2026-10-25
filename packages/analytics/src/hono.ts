@@ -1,5 +1,5 @@
 import type { Context, MiddlewareHandler } from "hono";
-import { routePath } from "hono/route";
+import { matchedRoutes } from "hono/route";
 import { hashPayer } from "./hash.ts";
 import { buildRecord } from "./record.ts";
 import type { RecordInput } from "./record.ts";
@@ -98,10 +98,12 @@ export function analytics(options: AnalyticsOptions = {}): MiddlewareHandler {
 
   return async (c, next) => {
     let startMs = 0;
+    let entryIndex = -1;
     let ts = "";
     let method = "";
     let requestHeaders: Headers | undefined;
     try {
+      entryIndex = c.req.routeIndex;
       startMs = Date.now();
       ts = new Date(startMs).toISOString();
       method = c.req.method;
@@ -121,7 +123,16 @@ export function analytics(options: AnalyticsOptions = {}): MiddlewareHandler {
       const ms = Date.now() - startMs;
       let route = "";
       try {
-        route = routePath(c, -1);
+        // A pattern only for a real route handler after this middleware: the last matched route
+        // past our own index whose method is not "ALL" (app.use / catch-all middleware); else "".
+        const routes = matchedRoutes(c);
+        for (let i = routes.length - 1; i > entryIndex; i--) {
+          const r = routes[i];
+          if (r !== undefined && r.method !== "ALL") {
+            route = r.path;
+            break;
+          }
+        }
       } catch {
         route = "";
       }
