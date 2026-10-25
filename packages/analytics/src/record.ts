@@ -33,16 +33,20 @@ function version(value: unknown): 1 | 2 | undefined {
 }
 
 /** Structural equality for decoded JSON; key order does not matter. */
-function deepEqual(a: unknown, b: unknown): boolean {
+const MAX_DEPTH = 32;
+
+/** Beyond MAX_DEPTH the values are treated as different (hostile nesting). */
+function deepEqual(a: unknown, b: unknown, depth = 0): boolean {
   if (a === b) return true;
+  if (depth > MAX_DEPTH) return false;
   if (Array.isArray(a) || Array.isArray(b)) {
     if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
-    return a.every((v, i) => deepEqual(v, b[i]));
+    return a.every((v, i) => deepEqual(v, b[i], depth + 1));
   }
   if (isObj(a) && isObj(b)) {
     const ka = Object.keys(a);
     if (ka.length !== Object.keys(b).length) return false;
-    return ka.every((k) => Object.prototype.hasOwnProperty.call(b, k) && deepEqual(a[k], b[k]));
+    return ka.every((k) => Object.prototype.hasOwnProperty.call(b, k) && deepEqual(a[k], b[k], depth + 1));
   }
   return false;
 }
@@ -62,7 +66,13 @@ function buildChallenge(headers: Headers, body: string | undefined): ChallengeIn
   };
   const v = version(own(used, "x402Version"));
   if (v !== undefined) info.version = v;
-  if (fromHeader && fromBody) info.drift = !deepEqual(fromHeader, fromBody);
+  if (fromHeader && fromBody) {
+    try {
+      info.drift = !deepEqual(fromHeader, fromBody);
+    } catch {
+      // omit drift
+    }
+  }
   const error = clean(own(used, "error"), LONG);
   if (error !== undefined) info.error = error;
 
@@ -134,8 +144,9 @@ export async function buildRecord(
   let receiptPayer: string | undefined;
   const receiptHeader: ReceiptInfo["header"] | undefined =
     receiptRaw !== null ? "PAYMENT-RESPONSE" : legacyReceiptRaw !== null ? "X-PAYMENT-RESPONSE" : undefined;
+  const receiptValue = receiptRaw ?? legacyReceiptRaw;
   if (receiptHeader !== undefined) {
-    const decoded = decodeBase64Json(receiptHeader === "PAYMENT-RESPONSE" ? receiptRaw : legacyReceiptRaw);
+    const decoded = decodeBase64Json(receiptValue);
     const receipt: ReceiptInfo = { header: receiptHeader, decodable: decoded !== undefined };
     if (decoded) {
       const success = own(decoded, "success");
@@ -147,7 +158,7 @@ export async function buildRecord(
       const errorReason = clean(own(decoded, "errorReason"), LONG);
       if (errorReason !== undefined) receipt.errorReason = errorReason;
       const p = own(decoded, "payer");
-      if (typeof p === "string") receiptPayer = p;
+      if (typeof p === "string" && p.trim() !== "") receiptPayer = p.trim();
     }
     record.receipt = receipt;
   }
@@ -169,7 +180,8 @@ export async function buildRecord(
       if (amount !== undefined) payment.amount = amount;
       if (asset !== undefined) payment.asset = asset;
 
-      const payer = receiptPayer ?? authorizationFrom(decoded);
+      const fromAuth = authorizationFrom(decoded);
+      const payer = receiptPayer ?? (fromAuth !== undefined && fromAuth.trim() !== "" ? fromAuth.trim() : undefined);
       if (hashPayer !== undefined && payer !== undefined) {
         try {
           const hashed = await hashPayer(payer.toLowerCase());

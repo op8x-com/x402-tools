@@ -210,7 +210,10 @@ test("payer: receipt first, else authorization.from, lowercased; no hash fn mean
   const none = await buildRecord(input({ req }));
   assert.equal(none.payment?.payer, undefined);
   const fromReceipt = await buildRecord(
-    input({ req, res: { "payment-response": b64({ ...v2Receipt, payer: "0xABCDEF" }) } }),
+    input({
+      req: { "payment-signature": b64({ ...v2Payment, payload: { authorization: { from: "0xFROMAUTH" } } }) },
+      res: { "payment-response": b64({ ...v2Receipt, payer: "0xABCDEF" }) },
+    }),
     fakeHash,
   );
   assert.equal(fromReceipt.payment?.payer, "h(0xabcdef)");
@@ -287,4 +290,37 @@ test("privacy: serialised record contains no forbidden value", async () => {
   for (const s of secrets) assert.ok(!json.includes(s), `leaked ${s}`);
   assert.ok(!json.includes("SECRETUA"));
   assert.ok(!json.includes(PAYER));
+});
+
+test("empty or whitespace receipt payer falls back to authorization.from", async () => {
+  const req = { "payment-signature": b64({ ...v2Payment, payload: { authorization: { from: "0xFROMAUTH" } } }) };
+  for (const payer of ["", "   "]) {
+    const r = await buildRecord(input({ req, res: { "payment-response": b64({ ...v2Receipt, payer }) } }), fakeHash);
+    assert.equal(r.payment?.payer, "h(0xfromauth)");
+  }
+});
+
+test("deeply nested header and body do not make buildRecord throw", async () => {
+  const depth = 8000;
+  const nested = `{"x402Version":2,"a":${"[".repeat(depth)}${"]".repeat(depth)}}`;
+  const r = await buildRecord(input({ status: 402, res: { "payment-required": btoa(nested) }, body: nested }));
+  assert.equal(r.challenge?.location, "both");
+});
+
+test("__proto__ keys in payment and receipt payloads are harmless", async () => {
+  const pay = btoa(
+    `{"x402Version":2,"__proto__":{"scheme":"evil"},"accepted":{"__proto__":{"network":"evil"},"scheme":"exact"},"payload":{"__proto__":{"authorization":{"from":"0xevil"}}}}`,
+  );
+  const rec = btoa(`{"__proto__":{"success":true,"transaction":"evil"},"network":"n"}`);
+  const r = await buildRecord(
+    input({ req: { "payment-signature": pay }, res: { "payment-response": rec } }),
+    fakeHash,
+  );
+  assert.equal(r.payment?.scheme, "exact");
+  assert.equal(r.payment?.network, undefined);
+  assert.equal(r.payment?.payer, undefined);
+  assert.equal(r.receipt?.success, undefined);
+  assert.equal(r.receipt?.transaction, undefined);
+  assert.equal(r.receipt?.network, "n");
+  assert.ok(!JSON.stringify(r).includes("evil"));
 });
