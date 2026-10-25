@@ -9,6 +9,22 @@ permissions:
   contents: read
 
 jobs:
+  boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - run: node --test scripts/*.test.mjs
+      # Rules live in a repository secret so the list itself stays private; output is redacted.
+      # Secrets are not passed to pull requests from forks, so those are checked after merge on main.
+      - if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+        run: node scripts/boundary-check.mjs --all --redact
+        env:
+          BOUNDARY_TERMS: ${{ secrets.BOUNDARY_TERMS }}
+
   cli:
     runs-on: ubuntu-latest
     defaults:

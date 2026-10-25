@@ -1,6 +1,9 @@
 # Internal: strategy, analysis, founder notes. Never push.
 /intern/
 
+# Local boundary rules for scripts/boundary-check.mjs (CI reads them from a secret)
+.boundary-rules
+
 # Secrets
 .env
 .env.*
