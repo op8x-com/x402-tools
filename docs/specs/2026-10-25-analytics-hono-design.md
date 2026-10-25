@@ -40,7 +40,7 @@ Checked on 2026-10-25 against `@x402/core` 2.28.0, `@x402/hono` 2.28.0, `hono` 4
 - Receipt header: v2 `PAYMENT-RESPONSE`, v1 `X-PAYMENT-RESPONSE`; base64 JSON settle response `{ success, transaction, network, payer?, errorReason?, amount? }`.
 - Challenge: v2 in the `PAYMENT-REQUIRED` header (base64 JSON, optional `error` field such as the verify failure reason); v1 in the JSON body. Details in `docs/specs/2026-10-24-cli-check-design.md`.
 - **Workers and `@x402/hono`:** with `compatibility_date = "2026-10-01"` both the 402 path and the paid path work without the `nodejs_compat` flag (`Buffer` is available globally). With `compatibility_date = "2024-09-01"` the build fails because `@x402/extensions` imports `url`; older projects need `nodejs_compat` or a newer date.
-- **Workers and global scope:** calling `paymentMiddleware(...)` at module top level starts a facilitator request in global scope, which Workers forbid; every request then fails with 500. Building the payment middleware lazily on the first request works. This affects the example app and our docs, not this package.
+- **Workers and global scope:** calling `paymentMiddleware(...)` at module top level starts a facilitator request in global scope, which Workers forbid; requests to routes protected by the payment middleware then fail with 500 ("Disallowed operation called within global scope"), while unprotected routes keep working. Building the payment middleware lazily on the first request works. This affects the example app and our docs, not this package.
 - `hono/route` exports `matchedRoutes(c)` (since hono 4.8.0). After `await next()` the route is the last matched route registered after the middleware whose method is not `ALL`, else `""` (for example `/posts/:id`); `app.use` middlewares registered after it do not count. `matchedRoutes` reads a module-private Symbol, so with a second hono copy it fails; then the request's own deprecated `c.req.matchedRoutes` getter (present from 4.8 to at least 4.13) is used, and if that fails too, one warning is logged and the route is `""`.
 
 ## Package
@@ -176,9 +176,9 @@ If `c.executionCtx` is unavailable (for example in plain Node tests without an e
 
 ## Transport
 
-- `POST <endpoint>` with `content-type: application/json`, body = one `AnalyticsRecord`, `user-agent: op8x-analytics/<version>`. No credentials yet; a seller key is the collector's concern and will be added as an option when the collector exists.
+- `POST <endpoint>` with `content-type: application/json`, body = one `AnalyticsRecord`, `user-agent: op8x-analytics/<version>`; the module adds only these two headers (the Workers runtime itself may add a `cf-worker` header to outgoing requests). No credentials yet; a seller key is the collector's concern and will be added as an option when the collector exists.
 - Abort after `timeoutMs` via `AbortSignal.timeout`. Redirects are not followed (`redirect: "manual"`), so a redirect cannot bypass the endpoint rule or repeat the POST. The response body is not read; any non-2xx status, including 3xx, counts as a failure.
-- Errors (network, timeout, non-2xx) are swallowed. At most one `console.warn` per 60 seconds per isolate, without record data, so failures are visible in `wrangler tail` but cannot flood it.
+- Errors (network, timeout, non-2xx) are swallowed. At most one `console.warn` per 60 seconds per isolate for each kind of failure (keyed by warning text), without record data, so failures are visible in `wrangler tail` but cannot flood it.
 - With `log: true`, each record is written as `console.log("op8x.analytics", JSON.stringify(record))`.
 
 ## Testing

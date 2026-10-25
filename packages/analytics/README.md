@@ -119,7 +119,7 @@ Version 1. One record per request that passes through the middleware. Strings ar
 | `ua` | User-Agent class: `x402-client`, `axios`, `node`, `python`, `go`, `curl`, `browser`, `op8x`, `none` or `other`. The raw header is never stored. |
 | `type` | `payment.received` when the request carried a payment header, else `challenge.issued` for a 402, else `request.unpaid`. |
 | `challenge` | With status 402. `location` (`header`, `body`, `both`, `none`), `version` (1 or 2), `drift` (header and body challenges both present and different), `error`, and up to 5 `accepts` entries with `scheme`, `network`, `amount`, `asset`. |
-| `payment` | When a payment header was sent. `header` (`PAYMENT-SIGNATURE` or `X-PAYMENT`), `decodable`, `version`, `scheme`, `network`, `amount`, `asset`, and `payer` (first 32 hex characters of HMAC-SHA-256 over the lowercase address, only with `salt`). |
+| `payment` | When a payment header was sent. `header` (`PAYMENT-SIGNATURE` or `X-PAYMENT`), `decodable`, `version`, `scheme`, `network`, `amount`, `asset`, and `payer` (first 32 hex characters of HMAC-SHA-256 over the lowercase address, only with `salt`). The address is taken from the receipt's `payer`, falling back to `payload.authorization.from` in the payment header, and is hashed with the salt; it can be present even when the payment header itself was undecodable (`decodable: false`). |
 | `receipt` | When a receipt header came back. `header` (`PAYMENT-RESPONSE` or `X-PAYMENT-RESPONSE`), `decodable`, `success`, `network`, `errorReason`, and `transaction` only with `chainCheck: true`. |
 | `delivery` | With `payment`: `ok` when the final status is below 400, else `failed`. |
 
@@ -134,14 +134,14 @@ Version 1. One record per request that passes through the middleware. Strings ar
 
 ## Guarantees
 
-- **Fail-open.** Errors inside the middleware are caught and never reach your code. An unreachable, slow, failing or misconfigured endpoint changes nothing for your API and its buyers. One send attempt per request, aborted after `timeoutMs`; send failures produce at most one short warning per minute per isolate, without record data.
+- **Fail-open.** Errors inside the middleware are caught and never reach your code. An unreachable, slow, failing or misconfigured endpoint changes nothing for your API and its buyers. One send attempt per request, aborted after `timeoutMs`; send failures produce at most one warning per minute per isolate for each kind of failure, without record data. Each send is a `POST` with the headers `content-type` and `user-agent` only; the Workers runtime itself may add a `cf-worker` header to outgoing requests.
 - **No added latency.** Body copy, hashing, sending and logging run after the response is returned, through `waitUntil`. Before returning, the middleware only reads headers and starts one `clone()` of a 402 response.
 - **Response unchanged.** Status, headers and body leave the middleware exactly as they arrived. Errors thrown by your own handlers propagate unchanged.
 
 ## Workers notes
 
 - **Compatibility date.** With `compatibility_date = "2026-10-01"` or later, `@x402/hono` runs without the `nodejs_compat` flag. With `2024-09-01` the build fails because `@x402/extensions` imports `url`; older projects need `nodejs_compat` or a newer date.
-- **Global scope.** Do not call `paymentMiddleware(...)` at module top level: it contacts the facilitator, which Workers forbid in global scope, and every request then returns 500. Build it lazily on the first request as in the quick start.
+- **Global scope.** Do not call `paymentMiddleware(...)` at module top level: it contacts the facilitator, which Workers forbid in global scope. Requests to routes protected by the payment middleware then return 500 ("Disallowed operation called within global scope"); unprotected routes keep working. Build it lazily on the first request as in the quick start.
 - **Body challenges over 64 KB.** Only the first 64 KB of a 402 body are read, and only within `timeoutMs`. A longer or slower body challenge is truncated, does not parse, and is recorded as `location: "none"` (or `"header"` when a header challenge is present).
 - **`ms` on Workers.** Workers advance the clock only across I/O, so `ms` covers time spent waiting on I/O downstream (fetches, KV, the facilitator); CPU time in your handlers does not advance it.
 

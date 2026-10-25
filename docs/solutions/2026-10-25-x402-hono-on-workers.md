@@ -3,14 +3,14 @@ title: "@x402/hono on Cloudflare Workers: compatibility date and global-scope I/
 date: 2026-10-25
 area: sdk
 tags: [cloudflare-workers, hono, nodejs_compat, x402-hono, wrangler]
-symptom: "Build fails with 'Could not resolve \"url\"' (compatibility_date 2024-09-01), or every request returns 500 right after start"
+symptom: "Build fails with 'Could not resolve \"url\"' (compatibility_date 2024-09-01), or requests to payment-protected routes return 500 right after start"
 ---
 
 ## Problem
 Two separate failures when putting `@x402/hono` (2.28.x) on a Worker under `wrangler dev`:
 
 1. With `compatibility_date = "2024-09-01"` and no `nodejs_compat`, the build fails because `@x402/extensions` imports `url`.
-2. With `paymentMiddleware(...)` called at module top level, every request returns 500. With `syncFacilitatorOnStart=false` it fails differently instead: "Facilitator does not support ... call initialize()".
+2. With `paymentMiddleware(...)` called at module top level, requests to routes protected by the payment middleware return 500 ("Disallowed operation called within global scope"); unprotected routes keep working. With `syncFacilitatorOnStart=false` it fails differently instead: "Facilitator does not support ... call initialize()".
 
 ## Cause
 1. Node built-ins and `Buffer` are only available globally from a recent compatibility date, or with the `nodejs_compat` flag. The old date has neither.
