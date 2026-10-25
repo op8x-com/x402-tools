@@ -1,0 +1,20 @@
+{
+  "name": "op8x-analytics-workers-example",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "facilitator": "node scripts/fake-facilitator.mjs",
+    "dev": "wrangler dev --ip 127.0.0.1 --port 8787"
+  },
+  "dependencies": {
+    "@op8x/analytics": "file:../..",
+    "@x402/core": "~2.28.0",
+    "@x402/evm": "~2.28.0",
+    "@x402/hono": "~2.28.0",
+    "hono": "^4.13.14"
+  },
+  "devDependencies": {
+    "wrangler": "^4.152.0"
+  }
+}

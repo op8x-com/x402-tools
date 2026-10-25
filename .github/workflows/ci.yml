@@ -40,3 +40,22 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+
+  analytics:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/analytics
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      # The peer range starts at hono 4.8.0, the first version with hono/route; test against that floor too.
+      - name: Test against the minimum hono version
+        run: npm i --no-save hono@4.8.0 && npm test

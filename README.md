@@ -10,5 +10,5 @@ Website: https://op8x.com
 | --- | --- |
 | `apps/site/` | Landing page for op8x.com, static on Cloudflare Workers (`npm run deploy`) |
 | `packages/cli/` | `@op8x/cli`: `npx @op8x/cli check <url>` diagnoses the 402 challenge of an x402 endpoint |
-| `packages/analytics/` | 402 analytics for sellers |
+| `packages/analytics/` | `@op8x/analytics` (pre-release, not on npm yet): fail-open Hono middleware for Cloudflare Workers that records one metadata entry per request to an x402 route |
 | `docs/` | Documentation |
