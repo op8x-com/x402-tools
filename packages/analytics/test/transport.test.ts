@@ -1,8 +1,11 @@
-import { test } from "node:test";
+import { beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
 import { createTransport } from "../src/transport.ts";
+import { resetWarnings } from "../src/warnings.ts";
 import { startCollector } from "./collector.ts";
 import type { AnalyticsRecord } from "../src/types.ts";
+
+beforeEach(() => resetWarnings());
 
 const SECRET = "SECRET-ROUTE-/posts/:id";
 const record: AnalyticsRecord = {
@@ -146,6 +149,7 @@ test("endpoint validation: https and loopback http are valid", async () => {
 
 test("invalid endpoints never throw and warn exactly once", async () => {
   for (const endpoint of ["ftp://collector.example/x", "http://example.com/x", "not a url"]) {
+    resetWarnings(); // the rate limit is shared per isolate
     const s = spies();
     let fetched = false;
     const f = (async () => {
@@ -270,4 +274,18 @@ test("fetch is called with redirect: manual", async () => {
   }) as typeof fetch;
   await createTransport({ endpoint: "https://collector.example/x" }, { fetch: f }).send(record);
   assert.equal(init?.redirect, "manual");
+});
+
+test("the rate limit is shared by transports of one isolate, per warning text", async () => {
+  const s = spies();
+  const f = (async () => {
+    throw new TypeError("boom");
+  }) as typeof fetch;
+  for (let i = 0; i < 50; i++) {
+    await createTransport({ endpoint: "https://collector.example/x" }, { ...s, now: () => 5_000_000, fetch: f }).send(record);
+  }
+  assert.equal(s.warns.length, 1);
+  const bad = (async () => new Response(null, { status: 500 })) as typeof fetch;
+  await createTransport({ endpoint: "https://collector.example/x" }, { ...s, now: () => 5_000_000, fetch: bad }).send(record);
+  assert.equal(s.warns.length, 2, "a different text is limited separately");
 });

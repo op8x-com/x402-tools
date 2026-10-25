@@ -1,5 +1,6 @@
 import type { AnalyticsOptions, AnalyticsRecord } from "./types.ts";
 import { VERSION } from "./version.ts";
+import { rateLimitOk } from "./warnings.ts";
 
 export interface Transport {
   /** Never rejects. */
@@ -23,7 +24,7 @@ export function clampTimeout(value: number | undefined): number {
   return Math.min(MAX_TIMEOUT_MS, Math.max(MIN_TIMEOUT_MS, value));
 }
 
-function validEndpoint(endpoint: string | undefined): string | undefined {
+export function validEndpoint(endpoint: string | undefined): string | undefined {
   if (endpoint === undefined) return undefined;
   try {
     const url = new URL(endpoint);
@@ -39,7 +40,6 @@ export function createTransport(options: AnalyticsOptions, deps: TransportDeps =
   let endpoint: string | undefined;
   let invalid = false;
   let timeoutMs = DEFAULT_TIMEOUT_MS;
-  let lastWarn = Number.NEGATIVE_INFINITY;
   const wantLog = options?.log === true;
 
   try {
@@ -58,8 +58,7 @@ export function createTransport(options: AnalyticsOptions, deps: TransportDeps =
   function warn(message: string): void {
     try {
       const now = (deps.now ?? Date.now)();
-      if (now - lastWarn < WARN_INTERVAL_MS) return;
-      lastWarn = now;
+      if (!rateLimitOk(message, now, WARN_INTERVAL_MS)) return;
       (deps.warn ?? console.warn)(message);
     } catch {
       // never let diagnostics break the seller

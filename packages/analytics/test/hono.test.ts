@@ -1,12 +1,16 @@
-import { test } from "node:test";
+import { beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
 import { Hono } from "hono";
 import type { ExecutionContext, MiddlewareHandler } from "hono";
 import { analytics } from "../src/hono.ts";
 import { hashPayer } from "../src/hash.ts";
 import type { AnalyticsOptions, AnalyticsRecord } from "../src/types.ts";
+import { resetWarnings } from "../src/warnings.ts";
 import { startCollector } from "./collector.ts";
 import { b64, PAYER, TX, v1Challenge, v2Challenge, v2Payment, v2Receipt } from "./fixtures.ts";
+
+// One-time warnings are module-scoped; every test starts with a clean slate.
+beforeEach(() => resetWarnings());
 
 const BIG = 1024 * 1024;
 /** Unusual fixed amount for the streamed 402 route, so a match cannot come from a default. */
@@ -790,3 +794,50 @@ for (const [name, make] of disabled) {
     assert.deepEqual(actual, expected);
   });
 }
+
+test("invalid endpoint without log takes the idle path: one warning, no snapshot, no background work", async (t) => {
+  const warn = t.mock.method(console, "warn", () => {});
+  const mw = analytics({ endpoint: "ftp://collector.example/x" });
+  const plain = buildApp(undefined);
+  const app = buildApp(mw);
+  const { ctx, promises } = fakeCtx();
+  const cloned = t.mock.method(Response.prototype, "clone");
+  for (const path of ["/json", "/json", "/items/abc123"]) {
+    const expected = await snapshot(await plain.request(path));
+    const actual = await snapshot(await app.request(path, undefined, {}, ctx));
+    assert.deepEqual(actual, expected);
+  }
+  assert.equal(promises.length, 0);
+  assert.equal(cloned.mock.callCount(), 0);
+  assert.equal(warn.mock.callCount(), 1);
+  assert.match(String(warn.mock.calls[0]!.arguments[0]), /invalid endpoint/);
+});
+
+test("per-request analytics() instances warn once per isolate", async (t) => {
+  const warn = t.mock.method(console, "warn", () => {});
+  t.mock.method(console, "log", () => {});
+  const app = new Hono();
+  app.use(async (c, next) => analytics({ salt: "", log: true })(c, next));
+  app.get("/json", (c) => c.json({ ok: true }));
+  const { ctx, promises } = fakeCtx();
+  for (let i = 0; i < 100; i++) await app.request("/json", undefined, {}, ctx);
+  await settleWithin(promises, 3000);
+  const salted = warn.mock.calls.filter((c) => String(c.arguments[0]).includes("salt must be"));
+  assert.equal(salted.length, 1);
+  assert.equal(warn.mock.callCount(), 1);
+});
+
+test("per-request idle and setup-failure instances warn once per isolate", async (t) => {
+  const warn = t.mock.method(console, "warn", () => {});
+  const hostile = {
+    get endpoint(): string {
+      throw new Error("hostile options");
+    },
+  } as unknown as AnalyticsOptions;
+  const app = new Hono();
+  app.use(async (c, next) => analytics({})(c, next));
+  app.use(async (c, next) => analytics(hostile)(c, next));
+  app.get("/json", (c) => c.json({ ok: true }));
+  for (let i = 0; i < 20; i++) await app.request("/json");
+  assert.equal(warn.mock.callCount(), 2);
+});

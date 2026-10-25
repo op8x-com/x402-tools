@@ -3,18 +3,20 @@ import { matchedRoutes } from "hono/route";
 import { hashPayer } from "./hash.ts";
 import { buildRecord } from "./record.ts";
 import type { RecordInput } from "./record.ts";
-import { clampTimeout, createTransport } from "./transport.ts";
+import { clampTimeout, createTransport, validEndpoint } from "./transport.ts";
 import type { Transport } from "./transport.ts";
 import type { AnalyticsOptions } from "./types.ts";
+import { firstTime } from "./warnings.ts";
 
 export type { AnalyticsOptions } from "./types.ts";
 
 /** Maximum bytes copied from a 402 response body. */
 const BODY_CAP = 64 * 1024;
 
+/** Warns at most once per isolate for this message (module-scoped, not per instance). */
 function warnOnce(message: string): void {
   try {
-    console.warn(message);
+    if (firstTime(message)) console.warn(message);
   } catch {
     // ignore
   }
@@ -133,12 +135,20 @@ export function analytics(options: AnalyticsOptions = {}): MiddlewareHandler {
   let hash: ((address: string) => Promise<string>) | undefined;
   let badSalt = false;
   let idle = false;
+  let idleMessage = "";
   let readDeadlineMs = 0;
   let chainCheck = false;
   try {
     const opts = options ?? {};
     transport = createTransport(opts);
-    idle = opts.endpoint === undefined && opts.log !== true;
+    // Idle: nothing can be recorded, i.e. no usable endpoint and no log.
+    if (opts.log !== true) {
+      idle = validEndpoint(opts.endpoint) === undefined;
+      idleMessage =
+        opts.endpoint === undefined
+          ? "op8x.analytics: no endpoint and log disabled, nothing is recorded"
+          : "op8x.analytics: invalid endpoint, sending disabled";
+    }
     readDeadlineMs = clampTimeout(opts.timeoutMs);
     chainCheck = opts.chainCheck === true;
     const salt: unknown = opts.salt;
@@ -151,8 +161,6 @@ export function analytics(options: AnalyticsOptions = {}): MiddlewareHandler {
     transport = undefined;
     warnOnce("op8x.analytics: setup failed, analytics disabled");
   }
-  let idleWarned = false;
-  let routeWarned = false;
 
   return async (c, next) => {
     // Disabled: `await next()` and return nothing. Returning next()'s value would hand Hono the
@@ -162,10 +170,7 @@ export function analytics(options: AnalyticsOptions = {}): MiddlewareHandler {
       return;
     }
     if (idle) {
-      if (!idleWarned) {
-        idleWarned = true;
-        warnOnce("op8x.analytics: no endpoint and log disabled, nothing is recorded");
-      }
+      warnOnce(idleMessage);
       await next();
       return;
     }
@@ -202,10 +207,7 @@ export function analytics(options: AnalyticsOptions = {}): MiddlewareHandler {
       // past our own index whose method is not "ALL" (app.use / catch-all middleware); else "".
       const routes = routesOf(c);
       if (routes === undefined) {
-        if (!routeWarned) {
-          routeWarned = true;
-          warnOnce("op8x.analytics: route unavailable (duplicate hono copy?)");
-        }
+        warnOnce("op8x.analytics: route unavailable (duplicate hono copy?)");
       } else {
         for (let i = routes.length - 1; i > entryIndex; i--) {
           const r = routes[i];
