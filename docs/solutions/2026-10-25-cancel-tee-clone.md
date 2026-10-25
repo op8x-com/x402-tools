@@ -17,3 +17,6 @@ Cancel without awaiting and swallow the rejection: `reader.cancel().catch(() => 
 
 ## Prevention
 The 1 MB body test in `packages/analytics/test/hono.test.ts` fails if the background task does not settle in time.
+
+## Follow-up: stalled bodies
+A 402 body that stalls under 64 KB kept the clone reader waiting in `read()`. The tee cancels its source only when both branches are cancelled, so a client cancel of the seller's response never reached the seller's stream and the background task outlived `timeoutMs`. `readCapped` now races each read against a deadline (the clamped `timeoutMs`) and cancels the clone on expiry. Test: "a stalled 402 body: the copy gives up after timeoutMs, so a client cancel reaches the source".
