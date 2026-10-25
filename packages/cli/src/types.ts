@@ -4,7 +4,7 @@ export type Level = "error" | "warn" | "info" | "pass";
 export interface Finding {
   id: string;
   level: Level;
-  method: Method | "both";
+  method: Method | "OPTIONS" | "both";
   title: string;
   detail: string;
   fix?: string;
@@ -19,6 +19,21 @@ export interface ProbeResult {
   bodyText: string;
   ms: number;
   /** Set when the request failed at network level (DNS, TLS, timeout). */
+  error?: string;
+}
+
+/** The CORS preflight sent after the probes, as a browser would before the paid retry. */
+export interface PreflightResult {
+  method: "OPTIONS";
+  url: string;
+  /** Sent as Access-Control-Request-Method. */
+  requestMethod: Method;
+  /** Sent as Access-Control-Request-Headers (comma-separated, lower-case). */
+  requestHeaders: string;
+  status?: number;
+  /** Response headers, keys lower-cased. */
+  headers: Record<string, string>;
+  ms: number;
   error?: string;
 }
 
@@ -44,4 +59,7 @@ export interface Extracted {
   version?: 1 | 2;
   cacheControl?: string;
   redirectTo?: string;
+  allowOrigin?: string;
+  exposeHeaders?: string;
+  allowCredentials?: string;
 }

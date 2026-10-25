@@ -89,3 +89,40 @@ test("--version and --help exit 0", async () => {
   assert.equal(io.stdout().trim(), VERSION);
   assert.equal(await run(["--help"], capture()), 0);
 });
+
+type JsonFinding = { id: string; level: string };
+
+test("CORS-ready endpoint gets a preflight and no CORS findings", async () => {
+  const io = capture();
+  assert.equal(await run(["check", `${server.url}/cors-good`, "--json"], io), 0);
+  const report = JSON.parse(io.stdout());
+  assert.deepEqual(
+    report.requests.map((r: { method: string }) => r.method),
+    ["GET", "POST", "OPTIONS"],
+  );
+  assert.deepEqual(report.requests[2].requestHeaders, {
+    "access-control-request-method": "POST",
+    "access-control-request-headers": "payment-signature,content-type",
+  });
+  assert.deepEqual(
+    report.findings.filter((f: JsonFinding) => f.id.startsWith("cors-")),
+    [],
+  );
+});
+
+test("endpoint without CORS gets one warning and no preflight", async () => {
+  const io = capture();
+  assert.equal(await run(["check", `${server.url}/v2-good`, "--json"], io), 0);
+  const report = JSON.parse(io.stdout());
+  assert.equal(report.requests.length, 2);
+  const cors = report.findings.filter((f: JsonFinding) => f.id.startsWith("cors-"));
+  assert.deepEqual(cors.map((f: JsonFinding) => [f.id, f.level]), [["cors-allow-origin", "warn"]]);
+});
+
+test("preflight that requires payment is reported, but only as a warning", async () => {
+  const io = capture();
+  assert.equal(await run(["check", `${server.url}/cors-paid-preflight`, "--json"], io), 0);
+  const ids = JSON.parse(io.stdout()).findings.map((f: JsonFinding) => f.id);
+  assert.ok(ids.includes("cors-preflight"));
+  assert.ok(ids.includes("cors-expose-headers"));
+});

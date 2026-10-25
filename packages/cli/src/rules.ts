@@ -1,6 +1,6 @@
 import { PaymentRequiredV1Schema, PaymentRequiredV2Schema } from "@x402/core/schemas";
 import { officialClientCanRead } from "./extract.ts";
-import type { Extracted, Finding, Level } from "./types.ts";
+import type { Extracted, Finding, Level, Method, PreflightResult } from "./types.ts";
 
 // Hint map for v2 endpoints still using v1 network names (EVM networks only).
 const LEGACY_TO_CAIP2: Record<string, string> = {
@@ -11,6 +11,18 @@ const LEGACY_TO_CAIP2: Record<string, string> = {
   avalanche: "eip155:43114",
   "avalanche-fuji": "eip155:43113",
 };
+
+// Flows defined in core spec v2, section 6.1. Clients must skip any other value.
+const PAYMENT_FLOWS: unknown[] = ["authorization", "upfront", "escrow"];
+
+// Mechanisms whose default flow is not "authorization" (specs/schemes in x402 at 4241d56).
+function defaultFlow(scheme: unknown, network: unknown): string {
+  const namespace = typeof network === "string" ? network.split(":")[0] : "";
+  if (scheme === "auth-capture") return "escrow";
+  if (scheme === "upto" && namespace === "solana") return "escrow";
+  if (scheme === "exact" && namespace === "lnbtc") return "upfront";
+  return "authorization";
+}
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -154,6 +166,26 @@ function methodRules(e: Extracted): Finding[] {
             'In v2, the price field is "amount" and "resource" is a top-level object.',
           );
         }
+        const flow = isObj(a.extra) ? a.extra.paymentFlow : undefined;
+        if (v === 2 && flow !== undefined && !PAYMENT_FLOWS.includes(flow)) {
+          add(
+            "payment-flow",
+            "error",
+            `Unknown payment flow ${JSON.stringify(flow)}`,
+            `accepts[${i}].extra.paymentFlow is ${JSON.stringify(flow)}. Clients must not pay for a flow they do not recognize and skip this entry.`,
+            'Use "authorization", "upfront" or "escrow", or omit it for the scheme default.',
+          );
+        }
+        const fallback = defaultFlow(a.scheme, net);
+        if (v === 2 && flow === undefined && fallback !== "authorization") {
+          add(
+            "payment-flow",
+            "warn",
+            "Payment flow not declared",
+            `accepts[${i}] (${String(a.scheme)} on ${String(net)}) defaults to the "${fallback}" flow, which settles before the resource runs. The spec requires extra.paymentFlow whenever the flow is not "authorization", so clients can tell without scheme-specific knowledge.`,
+            `Set extra.paymentFlow to "${fallback}".`,
+          );
+        }
         if (v === 1 && "amount" in a && !("maxAmountRequired" in a)) {
           covered.add(`accepts.${i}.maxAmountRequired`);
           add(
@@ -222,7 +254,160 @@ function merge(findings: Finding[]): Finding[] {
   return out;
 }
 
-export function runRules(results: Extracted[]): Finding[] {
+// CORS (x402 v2 HTTP transport, "Browser clients"). Warnings only: they affect browser clients.
+
+const BROWSER_ONLY = "Affects browser clients only.";
+const DISPLAY: Record<string, string> = {
+  "payment-signature": "PAYMENT-SIGNATURE",
+  "content-type": "Content-Type",
+  "x-payment": "X-PAYMENT",
+};
+
+const headerNames = (v: string | undefined) =>
+  (v ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+
+// "*" is a wildcard only on requests without credentials; with them it is a literal name.
+function missingNames(list: string | undefined, required: string[], credentialed: boolean): string[] {
+  const have = headerNames(list);
+  if (!credentialed && have.includes("*")) return [];
+  return required.filter((n) => !have.includes(n.toLowerCase()));
+}
+
+const isCredentialed = (v: string | undefined) => (v ?? "").trim().toLowerCase() === "true";
+const starNote = (list: string | undefined, credentialed: boolean) =>
+  credentialed && headerNames(list).includes("*") ? ' "*" does not cover credentialed requests.' : "";
+const shown = (v: string | undefined) => (v === undefined ? "not set" : `"${v}"`);
+
+function versionsSeen(results: Extracted[]): Set<number> {
+  const out = new Set<number>();
+  for (const e of results) {
+    for (const c of [e.header, e.bodyChallenge]) {
+      if (isObj(c) && (c.x402Version === 1 || c.x402Version === 2)) out.add(c.x402Version);
+    }
+  }
+  return out;
+}
+
+const corsReady = (results: Extracted[]) => results.filter((e) => !e.error && is402(e) && e.allowOrigin !== undefined);
+
+/** The preflight a browser sends before the paid retry; none if no 402 is CORS-enabled. */
+export function preflightPlan(results: Extracted[]): { method: Method; headers: string } | undefined {
+  const ready = corsReady(results);
+  if (ready.length === 0) return undefined;
+  const method: Method = ready.some((e) => e.method === "POST") ? "POST" : "GET";
+  const versions = versionsSeen(ready);
+  const headers = [
+    ...(versions.has(2) || !versions.has(1) ? ["payment-signature"] : []),
+    ...(method === "POST" ? ["content-type"] : []),
+    ...(versions.has(1) ? ["x-payment"] : []),
+  ];
+  return { method, headers: headers.join(",") };
+}
+
+function corsRules(results: Extracted[], pre: PreflightResult | undefined): Finding[] {
+  const out: Finding[] = [];
+  const add = (id: string, level: Level, method: Finding["method"], title: string, detail: string, fix: string) => {
+    out.push({ id, level, method, title, detail, fix });
+  };
+
+  const paid = results.filter((e) => !e.error && is402(e));
+  for (const e of paid.filter((x) => x.allowOrigin === undefined)) {
+    add(
+      "cors-allow-origin",
+      "warn",
+      e.method,
+      "402 without Access-Control-Allow-Origin",
+      `A browser hides the whole 402 from cross-origin pages, so a web app cannot read the price. ${BROWSER_ONLY}`,
+      "If browser apps should pay this endpoint, send Access-Control-Allow-Origin on the 402 and on the preflight.",
+    );
+  }
+  // Without Access-Control-Allow-Origin nothing else in CORS has any effect.
+  const ready = corsReady(results);
+  if (ready.length === 0) return out;
+
+  const versions = versionsSeen(paid);
+  const expose = [
+    ...(versions.has(2) || !versions.has(1) ? ["PAYMENT-REQUIRED", "PAYMENT-RESPONSE"] : []),
+    ...(versions.has(1) ? ["X-PAYMENT-RESPONSE"] : []),
+  ];
+  for (const e of ready) {
+    const credentialed = isCredentialed(e.allowCredentials);
+    const missing = missingNames(e.exposeHeaders, expose, credentialed);
+    if (missing.length === 0) continue;
+    add(
+      "cors-expose-headers",
+      "warn",
+      e.method,
+      "Payment headers not exposed to browsers",
+      `Access-Control-Expose-Headers is ${shown(e.exposeHeaders)}; missing: ${missing.join(", ")}.${starNote(e.exposeHeaders, credentialed)} The browser hides them and the client reports an empty challenge or receipt. ${BROWSER_ONLY}`,
+      `Add ${missing.join(", ")} to Access-Control-Expose-Headers, merged with any value already present.`,
+    );
+  }
+  if (!pre) return out;
+
+  const asked = `OPTIONS for ${pre.requestMethod} with ${pre.requestHeaders}`;
+  const refused = (title: string, detail: string, fix: string) =>
+    add("cors-preflight", "warn", "OPTIONS", title, `${detail} The browser refuses the paid retry with a network error. ${BROWSER_ONLY}`, fix);
+  if (pre.error) {
+    refused("Preflight request failed", `${asked}: ${pre.error}.`, "Answer OPTIONS preflights for this URL.");
+    return out;
+  }
+  if (pre.status === 402) {
+    refused(
+      "Preflight requires payment",
+      `${asked} returned 402.`,
+      "Answer the preflight OPTIONS without requiring payment, with a non-trivial Access-Control-Max-Age.",
+    );
+    return out;
+  }
+  if (pre.status === undefined || pre.status < 200 || pre.status > 299) {
+    refused(
+      `Preflight rejected (${pre.status})`,
+      `${asked} returned ${pre.status}; browsers need a 2xx.`,
+      "Answer the preflight OPTIONS with 204 and the CORS headers.",
+    );
+    return out;
+  }
+  if (pre.headers["access-control-allow-origin"] === undefined) {
+    refused(
+      "Preflight without Access-Control-Allow-Origin",
+      `${asked} returned ${pre.status} without Access-Control-Allow-Origin.`,
+      "Send Access-Control-Allow-Origin on the preflight too.",
+    );
+    return out;
+  }
+
+  const allow = pre.headers["access-control-allow-headers"];
+  const credentialed = isCredentialed(pre.headers["access-control-allow-credentials"]);
+  const required = headerNames(pre.requestHeaders).map((n) => DISPLAY[n] ?? n);
+  const missing = missingNames(allow, required, credentialed);
+  if (missing.length > 0) {
+    add(
+      "cors-allow-headers",
+      "warn",
+      "OPTIONS",
+      "Preflight does not allow the payment headers",
+      `Access-Control-Allow-Headers is ${shown(allow)}; missing: ${missing.join(", ")}.${starNote(allow, credentialed)} The browser refuses the paid retry with a network error. ${BROWSER_ONLY}`,
+      `Add ${missing.join(", ")} to Access-Control-Allow-Headers.`,
+    );
+  }
+  if (missingNames(allow, ["Access-Control-Expose-Headers"], credentialed).length > 0) {
+    add(
+      "cors-client-retry",
+      "info",
+      "OPTIONS",
+      "SDK retry sends Access-Control-Expose-Headers",
+      "@x402/fetch and @x402/axios 2.28.0 send Access-Control-Expose-Headers on the paid retry (fix pending in x402-foundation/x402#3478), so an allow list naming only the protocol headers refuses that retry.",
+      "Until the fix ships, add Access-Control-Expose-Headers to Access-Control-Allow-Headers.",
+    );
+  }
+  return out;
+}
+
+export function runRules(results: Extracted[], preflight?: PreflightResult): Finding[] {
   const all = results.flatMap(methodRules);
   const ok = results.filter((e) => !e.error);
 
@@ -248,5 +433,6 @@ export function runRules(results: Extracted[]): Finding[] {
       fix: `Clients often probe with GET first. Issue the challenge on ${no.method} too, or document the supported method.`,
     });
   }
+  all.push(...corsRules(results, preflight));
   return merge(all);
 }

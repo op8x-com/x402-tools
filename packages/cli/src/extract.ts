@@ -34,6 +34,9 @@ export function extract(p: ProbeResult): Extracted {
     location: "none",
     cacheControl: p.headers["cache-control"],
     redirectTo: p.headers["location"],
+    allowOrigin: p.headers["access-control-allow-origin"],
+    exposeHeaders: p.headers["access-control-expose-headers"],
+    allowCredentials: p.headers["access-control-allow-credentials"],
   };
 
   const headerRaw = p.headers["payment-required"];

@@ -1,6 +1,9 @@
-import type { Method, ProbeResult } from "./types.ts";
+import type { Method, PreflightResult, ProbeResult } from "./types.ts";
 
 const MAX_BODY_BYTES = 256 * 1024;
+
+/** Sent on every request so CORS-aware servers answer as they would to a browser. */
+export const ORIGIN = "https://op8x.com";
 
 export interface ProbeOptions {
   timeoutMs: number;
@@ -8,21 +11,29 @@ export interface ProbeOptions {
   fetchImpl?: typeof fetch;
 }
 
-export async function probe(url: string, method: Method, opts: ProbeOptions): Promise<ProbeResult> {
+interface Sent {
+  status?: number;
+  headers: Record<string, string>;
+  bodyText: string;
+  ms: number;
+  error?: string;
+}
+
+async function send(
+  url: string,
+  init: { method: string; headers: Record<string, string>; body?: string },
+  opts: ProbeOptions,
+): Promise<Sent> {
   const doFetch = opts.fetchImpl ?? fetch;
   const started = performance.now();
   const elapsed = () => Math.round(performance.now() - started);
-  const headers: Record<string, string> = {
-    accept: "application/json",
-    "user-agent": `op8x-cli/${opts.version} (+https://op8x.com)`,
-  };
-  if (method === "POST") headers["content-type"] = "application/json";
+  const headers = { "user-agent": `op8x-cli/${opts.version} (+https://op8x.com)`, origin: ORIGIN, ...init.headers };
 
   try {
     const res = await doFetch(url, {
-      method,
+      method: init.method,
       headers,
-      body: method === "POST" ? "{}" : undefined,
+      body: init.body,
       redirect: "manual",
       signal: AbortSignal.timeout(opts.timeoutMs),
     });
@@ -31,12 +42,33 @@ export async function probe(url: string, method: Method, opts: ProbeOptions): Pr
       responseHeaders[key.toLowerCase()] = value;
     });
     const bodyText = await readCapped(res, MAX_BODY_BYTES);
-    return { method, url, status: res.status, headers: responseHeaders, bodyText, ms: elapsed() };
+    return { status: res.status, headers: responseHeaders, bodyText, ms: elapsed() };
   } catch (e) {
     const err = e instanceof Error ? e : new Error(String(e));
     const message = err.name === "TimeoutError" ? `Timed out after ${opts.timeoutMs / 1000} s` : describe(err);
-    return { method, url, headers: {}, bodyText: "", ms: elapsed(), error: message };
+    return { headers: {}, bodyText: "", ms: elapsed(), error: message };
   }
+}
+
+export async function probe(url: string, method: Method, opts: ProbeOptions): Promise<ProbeResult> {
+  const headers: Record<string, string> = { accept: "application/json" };
+  if (method === "POST") headers["content-type"] = "application/json";
+  const r = await send(url, { method, headers, body: method === "POST" ? "{}" : undefined }, opts);
+  return { method, url, ...r };
+}
+
+export async function preflight(
+  url: string,
+  requestMethod: Method,
+  requestHeaders: string,
+  opts: ProbeOptions,
+): Promise<PreflightResult> {
+  const headers = {
+    "access-control-request-method": requestMethod,
+    "access-control-request-headers": requestHeaders,
+  };
+  const { bodyText: _bodyText, ...r } = await send(url, { method: "OPTIONS", headers }, opts);
+  return { method: "OPTIONS", url, requestMethod, requestHeaders, ...r };
 }
 
 function describe(err: Error): string {

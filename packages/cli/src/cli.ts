@@ -1,8 +1,8 @@
 import { parseArgs } from "node:util";
 import { extract } from "./extract.ts";
-import { probe } from "./probe.ts";
+import { preflight, probe } from "./probe.ts";
 import { buildReport, renderJson, renderText } from "./report.ts";
-import { runRules } from "./rules.ts";
+import { preflightPlan, runRules } from "./rules.ts";
 import type { Method, ProbeResult } from "./types.ts";
 import { VERSION } from "./version.ts";
 
@@ -88,12 +88,16 @@ export async function run(argv: string[], io: Io): Promise<number> {
     return 2;
   }
 
+  const opts = { timeoutMs: timeout * 1000, version: VERSION, fetchImpl: io.fetchImpl };
   const probes: ProbeResult[] = [];
   for (const m of methods) {
-    probes.push(await probe(url.href, m, { timeoutMs: timeout * 1000, version: VERSION, fetchImpl: io.fetchImpl }));
+    probes.push(await probe(url.href, m, opts));
   }
-  const findings = runRules(probes.map(extract));
-  const report = buildReport(url.href, VERSION, probes, findings);
+  const extracted = probes.map(extract);
+  const plan = preflightPlan(extracted);
+  const pre = plan ? await preflight(url.href, plan.method, plan.headers, opts) : undefined;
+  const findings = runRules(extracted, pre);
+  const report = buildReport(url.href, VERSION, pre ? [...probes, pre] : probes, findings);
   io.out(values.json ? renderJson(report) : renderText(report, io.color));
 
   if (probes.every((p) => p.error)) return 2;

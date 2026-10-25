@@ -1,11 +1,12 @@
-import type { Finding, Level, ProbeResult } from "./types.ts";
+import { ORIGIN } from "./probe.ts";
+import type { Finding, Level, PreflightResult, ProbeResult } from "./types.ts";
 
 export interface Report {
   tool: "op8x";
   version: string;
   url: string;
   checkedAt: string;
-  requests: { method: string; status?: number; ms: number; error?: string }[];
+  requests: { method: string; status?: number; ms: number; error?: string; requestHeaders?: Record<string, string> }[];
   findings: Finding[];
   summary: { errors: number; warnings: number };
 }
@@ -17,7 +18,7 @@ const COLOR: Record<Level, string> = { error: "31", warn: "33", info: "36", pass
 export function buildReport(
   url: string,
   version: string,
-  probes: ProbeResult[],
+  probes: (ProbeResult | PreflightResult)[],
   findings: Finding[],
   now: Date = new Date(),
 ): Report {
@@ -31,6 +32,14 @@ export function buildReport(
       ...(p.status !== undefined ? { status: p.status } : {}),
       ms: p.ms,
       ...(p.error ? { error: p.error } : {}),
+      ...(p.method === "OPTIONS"
+        ? {
+            requestHeaders: {
+              "access-control-request-method": p.requestMethod,
+              "access-control-request-headers": p.requestHeaders,
+            },
+          }
+        : {}),
     })),
     findings,
     summary: {
@@ -64,17 +73,23 @@ export function renderText(r: Report, color: boolean): string {
   }
 
   lines.push("", "Reproduce:");
+  const origin = `-H ${quote(`Origin: ${ORIGIN}`)}`;
   for (const q of r.requests) {
-    lines.push(
-      q.method === "POST"
-        ? `  curl -i -X POST -H 'Content-Type: application/json' -d '{}' ${quote(r.url)}`
-        : `  curl -i -X ${q.method} ${quote(r.url)}`,
-    );
+    if (q.method === "POST") {
+      lines.push(`  curl -i -X POST ${origin} -H 'Content-Type: application/json' -d '{}' ${quote(r.url)}`);
+    } else if (q.method === "OPTIONS" && q.requestHeaders) {
+      const acr = q.requestHeaders;
+      lines.push(
+        `  curl -i -X OPTIONS ${origin} -H ${quote(`Access-Control-Request-Method: ${acr["access-control-request-method"]}`)} -H ${quote(`Access-Control-Request-Headers: ${acr["access-control-request-headers"]}`)} ${quote(r.url)}`,
+      );
+    } else {
+      lines.push(`  curl -i -X ${q.method} ${origin} ${quote(r.url)}`);
+    }
   }
   lines.push(
     "",
     `Summary: ${count(r.summary.errors, "error")}, ${count(r.summary.warnings, "warning")}`,
-    `Listing, CORS and Bazaar checks: npx x402-listing-check ${r.url}`,
+    `Listing and Bazaar checks: npx x402-listing-check ${r.url}`,
     "op8x · https://op8x.com",
   );
   return `${lines.join("\n")}\n`;

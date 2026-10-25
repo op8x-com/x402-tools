@@ -73,3 +73,16 @@ test("copies status, cache-control, location and network error", () => {
   const failed = extract({ method: "GET", url: "u", headers: {}, bodyText: "", ms: 1, error: "boom" });
   assert.equal(failed.error, "boom");
 });
+
+test("extract keeps the CORS response headers", () => {
+  const e = extract(
+    pr("GET", 402, {
+      "access-control-allow-origin": "*",
+      "access-control-expose-headers": "PAYMENT-REQUIRED",
+      "access-control-allow-credentials": "true",
+    }),
+  );
+  assert.equal(e.allowOrigin, "*");
+  assert.equal(e.exposeHeaders, "PAYMENT-REQUIRED");
+  assert.equal(e.allowCredentials, "true");
+});

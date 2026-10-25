@@ -30,6 +30,34 @@ export async function startServer(): Promise<{ url: string; close: () => Promise
       case "/redirect":
         res.writeHead(302, { location: "/v2-good" });
         return res.end();
+      case "/cors-good":
+        if (req.method === "OPTIONS") {
+          res.writeHead(204, {
+            "access-control-allow-origin": "https://op8x.com",
+            "access-control-allow-headers": "PAYMENT-SIGNATURE, Content-Type, Access-Control-Expose-Headers",
+            "access-control-max-age": "600",
+          });
+          return res.end();
+        }
+        return json(
+          402,
+          {
+            ...challenge,
+            "access-control-allow-origin": "https://op8x.com",
+            "access-control-expose-headers": "PAYMENT-REQUIRED, PAYMENT-RESPONSE",
+          },
+          {},
+        );
+      case "/cors-paid-preflight":
+        return json(402, { ...challenge, "access-control-allow-origin": "*" }, {});
+      case "/echo-preflight":
+        res.writeHead(204, {
+          "x-echo-method": req.method ?? "",
+          "x-echo-origin": String(req.headers["origin"]),
+          "x-echo-acrm": String(req.headers["access-control-request-method"]),
+          "x-echo-acrh": String(req.headers["access-control-request-headers"]),
+        });
+        return res.end();
       case "/echo-headers":
         return json(200, {}, { method: req.method, headers: req.headers });
       default:

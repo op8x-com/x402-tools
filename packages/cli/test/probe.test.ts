@@ -1,6 +1,6 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { probe } from "../src/probe.ts";
+import { ORIGIN, preflight, probe } from "../src/probe.ts";
 import { startServer } from "./server.ts";
 
 let server: Awaited<ReturnType<typeof startServer>>;
@@ -52,4 +52,26 @@ test("timeout becomes a readable error", async () => {
     });
   const r = await probe("https://example.invalid/", "GET", { timeoutMs: 50, version: "0.0.1", fetchImpl: hanging });
   assert.equal(r.error, "Timed out after 0.05 s");
+});
+
+test("sends an Origin header so CORS servers answer as they would to a browser", async () => {
+  const r = await probe(`${server.url}/echo-headers`, "GET", opts);
+  assert.equal(JSON.parse(r.bodyText).headers["origin"], ORIGIN);
+});
+
+test("preflight sends OPTIONS with Origin and the requested method and headers", async () => {
+  const r = await preflight(`${server.url}/echo-preflight`, "POST", "payment-signature,content-type", opts);
+  assert.equal(r.method, "OPTIONS");
+  assert.equal(r.status, 204);
+  assert.equal(r.requestMethod, "POST");
+  assert.equal(r.requestHeaders, "payment-signature,content-type");
+  assert.equal(r.headers["x-echo-method"], "OPTIONS");
+  assert.equal(r.headers["x-echo-origin"], ORIGIN);
+  assert.equal(r.headers["x-echo-acrm"], "POST");
+  assert.equal(r.headers["x-echo-acrh"], "payment-signature,content-type");
+});
+
+test("preflight network error becomes a result", async () => {
+  const r = await preflight("http://127.0.0.1:9/", "GET", "payment-signature", opts);
+  assert.ok(r.error);
 });
