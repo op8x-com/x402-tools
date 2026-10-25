@@ -29,6 +29,12 @@ npm install --install-links <path-to>/x402-tools/packages/analytics
 
 ## Quick start
 
+The snippet also uses these packages (the 2.28 line is what the example is tested with):
+
+```
+npm install hono @x402/hono@~2.28.0 @x402/core@~2.28.0 @x402/evm@~2.28.0
+```
+
 ```ts
 import { Hono, type MiddlewareHandler } from "hono";
 import { analytics } from "@op8x/analytics/hono";
@@ -90,7 +96,7 @@ analytics({
 | --- | --- | --- |
 | `endpoint` | none | `https` URL that receives each record as a JSON `POST` (`http` only for `localhost` and `127.0.0.1`). Omitted: no network sends. An invalid value is not an error: one warning is logged and sending stays off. |
 | `log` | `false` | Write one `console.log("op8x.analytics", <json>)` line per record. |
-| `salt` | none | Enables the `payer` field (a keyed hash of the payer address). Omitted: no `payer` field at all. Keep it secret. |
+| `salt` | none | Enables the `payer` field (a keyed hash of the payer address). Omitted: no `payer` field at all. A blank value (empty or whitespace) also disables hashing and logs one warning, `op8x.analytics: empty salt, payer hashing disabled`. Keep it secret. |
 | `timeoutMs` | `2000` | Abort the send after this long. Clamped to 100..10000. |
 
 ## Record fields
@@ -104,7 +110,7 @@ Version 1. One record per request that passes through the middleware. Strings ar
 | `ts` | ISO 8601 time the request started. |
 | `ms` | Time spent downstream of the middleware, in milliseconds. |
 | `method` | HTTP method. |
-| `route` | Matched route pattern, such as `/posts/:id`; empty when no route handler matched. Never the concrete path. |
+| `route` | Pattern of the last matched route registered after the middleware, such as `/posts/:id`. `app.use` middlewares and `app.all()` handlers (method `ALL`) are ignored, so a handler registered with `app.all()` records `""`, as does a request where no such route matched. Never the concrete path. |
 | `status` | Final response status. |
 | `ua` | User-Agent class: `x402-client`, `axios`, `node`, `python`, `go`, `curl`, `browser`, `op8x`, `none` or `other`. The raw header is never stored. |
 | `type` | `payment.received` when the request carried a payment header, else `challenge.issued` for a 402, else `request.unpaid`. |

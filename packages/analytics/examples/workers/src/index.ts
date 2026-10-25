@@ -13,8 +13,8 @@ const app = new Hono<{ Bindings: Bindings }>();
 
 // Workers forbid network I/O in global scope, and paymentMiddleware() starts a request to the
 // facilitator when it is created. Build it on the first request instead.
-// The analytics middleware is built lazily too, only because its options come from the
-// per-request bindings (Workers expose them per request, not in global scope).
+// The analytics middleware is built on the first request too, for simplicity: its options come
+// from the bindings, which are read per request here.
 let track: MiddlewareHandler | undefined;
 let pay: MiddlewareHandler | undefined;
 
