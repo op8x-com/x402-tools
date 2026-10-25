@@ -1,0 +1,47 @@
+{
+  "name": "@op8x/analytics",
+  "version": "0.0.1",
+  "description": "Fail-open request analytics for x402 sellers: records 402 challenges, payments and receipts as metadata.",
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "homepage": "https://op8x.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/op8x-com/x402-tools.git",
+    "directory": "packages/analytics"
+  },
+  "keywords": [
+    "x402",
+    "http-402",
+    "payments",
+    "analytics",
+    "hono",
+    "cloudflare-workers",
+    "agents"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "test": "node --test \"test/*.test.ts\"",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "peerDependencies": {
+    "hono": ">=4.9.9"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "hono": "^4.13.0",
+    "typescript": "5.9.3"
+  }
+}
