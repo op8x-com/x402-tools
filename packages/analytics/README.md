@@ -77,6 +77,8 @@ Deploy or run `wrangler dev`, send a request, and watch the log with `wrangler t
 op8x.analytics {"v":1,"id":"...","ts":"2026-10-25T16:13:37.144Z","ms":19,"method":"GET","route":"/paid","status":402,"ua":"curl","type":"challenge.issued","challenge":{"location":"header","version":2,"error":"Payment required","accepts":[{"scheme":"exact","network":"eip155:84532","amount":"10000","asset":"0x036C..."}]}}
 ```
 
+Build `analytics()` once per isolate (at module scope, as above, or lazily once), not per request. One-time warnings are deduplicated per isolate either way, but a per-request instance does needless setup work on every request.
+
 A complete, runnable app with a local fake facilitator (no money, no network) is in [`examples/workers`](examples/workers).
 
 The middleware works at the transport level: it reads request headers, the response status and headers, and, for 402 responses only, a copy of the response body. It does not depend on `@x402/hono` or `@x402/core`, so it also records hand-written 402 responses.
@@ -128,7 +130,7 @@ Version 1. One record per request that passes through the middleware. Strings ar
 - The URL path and query string; only the route pattern is recorded.
 - Cookies, `authorization` and the raw User-Agent.
 - Payment signatures and the payment payload, except the payer address, which is hashed with your `salt` before it leaves the middleware and is not recorded at all without a `salt`.
-- The receipt's transaction hash, unless you set `chainCheck: true`. With `chainCheck: true` the record includes the public transaction hash so the collector can confirm settlement on-chain. The hash links the record to the payer address on-chain, so the collector uses it only for that check, stores only the result and deletes the hash afterwards.
+- The receipt's transaction hash, unless you set `chainCheck: true`. With `chainCheck: true` the record includes the public transaction hash so the collector can confirm settlement on-chain. The hash links the record to the payer address on-chain. op8x's hosted collector uses it only for that check, stores only the result and deletes the hash afterwards. If you point `endpoint` at your own server, handle it the same way. With `log: true` the hash also appears in the Worker log, where this deletion does not apply.
 
 ## Guarantees
 

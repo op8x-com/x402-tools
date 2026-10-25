@@ -79,7 +79,7 @@ interface AnalyticsOptions {
 
 An invalid `endpoint` (unparsable, wrong scheme) does not throw. The middleware logs one warning on first use and runs as if no endpoint were set. With neither `endpoint` nor `log: true` the middleware logs one warning on the first request (`op8x.analytics: no endpoint and log disabled, nothing is recorded`) and does no work at all. A `salt` that is not a non-empty string disables hashing with one warning (`op8x.analytics: salt must be a non-empty string, payer hashing disabled`).
 
-With `chainCheck: true` the record includes the public transaction hash so the collector can confirm settlement on-chain. The hash links the record to the payer address on-chain, so the collector uses it only for that check, stores only the result and deletes the hash afterwards. Without `chainCheck` the transaction field is never read.
+With `chainCheck: true` the record includes the public transaction hash so the collector can confirm settlement on-chain. The hash links the record to the payer address on-chain. op8x's hosted collector uses it only for that check, stores only the result and deletes the hash afterwards. If you point `endpoint` at your own server, handle it the same way. With `log: true` the hash also appears in the Worker log, where this deletion does not apply. Without `chainCheck` the transaction field is never read.
 
 ## Record format (version 1)
 
