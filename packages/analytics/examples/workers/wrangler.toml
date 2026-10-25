@@ -1,0 +1,10 @@
+name = "op8x-analytics-example"
+main = "src/index.ts"
+# A date from 2026-10 on provides Buffer globally, so no nodejs_compat flag is needed.
+compatibility_date = "2026-10-01"
+
+[vars]
+# Local fake facilitator (npm run facilitator). Replace with a real facilitator URL for real payments.
+FACILITATOR_URL = "http://127.0.0.1:4021"
+# Optional: POST every record to this URL (https, or http on localhost/127.0.0.1).
+# ANALYTICS_ENDPOINT = "https://collector.example/v1/events"
