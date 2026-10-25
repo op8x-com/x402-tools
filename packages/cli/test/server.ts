@@ -48,6 +48,12 @@ export async function startServer(): Promise<{ url: string; close: () => Promise
           },
           {},
         );
+      case "/refuses-browsers":
+        if (req.headers["origin"]) {
+          res.writeHead(403);
+          return res.end();
+        }
+        return json(402, challenge, {});
       case "/cors-paid-preflight":
         return json(402, { ...challenge, "access-control-allow-origin": "*" }, {});
       case "/echo-preflight":

@@ -291,7 +291,11 @@ function versionsSeen(results: Extracted[]): Set<number> {
   return out;
 }
 
-const corsReady = (results: Extracted[]) => results.filter((e) => !e.error && is402(e) && e.allowOrigin !== undefined);
+// The browser-like probe got a 402 too (or did not run, e.g. in unit tests).
+const browserGets402 = (e: Extracted) => e.originError === undefined && (e.originStatus === undefined || e.originStatus === 402);
+
+const corsReady = (results: Extracted[]) =>
+  results.filter((e) => !e.error && is402(e) && browserGets402(e) && e.allowOrigin !== undefined);
 
 /** The preflight a browser sends before the paid retry; none if no 402 is CORS-enabled. */
 export function preflightPlan(results: Extracted[]): { method: Method; headers: string } | undefined {
@@ -314,13 +318,24 @@ function corsRules(results: Extracted[], pre: PreflightResult | undefined): Find
   };
 
   const paid = results.filter((e) => !e.error && is402(e));
-  for (const e of paid.filter((x) => x.allowOrigin === undefined)) {
+  // Servers and agents need no CORS, so these two are hints, not warnings.
+  for (const e of paid.filter((x) => !browserGets402(x))) {
+    add(
+      "cors-origin-refused",
+      "info",
+      e.method,
+      "Browser requests get no 402",
+      `With an Origin header the same request ${e.originError ? `failed: ${e.originError}` : `returned ${e.originStatus}`}. Fine if only servers and agents should pay; web apps cannot. ${BROWSER_ONLY}`,
+      "If browser apps should pay this endpoint, answer requests with an Origin header with the same 402 plus CORS headers.",
+    );
+  }
+  for (const e of paid.filter((x) => browserGets402(x) && x.allowOrigin === undefined)) {
     add(
       "cors-allow-origin",
-      "warn",
+      "info",
       e.method,
       "402 without Access-Control-Allow-Origin",
-      `A browser hides the whole 402 from cross-origin pages, so a web app cannot read the price. ${BROWSER_ONLY}`,
+      `A browser hides the whole 402 from cross-origin pages, so a web app cannot read the price. Fine if only servers and agents should pay. ${BROWSER_ONLY}`,
       "If browser apps should pay this endpoint, send Access-Control-Allow-Origin on the 402 and on the preflight.",
     );
   }

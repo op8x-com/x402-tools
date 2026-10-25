@@ -20,6 +20,8 @@ export interface ProbeResult {
   ms: number;
   /** Set when the request failed at network level (DNS, TLS, timeout). */
   error?: string;
+  /** Origin header sent, for the browser-like probe that follows a 402. */
+  origin?: string;
 }
 
 /** The CORS preflight sent after the probes, as a browser would before the paid retry. */
@@ -62,4 +64,7 @@ export interface Extracted {
   allowOrigin?: string;
   exposeHeaders?: string;
   allowCredentials?: string;
+  /** Status of the same request sent with an Origin header, when that probe ran. */
+  originStatus?: number;
+  originError?: string;
 }

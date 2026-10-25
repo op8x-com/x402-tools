@@ -6,7 +6,14 @@ export interface Report {
   version: string;
   url: string;
   checkedAt: string;
-  requests: { method: string; status?: number; ms: number; error?: string; requestHeaders?: Record<string, string> }[];
+  requests: {
+    method: string;
+    status?: number;
+    ms: number;
+    error?: string;
+    origin?: string;
+    requestHeaders?: Record<string, string>;
+  }[];
   findings: Finding[];
   summary: { errors: number; warnings: number };
 }
@@ -32,8 +39,10 @@ export function buildReport(
       ...(p.status !== undefined ? { status: p.status } : {}),
       ms: p.ms,
       ...(p.error ? { error: p.error } : {}),
+      ...(p.method !== "OPTIONS" && p.origin ? { origin: p.origin } : {}),
       ...(p.method === "OPTIONS"
         ? {
+            origin: ORIGIN,
             requestHeaders: {
               "access-control-request-method": p.requestMethod,
               "access-control-request-headers": p.requestHeaders,
@@ -61,7 +70,8 @@ export function renderText(r: Report, color: boolean): string {
   const lines: string[] = [`op8x check ${r.url}`, ""];
 
   for (const q of r.requests) {
-    lines.push(`  ${q.method.padEnd(4)} ${q.error ? `failed (${q.error})` : String(q.status)}  ${q.ms} ms`);
+    const as = q.method !== "OPTIONS" && q.origin ? "  (with Origin)" : "";
+    lines.push(`  ${q.method.padEnd(4)} ${q.error ? `failed (${q.error})` : String(q.status)}  ${q.ms} ms${as}`);
   }
   lines.push("");
 
@@ -73,17 +83,17 @@ export function renderText(r: Report, color: boolean): string {
   }
 
   lines.push("", "Reproduce:");
-  const origin = `-H ${quote(`Origin: ${ORIGIN}`)}`;
   for (const q of r.requests) {
+    const origin = q.origin ? ` -H ${quote(`Origin: ${q.origin}`)}` : "";
     if (q.method === "POST") {
-      lines.push(`  curl -i -X POST ${origin} -H 'Content-Type: application/json' -d '{}' ${quote(r.url)}`);
+      lines.push(`  curl -i -X POST${origin} -H 'Content-Type: application/json' -d '{}' ${quote(r.url)}`);
     } else if (q.method === "OPTIONS" && q.requestHeaders) {
       const acr = q.requestHeaders;
       lines.push(
-        `  curl -i -X OPTIONS ${origin} -H ${quote(`Access-Control-Request-Method: ${acr["access-control-request-method"]}`)} -H ${quote(`Access-Control-Request-Headers: ${acr["access-control-request-headers"]}`)} ${quote(r.url)}`,
+        `  curl -i -X OPTIONS${origin} -H ${quote(`Access-Control-Request-Method: ${acr["access-control-request-method"]}`)} -H ${quote(`Access-Control-Request-Headers: ${acr["access-control-request-headers"]}`)} ${quote(r.url)}`,
       );
     } else {
-      lines.push(`  curl -i -X ${q.method} ${origin} ${quote(r.url)}`);
+      lines.push(`  curl -i -X ${q.method}${origin} ${quote(r.url)}`);
     }
   }
   lines.push(

@@ -158,11 +158,21 @@ test("fully configured CORS produces no CORS findings", () => {
   assert.deepEqual(ids(fs).filter((i) => i.startsWith("cors-")), []);
 });
 
-test("402 without Access-Control-Allow-Origin warns once and skips the other CORS checks", () => {
+test("browser probe without 402 is a hint and skips the other CORS checks", () => {
+  const refused = (m: "GET" | "POST") => ({ ...corsV2(m), originStatus: 403 });
+  const fs = runRules([refused("GET"), refused("POST")], pf(204, PF_OK));
+  const f = fs.filter((x) => x.id.startsWith("cors-"));
+  assert.deepEqual(ids(f), ["cors-origin-refused"]);
+  assert.equal(f[0].level, "info");
+  assert.match(f[0].detail, /returned 403/);
+  assert.equal(preflightPlan([refused("GET")]), undefined);
+});
+
+test("402 without Access-Control-Allow-Origin is a hint once and skips the other CORS checks", () => {
   const fs = runRules([v2ok("GET"), v2ok("POST")]);
   const f = fs.filter((x) => x.id.startsWith("cors-"));
   assert.deepEqual(ids(f), ["cors-allow-origin"]);
-  assert.equal(f[0].level, "warn");
+  assert.equal(f[0].level, "info");
   assert.equal(f[0].method, "both");
   assert.match(f[0].detail, /browser/i);
 });

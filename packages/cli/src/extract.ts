@@ -64,6 +64,18 @@ export function extract(p: ProbeResult): Extracted {
   return out;
 }
 
+/** Takes the CORS headers from the browser-like probe of the same method. */
+export function withBrowserView(e: Extracted, browser: ProbeResult): Extracted {
+  return {
+    ...e,
+    allowOrigin: browser.headers["access-control-allow-origin"],
+    exposeHeaders: browser.headers["access-control-expose-headers"],
+    allowCredentials: browser.headers["access-control-allow-credentials"],
+    ...(browser.status !== undefined ? { originStatus: browser.status } : {}),
+    ...(browser.error ? { originError: browser.error } : {}),
+  };
+}
+
 /**
  * Mirrors x402HTTPClient.getPaymentRequiredResponse in @x402/core 2.28:
  * header first; without a header, only a v1 body is accepted.

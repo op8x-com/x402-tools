@@ -2,7 +2,10 @@ import type { Method, PreflightResult, ProbeResult } from "./types.ts";
 
 const MAX_BODY_BYTES = 256 * 1024;
 
-/** Sent on every request so CORS-aware servers answer as they would to a browser. */
+/**
+ * Sent on the browser-like probe and the preflight only. The plain probes go without it,
+ * because a server may refuse browser origins on a paid route (x402 v2 HTTP transport).
+ */
 export const ORIGIN = "https://op8x.com";
 
 export interface ProbeOptions {
@@ -27,7 +30,7 @@ async function send(
   const doFetch = opts.fetchImpl ?? fetch;
   const started = performance.now();
   const elapsed = () => Math.round(performance.now() - started);
-  const headers = { "user-agent": `op8x-cli/${opts.version} (+https://op8x.com)`, origin: ORIGIN, ...init.headers };
+  const headers = { "user-agent": `op8x-cli/${opts.version} (+https://op8x.com)`, ...init.headers };
 
   try {
     const res = await doFetch(url, {
@@ -50,11 +53,13 @@ async function send(
   }
 }
 
-export async function probe(url: string, method: Method, opts: ProbeOptions): Promise<ProbeResult> {
+/** An unpaid request; with `browser`, sent with an Origin header as a web app would. */
+export async function probe(url: string, method: Method, opts: ProbeOptions, browser = false): Promise<ProbeResult> {
   const headers: Record<string, string> = { accept: "application/json" };
   if (method === "POST") headers["content-type"] = "application/json";
+  if (browser) headers.origin = ORIGIN;
   const r = await send(url, { method, headers, body: method === "POST" ? "{}" : undefined }, opts);
-  return { method, url, ...r };
+  return { method, url, ...r, ...(browser ? { origin: ORIGIN } : {}) };
 }
 
 export async function preflight(
@@ -64,6 +69,7 @@ export async function preflight(
   opts: ProbeOptions,
 ): Promise<PreflightResult> {
   const headers = {
+    origin: ORIGIN,
     "access-control-request-method": requestMethod,
     "access-control-request-headers": requestHeaders,
   };

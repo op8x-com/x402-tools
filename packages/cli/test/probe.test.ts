@@ -54,9 +54,16 @@ test("timeout becomes a readable error", async () => {
   assert.equal(r.error, "Timed out after 0.05 s");
 });
 
-test("sends an Origin header so CORS servers answer as they would to a browser", async () => {
+test("plain probes send no Origin header", async () => {
   const r = await probe(`${server.url}/echo-headers`, "GET", opts);
+  assert.equal(JSON.parse(r.bodyText).headers["origin"], undefined);
+  assert.equal(r.origin, undefined);
+});
+
+test("browser probe sends an Origin header and records it", async () => {
+  const r = await probe(`${server.url}/echo-headers`, "GET", opts, true);
   assert.equal(JSON.parse(r.bodyText).headers["origin"], ORIGIN);
+  assert.equal(r.origin, ORIGIN);
 });
 
 test("preflight sends OPTIONS with Origin and the requested method and headers", async () => {

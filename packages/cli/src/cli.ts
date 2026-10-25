@@ -1,8 +1,8 @@
 import { parseArgs } from "node:util";
-import { extract } from "./extract.ts";
+import { extract, withBrowserView } from "./extract.ts";
 import { preflight, probe } from "./probe.ts";
 import { buildReport, renderJson, renderText } from "./report.ts";
-import { preflightPlan, runRules } from "./rules.ts";
+import { is402, preflightPlan, runRules } from "./rules.ts";
 import type { Method, ProbeResult } from "./types.ts";
 import { VERSION } from "./version.ts";
 
@@ -93,11 +93,24 @@ export async function run(argv: string[], io: Io): Promise<number> {
   for (const m of methods) {
     probes.push(await probe(url.href, m, opts));
   }
-  const extracted = probes.map(extract);
+  // Repeat each 402 as a browser would (with Origin); the plain probes stay origin-free
+  // so a server that refuses browser origins is still diagnosed correctly.
+  const browserProbes: ProbeResult[] = [];
+  const extracted = [];
+  for (const e of probes.map(extract)) {
+    if (e.error || !is402(e)) {
+      extracted.push(e);
+      continue;
+    }
+    const b = await probe(url.href, e.method, opts, true);
+    browserProbes.push(b);
+    extracted.push(withBrowserView(e, b));
+  }
   const plan = preflightPlan(extracted);
   const pre = plan ? await preflight(url.href, plan.method, plan.headers, opts) : undefined;
   const findings = runRules(extracted, pre);
-  const report = buildReport(url.href, VERSION, pre ? [...probes, pre] : probes, findings);
+  const sent = [...probes, ...browserProbes, ...(pre ? [pre] : [])];
+  const report = buildReport(url.href, VERSION, sent, findings);
   io.out(values.json ? renderJson(report) : renderText(report, io.color));
 
   if (probes.every((p) => p.error)) return 2;
