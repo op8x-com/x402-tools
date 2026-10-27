@@ -177,3 +177,18 @@ test("MCP endpoint exits 0 with a hint and sends only GET and POST", async () =>
     ["GET", "POST"],
   );
 });
+
+test("v2 only in the header gets the v1 hint without failing the check", async () => {
+  const io = capture();
+  assert.equal(await run(["check", `${server.url}/v2-good`], io), 0);
+  const text = io.stdout();
+  assert.match(text, /i info  \[both\] v1 clients cannot read your terms: the body has no challenge/);
+  assert.match(text, /Summary: 0 errors, 0 warnings/);
+
+  const j = capture();
+  assert.equal(await run(["check", `${server.url}/v2-good`, "--json"], j), 0);
+  const report = JSON.parse(j.stdout());
+  const hint = report.findings.filter((f: JsonFinding) => f.id === "v2-header-only");
+  assert.deepEqual(hint.map((f: JsonFinding) => f.level), ["info"]);
+  assert.deepEqual(report.summary, { errors: 0, warnings: 0 });
+});

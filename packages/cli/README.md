@@ -18,6 +18,7 @@ Or install it once and use the short command: `npm install -g @op8x/cli`, then `
 - schema errors, checked with the official `@x402/core` schemas
 - `extra.paymentFlow` that clients do not recognize (not `authorization`, `upfront` or `escrow`), or missing where the scheme default is not `authorization` (`auth-capture`, `upto` on Solana, `exact` on Lightning)
 - CORS for browser clients (never errors): `PAYMENT-REQUIRED`/`PAYMENT-RESPONSE` not in `Access-Control-Expose-Headers`, `PAYMENT-SIGNATURE`/`Content-Type` not in `Access-Control-Allow-Headers`, missing v1 spellings (`X-PAYMENT`, `X-PAYMENT-RESPONSE`) on dual-version endpoints, a preflight that requires payment. A `*` does not count on credentialed requests. An endpoint without `Access-Control-Allow-Origin`, or one that refuses browser origins, only gets a hint: servers and agents need no CORS.
+- v2 challenge only in the header (a hint, never an error): v1 clients such as `x402-fetch` and `x402-axios` read the challenge from the body only and fail before they see the terms
 
 The plain requests carry no `Origin`, so a server that refuses browsers is still checked correctly; the repeat and the preflight send `Origin: https://op8x.com`. It never pays, needs no wallet and sends no telemetry. It only talks to the URL you give it.
 
