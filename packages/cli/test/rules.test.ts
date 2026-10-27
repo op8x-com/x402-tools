@@ -403,3 +403,80 @@ stays("error with float code", () => [get405(), post406({ jsonrpc: "2.0", error:
 stays("result key present", () => [get405(), post406({ jsonrpc: "2.0", error: { code: -32000 }, result: {}, id: null })]);
 stays("non-JSON body", () => [get405(), extract({ ...pr("POST", 406), bodyText: "Not Acceptable" })]);
 stays("3xx on the other probe", () => [extract(pr("GET", 302, { location: "/x" })), post406()]);
+
+const HEADER_ONLY_TITLE = "v1 clients cannot read your terms: the body has no challenge";
+const headerOnly = (fs: Finding[]) => fs.filter((f) => f.id === "v2-header-only");
+const withBodyText = (bodyText: string) =>
+  extract({ ...pr("GET", 402, { ...NS, "payment-required": b64(v2) }), bodyText });
+
+test("v2 only in the header is an info hint for v1 clients, merged across methods", () => {
+  const fs = runRules([v2ok("GET"), v2ok("POST")]);
+  const f = headerOnly(fs);
+  assert.equal(f.length, 1);
+  assert.equal(f[0].level, "info");
+  assert.equal(f[0].method, "both");
+  assert.equal(f[0].title, HEADER_ONLY_TITLE);
+  assert.match(f[0].detail, /x402-fetch, x402-axios/);
+  assert.match(f[0].fix ?? "", /generated from the same object as the header/);
+  assert.deepEqual(errors(fs), []);
+  assert.equal(fs.find((x) => x.id === "official-client")?.level, "pass");
+});
+
+test("v2 header-only hint covers empty, non-JSON and non-challenge bodies", () => {
+  for (const body of ["", "<html>Payment required</html>", '{"error":"payment required"}', "[]"]) {
+    assert.equal(headerOnly(runRules([withBodyText(body)])).length, 1, body);
+  }
+});
+
+test("no v2 header-only hint when the body carries a challenge or the header is not v2", () => {
+  const cases = [
+    extract(pr("GET", 402, { ...NS, "payment-required": b64(v2) }, v2)), // mirrored
+    extract(pr("GET", 402, { ...NS, "payment-required": b64(v2) }, { ...v2, accepts: [{ ...v2.accepts[0], amount: "1" }] })), // drift
+    extract(pr("GET", 402, NS, v2)), // v2 body only
+    extract(pr("GET", 402, NS, v1)), // v1 body only
+    extract(pr("GET", 402, { ...NS, "payment-required": "a-b_c" }, {})), // not base64
+    extract(pr("GET", 402, { ...NS, "payment-required": Buffer.from("not json").toString("base64") }, {})),
+    extract(pr("GET", 402, { ...NS, "payment-required": b64(v1) }, {})), // v1 in header
+    extract(pr("GET", 402, { ...NS, "payment-required": b64({ ...v2, x402Version: "2" }) }, {})),
+    extract(pr("GET", 200, { ...NS, "payment-required": b64(v2) }, {})), // not a 402
+  ];
+  cases.forEach((e, i) => assert.equal(ids(runRules([e])).includes("v2-header-only"), false, `case ${i}`));
+});
+
+test("drift still reports an error and no header-only hint", () => {
+  const body = { ...v2, accepts: [{ ...v2.accepts[0], amount: "20000" }] };
+  const fs = runRules([extract(pr("GET", 402, { ...NS, "payment-required": b64(v2) }, body))]);
+  assert.ok(errors(fs).includes("header-body-drift"));
+  assert.equal(ids(fs).includes("v2-header-only"), false);
+});
+
+test("no v2 header-only hint and no drift for a mirrored body with a leading BOM", () => {
+  const fs = runRules([withBodyText("\uFEFF" + JSON.stringify(v2))]);
+  assert.equal(ids(fs).includes("v2-header-only"), false);
+  assert.equal(ids(fs).includes("header-body-drift"), false);
+});
+
+test("no v2 header-only hint when the header challenge fails the v2 schema", () => {
+  const fs = runRules([extract(pr("GET", 402, { ...NS, "payment-required": b64({ x402Version: 2 }) }, {}))]);
+  assert.ok(errors(fs).includes("schema"));
+  assert.equal(ids(fs).includes("v2-header-only"), false);
+});
+
+test("no v2 header-only hint for a v2 header with a legacy network name", () => {
+  const bad = { ...v2, accepts: [{ ...v2.accepts[0], network: "base" }] };
+  const fs = runRules([extract(pr("GET", 402, { ...NS, "payment-required": b64(bad) }, {}))]);
+  assert.ok(errors(fs).includes("v2-legacy-network"));
+  assert.equal(ids(fs).includes("v2-header-only"), false);
+});
+
+test("v2 header-only hint also applies to a 412 permit2_allowance_required", () => {
+  const h = b64({ ...v2, error: "permit2_allowance_required" });
+  const f = headerOnly(runRules([extract(pr("GET", 412, { ...NS, "payment-required": h }, {}))]));
+  assert.equal(f.length, 1);
+  assert.equal(f[0].level, "info");
+});
+
+test("v2 header-only fix names the official clients to move to", () => {
+  const f = headerOnly(runRules([v2ok("GET")]));
+  assert.match(f[0].fix ?? "", /@x402\/fetch or @x402\/axios/);
+});

@@ -86,3 +86,10 @@ test("extract keeps the CORS response headers", () => {
   assert.equal(e.exposeHeaders, "PAYMENT-REQUIRED");
   assert.equal(e.allowCredentials, "true");
 });
+
+test("body with a leading UTF-8 BOM is parsed like fetch().json() does", () => {
+  const e = extract({ ...pr("GET", 402, {}), bodyText: "\uFEFF" + JSON.stringify(v1) });
+  assert.equal(e.location, "body");
+  assert.equal(e.version, 1);
+  assert.deepEqual(e.bodyChallenge, v1);
+});
