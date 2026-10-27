@@ -1,6 +1,6 @@
 # op8x CLI: MCP endpoints in `op8x check`
 
-Status: draft, 2026-10-27. Extends `2026-10-24-cli-check-design.md`.
+Status: implemented, 2026-10-27. Extends `2026-10-24-cli-check-design.md`.
 
 ## Problem
 
@@ -43,7 +43,8 @@ A probe is an **MCP signal** when all hold:
 
 - status is exactly `406`;
 - the body parses to a plain JSON object (not an array) with `jsonrpc` equal to the string `"2.0"`;
-- it has an `error` object whose `code` is an integer, and no `result` key.
+- it has an `error` object whose `code` is an integer, and no `result` key;
+- it has no `PAYMENT-REQUIRED` header (an x402 challenge on a non-402 status stays an error);
 
 The **MCP case** applies when all hold:
 

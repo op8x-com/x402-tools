@@ -365,6 +365,15 @@ test("MCP: one failed probe + POST 406 gives request-failed and mcp-endpoint", (
   assert.ok(ids(fs).includes("request-failed"));
   assert.ok(ids(fs).includes("mcp-endpoint"));
   assert.equal(ids(fs).includes("no-402"), false);
+  assert.ok(fs.some((f) => f.level === "error"));
+});
+
+test("MCP negative: a 406 carrying a PAYMENT-REQUIRED header is never MCP", () => {
+  const withHeader = extract(pr("POST", 406, { ...NS, "payment-required": b64(v2) }, rpcError()));
+  const fs = runRules([get405(), withHeader]);
+  assert.equal(ids(fs).includes("mcp-endpoint"), false);
+  assert.ok(ids(fs).includes("no-402"));
+  assert.ok(errors(fs).includes("no-402"));
 });
 
 test("MCP: a 402 on either method keeps today's findings", () => {

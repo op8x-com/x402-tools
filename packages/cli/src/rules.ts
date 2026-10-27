@@ -426,7 +426,7 @@ function corsRules(results: Extracted[], pre: PreflightResult | undefined): Find
 // MCP Streamable HTTP rejects a request that accepts only application/json with 406
 // and a JSON-RPC error. Only this answer counts; the JSON-RPC message is never read.
 function isMcpSignal(e: Extracted): boolean {
-  if (e.status !== 406 || !isObj(e.body)) return false;
+  if (e.status !== 406 || e.headerRaw !== undefined || !isObj(e.body)) return false;
   const b = e.body;
   return b.jsonrpc === "2.0" && isObj(b.error) && Number.isInteger(b.error.code) && !("result" in b);
 }
@@ -450,6 +450,7 @@ function mcpFinding(ok: Extracted[], url: string): Finding | undefined {
   };
 }
 
+// The "<url>" default is a placeholder for callers without a URL (tests); cli.ts always passes the real URL.
 export function runRules(results: Extracted[], preflight?: PreflightResult, url = "<url>"): Finding[] {
   const all = results.flatMap(methodRules);
   const ok = results.filter((e) => !e.error);
