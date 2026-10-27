@@ -71,7 +71,7 @@ x402 over MCP never answers with HTTP 402. An unpaid `tools/call` returns HTTP 2
 npx x402-listing-check@latest 'https://api.example.com/mcp' --mcp-tool YOUR_TOOL
 ```
 
-Not detected: MCP servers that answer before the transport check (for example a stateful server that returns 400 without a session id, or a server that requires authentication), and runs with `--method GET`. These still report `no-402`; use `npx x402-listing-check@latest '<url>' --mcp-tool YOUR_TOOL` directly in that case.
+Not detected: MCP servers that answer before the transport check (for example a stateful server that returns 400 without a session id, or a server that requires authentication), and any check run with `--method GET`. These cases still report `no-402`; use `npx x402-listing-check@latest '<url>' --mcp-tool YOUR_TOOL` directly in that case.
 
 `mcp-endpoint` is a stable id. A CI job that must not pass on an unchecked MCP endpoint can test `findings[].id` in the `--json` report. See the [x402 MCP transport](https://github.com/x402-foundation/x402/blob/main/specs/transports-v2/mcp.md).
 

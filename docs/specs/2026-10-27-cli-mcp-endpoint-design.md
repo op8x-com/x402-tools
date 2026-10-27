@@ -44,7 +44,7 @@ A probe is an **MCP signal** when all hold:
 - status is exactly `406`;
 - the body parses to a plain JSON object (not an array) with `jsonrpc` equal to the string `"2.0"`;
 - it has an `error` object whose `code` is an integer, and no `result` key;
-- it has no `PAYMENT-REQUIRED` header (an x402 challenge on a non-402 status stays an error);
+- it has no `PAYMENT-REQUIRED` header (an x402 challenge on a non-402 status stays an error).
 
 The **MCP case** applies when all hold:
 
