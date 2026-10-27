@@ -75,3 +75,21 @@ test("renderText pluralises the summary", () => {
 test("renderText adds ANSI colours when asked", () => {
   assert.equal(renderText(report, true).includes("\x1b[31m"), true);
 });
+
+test("renderText: MCP footer replaces the listing footer only for mcp-endpoint", () => {
+  const mcp: Finding = {
+    id: "mcp-endpoint",
+    level: "info",
+    method: "POST",
+    title: "MCP endpoint: x402 over MCP does not use HTTP 402",
+    detail: "d",
+    fix: "f",
+  };
+  const r = buildReport("https://api.example.com/x", "0.0.1", probes, [mcp]);
+  const text = renderText(r, false);
+  assert.match(text, /\nMCP payment check: npx x402-listing-check@latest 'https:\/\/api\.example\.com\/x' --mcp-tool YOUR_TOOL\nop8x · https:\/\/op8x\.com\n$/);
+  assert.equal(text.includes("Listing and Bazaar checks"), false);
+  const quoted = renderText(buildReport("https://api.example.com/it's", "0.0.1", probes, [mcp]), false);
+  assert.match(quoted, /@latest 'https:\/\/api\.example\.com\/it'\\''s' --mcp-tool YOUR_TOOL\n/);
+  assert.match(renderText(report, false), /Listing and Bazaar checks: npx x402-listing-check https:\/\/api\.example\.com\/x\n/);
+});

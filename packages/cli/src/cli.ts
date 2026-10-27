@@ -108,7 +108,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   }
   const plan = preflightPlan(extracted);
   const pre = plan ? await preflight(url.href, plan.method, plan.headers, opts) : undefined;
-  const findings = runRules(extracted, pre);
+  const findings = runRules(extracted, pre, url.href);
   const sent = [...probes, ...browserProbes, ...(pre ? [pre] : [])];
   const report = buildReport(url.href, VERSION, sent, findings);
   io.out(values.json ? renderJson(report) : renderText(report, io.color));

@@ -1,5 +1,6 @@
 import { PaymentRequiredV1Schema, PaymentRequiredV2Schema } from "@x402/core/schemas";
 import { officialClientCanRead } from "./extract.ts";
+import { quote } from "./report.ts";
 import type { Extracted, Finding, Level, Method, PreflightResult } from "./types.ts";
 
 // Hint map for v2 endpoints still using v1 network names (EVM networks only).
@@ -422,11 +423,42 @@ function corsRules(results: Extracted[], pre: PreflightResult | undefined): Find
   return out;
 }
 
-export function runRules(results: Extracted[], preflight?: PreflightResult): Finding[] {
+// MCP Streamable HTTP rejects a request that accepts only application/json with 406
+// and a JSON-RPC error. Only this answer counts; the JSON-RPC message is never read.
+function isMcpSignal(e: Extracted): boolean {
+  if (e.status !== 406 || e.headerRaw !== undefined || !isObj(e.body)) return false;
+  const b = e.body;
+  return b.jsonrpc === "2.0" && isObj(b.error) && Number.isInteger(b.error.code) && !("result" in b);
+}
+
+function mcpFinding(ok: Extracted[], url: string): Finding | undefined {
+  if (!ok.every((e) => e.status !== undefined && e.status >= 400 && e.status < 500)) return undefined;
+  const signals = ok.filter(isMcpSignal);
+  if (signals.length === 0) return undefined;
+  const names = signals.map((e) => e.method).join(" and ");
+  const sentence =
+    signals.length === 1
+      ? `The ${names} answer is a JSON-RPC error from an MCP server.`
+      : `The ${names} answers are JSON-RPC errors from an MCP server.`;
+  return {
+    id: "mcp-endpoint",
+    level: "info",
+    method: signals.length === 2 ? "both" : signals[0].method,
+    title: "MCP endpoint: x402 over MCP does not use HTTP 402",
+    detail: `${ok.map((e) => `${e.method} → ${e.status}`).join(", ")}. ${sentence} x402 over MCP returns the payment requirement inside the tools/call result with HTTP 200, so this HTTP check does not apply. If this URL is meant to be paid per HTTP request, it returned no 402.`,
+    fix: `Check a paid tool over MCP: npx x402-listing-check@latest ${quote(url)} --mcp-tool YOUR_TOOL (replace YOUR_TOOL with the name of a paid tool).`,
+  };
+}
+
+// The "<url>" default is a placeholder for callers without a URL (tests); cli.ts always passes the real URL.
+export function runRules(results: Extracted[], preflight?: PreflightResult, url = "<url>"): Finding[] {
   const all = results.flatMap(methodRules);
   const ok = results.filter((e) => !e.error);
 
-  if (ok.length > 0 && !ok.some(is402)) {
+  const mcp = ok.length > 0 && !ok.some(is402) ? mcpFinding(ok, url) : undefined;
+  if (mcp) {
+    all.unshift(mcp);
+  } else if (ok.length > 0 && !ok.some(is402)) {
     all.unshift({
       id: "no-402",
       level: "error",
