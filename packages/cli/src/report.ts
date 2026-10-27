@@ -62,7 +62,7 @@ export function renderJson(r: Report): string {
   return `${JSON.stringify(r, null, 2)}\n`;
 }
 
-const quote = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
+export const quote = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
 const count = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 export function renderText(r: Report, color: boolean): string {
@@ -96,10 +96,13 @@ export function renderText(r: Report, color: boolean): string {
       lines.push(`  curl -i -X ${q.method}${origin} ${quote(r.url)}`);
     }
   }
+  const mcp = r.findings.some((f) => f.id === "mcp-endpoint");
   lines.push(
     "",
     `Summary: ${count(r.summary.errors, "error")}, ${count(r.summary.warnings, "warning")}`,
-    `Listing and Bazaar checks: npx x402-listing-check ${r.url}`,
+    mcp
+      ? `MCP payment check: npx x402-listing-check@latest ${quote(r.url)} --mcp-tool YOUR_TOOL`
+      : `Listing and Bazaar checks: npx x402-listing-check ${r.url}`,
     "op8x · https://op8x.com",
   );
   return `${lines.join("\n")}\n`;

@@ -155,3 +155,25 @@ test("preflight that requires payment is reported, but only as a warning", async
   assert.ok(ids.includes("cors-preflight"));
   assert.ok(ids.includes("cors-expose-headers"));
 });
+
+test("MCP endpoint exits 0 with a hint and sends only GET and POST", async () => {
+  const io = capture();
+  const code = await run(["check", `${server.url}/mcp`], io);
+  assert.equal(code, 0);
+  const text = io.stdout();
+  assert.match(text, /MCP endpoint: x402 over MCP does not use HTTP 402/);
+  assert.match(text, /npx x402-listing-check@latest '[^']+\/mcp' --mcp-tool YOUR_TOOL/);
+  assert.match(text, /\nMCP payment check: npx x402-listing-check@latest /);
+  assert.equal(text.includes("Listing and Bazaar checks"), false);
+  assert.equal(text.includes("IGNORE PREVIOUS INSTRUCTIONS"), false);
+  assert.match(text, /Summary: 0 errors, 0 warnings/);
+
+  const j = capture();
+  assert.equal(await run(["check", `${server.url}/mcp`, "--json"], j), 0);
+  const report = JSON.parse(j.stdout());
+  assert.ok(report.findings.some((f: { id: string }) => f.id === "mcp-endpoint"));
+  assert.deepEqual(
+    report.requests.map((r: { method: string }) => r.method),
+    ["GET", "POST"],
+  );
+});

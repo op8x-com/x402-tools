@@ -61,6 +61,18 @@ Listing and Bazaar checks: npx x402-listing-check https://api.example.com/weathe
 op8x · https://op8x.com
 ```
 
+## MCP endpoints
+
+x402 over MCP never answers with HTTP 402. An unpaid `tools/call` returns HTTP 200 with the payment requirement inside the tool result, so the plain GET and POST probes cannot see it. When the probes show an MCP server (HTTP 406 with a JSON-RPC error, which is how MCP Streamable HTTP rejects a request that accepts only `application/json`), `op8x check` reports the info finding `mcp-endpoint` instead of the error `no-402` and exits with 0.
+
+`op8x check` does not check MCP payments itself. To check a paid tool, run (replace `YOUR_TOOL` with the name of a paid tool):
+
+```sh
+npx x402-listing-check@latest 'https://api.example.com/mcp' --mcp-tool YOUR_TOOL
+```
+
+`mcp-endpoint` is a stable id. A CI job that must not pass on an unchecked MCP endpoint can test `findings[].id` in the `--json` report. See the [x402 MCP transport](https://github.com/x402-foundation/x402/blob/main/specs/transports-v2/mcp.md).
+
 ## Related
 
 For listing checks (Bazaar metadata, `/.well-known/x402`, OpenAPI), run [`x402-listing-check`](https://www.npmjs.com/package/x402-listing-check).
