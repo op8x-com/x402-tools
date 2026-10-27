@@ -50,7 +50,7 @@ export function extract(p: ProbeResult): Extracted {
   if (p.bodyText) {
     try {
       // Like fetch().json(), ignore a leading UTF-8 byte order mark.
-      out.body = JSON.parse(p.bodyText.replace(/^﻿/, ""));
+      out.body = JSON.parse(p.bodyText.replace(/^\uFEFF/, ""));
     } catch {
       // Not JSON (e.g. an HTML paywall); not a challenge.
     }

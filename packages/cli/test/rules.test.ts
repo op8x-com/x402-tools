@@ -451,7 +451,7 @@ test("drift still reports an error and no header-only hint", () => {
 });
 
 test("no v2 header-only hint and no drift for a mirrored body with a leading BOM", () => {
-  const fs = runRules([withBodyText("﻿" + JSON.stringify(v2))]);
+  const fs = runRules([withBodyText("\uFEFF" + JSON.stringify(v2))]);
   assert.equal(ids(fs).includes("v2-header-only"), false);
   assert.equal(ids(fs).includes("header-body-drift"), false);
 });
