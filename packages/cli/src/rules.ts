@@ -98,13 +98,18 @@ function methodRules(e: Extracted): Finding[] {
       "Send the challenge in the PAYMENT-REQUIRED header (base64 JSON). A body copy is optional.",
     );
   }
-  if (isObj(e.header) && e.header.x402Version === 2 && e.bodyChallenge === undefined) {
+  if (
+    isObj(e.header) &&
+    e.header.x402Version === 2 &&
+    e.bodyChallenge === undefined &&
+    PaymentRequiredV2Schema.safeParse(e.header).success
+  ) {
     add(
       "v2-header-only",
       "info",
       "v1 clients cannot read your terms: the body has no challenge",
       "The PAYMENT-REQUIRED header holds an x402Version 2 challenge; the body holds none. v1 clients (x402-fetch, x402-axios) read accepts[] from the body only and fail before they see the terms. This is correct v2; current clients read the header.",
-      "Mirror the challenge in the body, generated from the same object as the header. v1 clients can pay only a v1 challenge (legacy network name, maxAmountRequired), so the copy shows them the terms but does not make them pay.",
+      "Mirror the challenge in the body, generated from the same object as the header, so clients that read the body find the terms. To pay, v1 clients must move to @x402/fetch or @x402/axios.",
     );
   }
   if (e.location === "none") {
