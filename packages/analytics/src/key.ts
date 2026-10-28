@@ -4,6 +4,9 @@ export const KEY_PREFIX = "op8x_w_";
 const MAX_KEY_LENGTH = 256;
 
 export const KEY_MISSING = "op8x.analytics: OP8X_KEY missing, sending disabled";
+export const KEY_MISSING_TRANSPORT =
+  "op8x.analytics: no key for the op8x endpoint (set the key option or OP8X_KEY), sending disabled";
+export const KEY_REFUSED = "op8x.analytics: op8x write key refused for a non-op8x endpoint";
 export const KEY_INVALID = "op8x.analytics: invalid key, sending disabled";
 
 /** True when `endpoint` (an already validated URL) has exactly the op8x collector origin. */
@@ -47,14 +50,22 @@ export type KeyResolution = { ok: true; key: string | undefined } | { ok: false;
  * never replaced by the environment. Without one, the environment is consulted only for the
  * op8x collector; other endpoints then send without a key.
  */
-export function resolveKey(explicit: unknown, op8x: boolean, env: () => unknown): KeyResolution {
+export function resolveKey(
+  explicit: unknown,
+  op8x: boolean,
+  env: () => unknown,
+  missing: string = KEY_MISSING,
+): KeyResolution {
   if (explicit !== undefined) {
     const key = checkKey(explicit, op8x);
-    return key === undefined ? { ok: false, warning: KEY_INVALID } : { ok: true, key };
+    if (key === undefined) return { ok: false, warning: KEY_INVALID };
+    // A key meant for op8x is never sent to another origin.
+    if (!op8x && key.startsWith(KEY_PREFIX)) return { ok: false, warning: KEY_REFUSED };
+    return { ok: true, key };
   }
   if (!op8x) return { ok: true, key: undefined };
   const raw = env();
-  if (raw === undefined) return { ok: false, warning: KEY_MISSING };
+  if (raw === undefined) return { ok: false, warning: missing };
   const key = checkKey(raw, true);
   return key === undefined ? { ok: false, warning: KEY_INVALID } : { ok: true, key };
 }

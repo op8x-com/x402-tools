@@ -8,7 +8,7 @@ import type { Transport } from "./transport.ts";
 import type { AnalyticsOptions } from "./types.ts";
 import { envKey, isOp8xEndpoint, KEY_MISSING, resolveKey } from "./key.ts";
 import type { KeyResolution } from "./key.ts";
-import { firstTime } from "./warnings.ts";
+import { firstTime, rateLimitOk } from "./warnings.ts";
 
 export type { AnalyticsOptions } from "./types.ts";
 
@@ -19,6 +19,15 @@ const BODY_CAP = 64 * 1024;
 function warnOnce(message: string): void {
   try {
     if (firstTime(message)) console.warn(message);
+  } catch {
+    // ignore
+  }
+}
+
+/** Warns at most once per minute per isolate for this message. */
+function warnLimited(message: string): void {
+  try {
+    if (rateLimitOk(message, Date.now(), 60_000)) console.warn(message);
   } catch {
     // ignore
   }
@@ -201,7 +210,7 @@ export function analytics(options: AnalyticsOptions = {}): MiddlewareHandler {
       if (resolved.ok) {
         key = resolved.key;
       } else {
-        warnOnce(resolved.warning);
+        warnLimited(resolved.warning);
         if (logOnly === undefined) {
           // Nothing can be recorded for this request: same path as idle.
           await next();

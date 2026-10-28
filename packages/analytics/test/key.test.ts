@@ -7,11 +7,13 @@ import { analytics } from "../src/hono.ts";
 import { createTransport } from "../src/transport.ts";
 import type { AnalyticsOptions, AnalyticsRecord } from "../src/types.ts";
 import { resetWarnings } from "../src/warnings.ts";
+import { VERSION } from "../src/version.ts";
 
 beforeEach(() => resetWarnings());
 
 // Built at runtime so no key-shaped literal sits in the source.
 const SENTINEL = "op8x_w_" + "S".repeat(43);
+const PLAIN = "plain-" + "P".repeat(30);
 const OTHER_SENTINEL = "op8x_w_" + "T".repeat(43);
 const OP8X = "https://ingest.op8x.com/v1/events";
 const ELSEWHERE = "https://collector.example/v1/events";
@@ -43,7 +45,7 @@ function noSentinel(where: string[], ...keys: string[]): void {
   for (const line of where) {
     // Values too short to be recognisable (empty, blank, "123") cannot be checked by substring.
     for (const k of [SENTINEL, OTHER_SENTINEL, ...keys].filter((x) => x.trim().length >= 8)) {
-      assert.ok(!line.includes(k), `key leaked: ${line.slice(0, 40)}`);
+      assert.ok(!line.includes(k), `key leaked in a console line of ${line.length} chars`);
     }
   }
 }
@@ -103,7 +105,7 @@ test("op8x endpoint: OP8X_KEY from the environment is sent as a bearer header", 
   assert.equal(call.url, OP8X);
   assert.equal(call.headers.get("authorization"), `Bearer ${SENTINEL}`);
   assert.equal(call.headers.get("content-type"), "application/json");
-  assert.equal(call.headers.get("user-agent"), "op8x-analytics/0.0.1");
+  assert.equal(call.headers.get("user-agent"), `op8x-analytics/${VERSION}`);
   assert.equal(call.init.redirect, "manual");
   assert.ok(!call.body.includes(SENTINEL), "record contains the key");
   assert.deepEqual(out.lines, []);
@@ -238,7 +240,7 @@ test("log: true output never contains the key", async (t) => {
   const out = captureConsole(t);
   const calls = stubFetch(t);
   await hit(app({ endpoint: OP8X, log: true }), { OP8X_KEY: SENTINEL });
-  await hit(app({ endpoint: ELSEWHERE, log: true, key: OTHER_SENTINEL }), {});
+  await hit(app({ endpoint: ELSEWHERE, log: true, key: PLAIN }), {});
   assert.equal(calls.length, 2);
   const logged = out.lines.filter((l) => l.startsWith("op8x.analytics {"));
   assert.equal(logged.length, 2);
@@ -246,8 +248,8 @@ test("log: true output never contains the key", async (t) => {
     const record = JSON.parse(l.slice("op8x.analytics ".length)) as Record<string, unknown>;
     assert.ok(!("key" in record));
   }
-  noSentinel(out.lines);
-  for (const c of calls) noSentinel([c.body]);
+  noSentinel(out.lines, PLAIN);
+  for (const c of calls) noSentinel([c.body], PLAIN);
 });
 
 const long = "op8x_w_" + "a".repeat(250);
@@ -376,9 +378,9 @@ test("transport: authorization header only when a key is given", async () => {
   const r = recordingFetch();
   const tr = createTransport({ endpoint: ELSEWHERE }, { fetch: r.fetch, warn: (...a) => void warns.push(a) });
   await tr.send(record);
-  await tr.send(record, SENTINEL);
+  await tr.send(record, PLAIN);
   assert.equal(r.calls[0]!.get("authorization"), null);
-  assert.equal(r.calls[1]!.get("authorization"), `Bearer ${SENTINEL}`);
+  assert.equal(r.calls[1]!.get("authorization"), `Bearer ${PLAIN}`);
   assert.deepEqual([...r.calls[1]!.keys()].sort(), ["authorization", "content-type", "user-agent"]);
   assert.equal(r.inits[1]!.redirect, "manual");
   assert.equal(warns.length, 0);
@@ -391,7 +393,7 @@ test("transport: op8x endpoint without key does not send and warns once", async 
   await tr.send(record);
   await tr.send(record);
   assert.equal(r.calls.length, 0);
-  assert.deepEqual(out.warnings(), [MISSING]);
+  assert.deepEqual(out.warnings(), [NO_KEY_TRANSPORT]);
 });
 
 test("transport: an invalid key is not sent", async (t) => {
@@ -441,12 +443,103 @@ test("transport: a redirect is not followed, so the key reaches exactly one URL"
     const warns: unknown[][] = [];
     await createTransport({ endpoint: `${srv.base}/away`, timeoutMs: 500 }, { warn: (...a) => void warns.push(a) }).send(
       record,
-      SENTINEL,
+      PLAIN,
     );
-    assert.deepEqual(srv.hits, [{ url: "/away", auth: `Bearer ${SENTINEL}` }]);
+    assert.deepEqual(srv.hits, [{ url: "/away", auth: `Bearer ${PLAIN}` }]);
     assert.equal(warns.length, 1);
-    assert.ok(!String(warns[0]![0]).includes(SENTINEL));
+    assert.ok(!String(warns[0]![0]).includes(PLAIN));
   } finally {
     await srv.close();
   }
 });
+
+// --- red-team fixes ---
+
+const REFUSED = "op8x.analytics: op8x write key refused for a non-op8x endpoint";
+const NO_KEY_TRANSPORT =
+  "op8x.analytics: no key for the op8x endpoint (set the key option or OP8X_KEY), sending disabled";
+
+test("an explicit op8x_w_ key is refused for a non-op8x endpoint (hono)", async (t) => {
+  const out = captureConsole(t);
+  const calls = stubFetch(t);
+  const { res } = await hit(app({ endpoint: ELSEWHERE, key: SENTINEL }), {});
+  assert.equal(res.status, 200);
+  assert.equal(calls.length, 0);
+  assert.deepEqual(out.warnings(), [REFUSED]);
+  noSentinel(out.lines);
+});
+
+test("an explicit op8x_w_ key is refused for a non-op8x endpoint (transport)", async (t) => {
+  const out = captureConsole(t);
+  const calls = stubFetch(t);
+  await createTransport({ endpoint: "https://ingest.op8x.com.evil.example/v1/events", key: SENTINEL }).send(record);
+  assert.equal(calls.length, 0);
+  assert.deepEqual(out.warnings(), [REFUSED]);
+  noSentinel(out.lines);
+});
+
+test("an explicit key without the prefix still works for another endpoint", async (t) => {
+  captureConsole(t);
+  const calls = stubFetch(t);
+  const other = "collector-" + "k".repeat(20);
+  await hit(app({ endpoint: ELSEWHERE, key: other }), {});
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]!.headers.get("authorization"), `Bearer ${other}`);
+});
+
+test("key warnings repeat after 60 s but never more than once per minute (transport)", async (t) => {
+  const warns: unknown[][] = [];
+  let now = 1_000_000;
+  const tr = createTransport(
+    { endpoint: OP8X },
+    { warn: (...a) => warns.push(a), now: () => now, fetch: async () => new Response(null, { status: 202 }) },
+  );
+  await tr.send(record);
+  await tr.send(record);
+  now += 30_000;
+  await tr.send(record);
+  assert.deepEqual(warns, [[NO_KEY_TRANSPORT]]);
+  now += 31_000;
+  await tr.send(record);
+  assert.deepEqual(warns, [[NO_KEY_TRANSPORT], [NO_KEY_TRANSPORT]]);
+});
+
+test("key warnings repeat after 60 s but never more than once per minute (hono)", async (t) => {
+  const out = captureConsole(t);
+  stubFetch(t);
+  let now = 5_000_000;
+  t.mock.method(Date, "now", () => now);
+  const a = app({ endpoint: OP8X });
+  await hit(a, {});
+  await hit(a, {});
+  assert.deepEqual(out.warnings(), [MISSING]);
+  now += 61_000;
+  await hit(a, {});
+  assert.deepEqual(out.warnings(), [MISSING, MISSING]);
+});
+
+test("createTransport without a key on the op8x endpoint uses the transport wording", async (t) => {
+  const out = captureConsole(t);
+  const calls = stubFetch(t);
+  await createTransport({ endpoint: OP8X }).send(record);
+  assert.equal(calls.length, 0);
+  assert.deepEqual(out.warnings(), [NO_KEY_TRANSPORT]);
+});
+
+for (const endpoint of [
+  "https://u:p@collector.example/v1/events",
+  "https://evil.example@ingest.op8x.com/v1/events",
+  "https://user@ingest.op8x.com/v1/events",
+  "http://u:p@127.0.0.1:9/v1/events",
+]) {
+  test(`an endpoint with userinfo is invalid (${endpoint.replace(/:[^:@/]*@/, ":***@")})`, async (t) => {
+    const out = captureConsole(t);
+    const calls = stubFetch(t);
+    await hit(app({ endpoint, key: SENTINEL }), { OP8X_KEY: SENTINEL });
+    await createTransport({ endpoint, key: SENTINEL }).send(record);
+    assert.equal(calls.length, 0);
+    assert.ok(out.warnings().every((w) => w === "op8x.analytics: invalid endpoint, sending disabled"));
+    assert.ok(out.warnings().length >= 1);
+    noSentinel(out.lines);
+  });
+}

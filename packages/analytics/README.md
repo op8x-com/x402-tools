@@ -98,7 +98,7 @@ analytics({
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `endpoint` | none | `https` URL that receives each record as a JSON `POST` (`http` only for `localhost` and `127.0.0.1`). Omitted: no network sends. An invalid value is not an error: one warning is logged and sending stays off. |
+| `endpoint` | none | `https` URL (no username or password) that receives each record as a JSON `POST` (`http` only for `localhost` and `127.0.0.1`). Omitted: no network sends. An invalid value is not an error: one warning is logged and sending stays off. |
 | `key` | none | Write key, sent as `Authorization: Bearer <key>`. Wins over `OP8X_KEY` from the environment, see "Write key". |
 | `log` | `false` | Write one `console.log("op8x.analytics", <json>)` line per record. |
 | `salt` | none | Enables the `payer` field (a keyed hash of the payer address). Omitted: no `payer` field at all. A blank or non-string value also disables hashing and logs one warning, `op8x.analytics: salt must be a non-empty string, payer hashing disabled`. Keep it secret. |
@@ -118,8 +118,9 @@ app.use(analytics({ endpoint: "https://ingest.op8x.com/v1/events" }));
 ```
 
 - The environment is read only when the endpoint's origin is exactly `https://ingest.op8x.com`. A key meant for op8x is never sent to another host.
-- The `key` option wins over the environment and is the only way to send a key to any other endpoint.
-- Without a usable key for the op8x endpoint nothing is sent, and one warning is logged: `op8x.analytics: OP8X_KEY missing, sending disabled` or `op8x.analytics: invalid key, sending disabled`. With `log: true` the record is still logged.
+- Outside Cloudflare Workers (for example Node) there is no Worker environment: pass the key as the `key` option. The same holds for `createTransport` used directly, which never reads the environment.
+- The `key` option wins over the environment and is the only way to send a key to any other endpoint. A key starting with `op8x_w_` is sent only to `https://ingest.op8x.com`; for any other origin it is refused (nothing is sent, one warning `op8x.analytics: op8x write key refused for a non-op8x endpoint`). Explicit keys without that prefix work for other endpoints. Prefer `OP8X_KEY`; never commit a key to source control.
+- Without a usable key for the op8x endpoint nothing is sent, and one warning is logged: `op8x.analytics: OP8X_KEY missing, sending disabled` or `op8x.analytics: invalid key, sending disabled` (`createTransport` without a key: `op8x.analytics: no key for the op8x endpoint (set the key option or OP8X_KEY), sending disabled`). Key warnings repeat at most once per minute. An invalid explicit key stops sending for every endpoint. With `log: true` the record is still logged.
 - A key is invalid when it is not a string, is empty, is longer than 256 characters or contains characters outside printable ASCII; for the op8x endpoint also when it does not start with `op8x_w_`. Surrounding whitespace is trimmed.
 - The key never appears in records, `log: true` output or warnings, and redirects are not followed.
 
@@ -133,7 +134,7 @@ The payer address behind `payment.payer` is taken from the receipt's `payer`, fa
 
 ## What is never collected
 
-- Request bodies and response bodies. The one exception is the 402 challenge: only the fields listed above are taken from it, and at most 64 KB of the body is read.
+- Request bodies and response bodies. The one exception is the 402 challenge: only the fields listed in the [ingest contract](docs/ingest-contract.md) are taken from it, and at most 64 KB of the body is read.
 - IP addresses (`cf-connecting-ip`, `x-forwarded-for` and any other source).
 - The URL path and query string; only the route pattern is recorded.
 - Cookies, `authorization` and the raw User-Agent.

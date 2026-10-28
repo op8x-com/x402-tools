@@ -14,11 +14,12 @@ app.use(analytics({ endpoint: "https://ingest.op8x.com/v1/events" }));
 ## Key handling
 
 1. **Sources.** An explicit option `key` wins. Without it, the module reads `OP8X_KEY` from the Hono context's environment (`c.env`) on every request, so a new secret takes effect without a code change.
-2. **Only for the op8x collector.** The environment variable is read only when the endpoint's origin is `https://ingest.op8x.com`. For any other endpoint the module sends an `Authorization` header only when `key` is set explicitly. A key meant for op8x is never sent to another host by accident.
+2. **Only for the op8x collector.** The environment variable is read only when the endpoint's origin is `https://ingest.op8x.com`. For any other endpoint the module sends an `Authorization` header only when `key` is set explicitly, and never a key that starts with `op8x_w_`: such a key is not sent to an origin other than `https://ingest.op8x.com` (nothing is sent, one warning `op8x.analytics: op8x write key refused for a non-op8x endpoint`). Explicit keys without that prefix work for other endpoints. A key meant for op8x is never sent to another host by accident. Endpoints with a username or password in the URL are invalid.
 3. **Header.** `Authorization: Bearer <key>`, added to the existing `content-type` and `user-agent`. Redirects are not followed (as today), so the header never reaches a second host.
-4. **Missing key.** op8x endpoint and no key: nothing is sent, one warning `op8x.analytics: OP8X_KEY missing, sending disabled`. Other endpoints without `key`: unchanged behaviour, no header.
+4. **Missing key.** op8x endpoint and no key: nothing is sent, one warning `op8x.analytics: OP8X_KEY missing, sending disabled` (Hono middleware; `createTransport` used directly warns `op8x.analytics: no key for the op8x endpoint (set the key option or OP8X_KEY), sending disabled`, because it never reads the environment). Other endpoints without `key`: unchanged behaviour, no header.
 5. **Invalid key.** Not a string, empty after trimming, longer than 256 characters, or containing characters outside printable ASCII; for the op8x endpoint also a missing `op8x_w_` prefix. Nothing is sent, one warning without the value. The module does not check the length of the random part; the collector does.
-6. **Never visible.** The key never appears in records, `log: true` output, warnings or error messages.
+6. **Warning rate.** Key warnings (missing, invalid, refused) are limited to one line per minute per message and isolate, like send failures, so a long-lived process shows a misconfiguration again.
+7. **Never visible.** The key never appears in records, `log: true` output, warnings or error messages.
 7. **Fail open as before.** A `401` or any other status changes nothing for the seller's response.
 
 ## Ingest contract

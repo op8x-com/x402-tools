@@ -1,7 +1,7 @@
 import type { AnalyticsOptions, AnalyticsRecord } from "./types.ts";
 import { VERSION } from "./version.ts";
-import { isOp8xEndpoint, resolveKey } from "./key.ts";
-import { firstTime, rateLimitOk } from "./warnings.ts";
+import { isOp8xEndpoint, KEY_MISSING_TRANSPORT, resolveKey } from "./key.ts";
+import { rateLimitOk } from "./warnings.ts";
 
 export interface Transport {
   /**
@@ -32,6 +32,7 @@ export function validEndpoint(endpoint: string | undefined): string | undefined 
   if (endpoint === undefined) return undefined;
   try {
     const url = new URL(endpoint);
+    if (url.username !== "" || url.password !== "") return undefined;
     if (url.protocol === "https:") return url.href;
     if (url.protocol === "http:" && (url.hostname === "localhost" || url.hostname === "127.0.0.1")) return url.href;
   } catch {
@@ -73,14 +74,6 @@ export function createTransport(options: AnalyticsOptions, deps: TransportDeps =
     }
   }
 
-  function warnOnce(message: string): void {
-    try {
-      if (firstTime(message)) (deps.warn ?? console.warn)(message);
-    } catch {
-      // never let diagnostics break the seller
-    }
-  }
-
   async function send(record: AnalyticsRecord, key?: string): Promise<void> {
     try {
       if (wantLog) {
@@ -98,9 +91,9 @@ export function createTransport(options: AnalyticsOptions, deps: TransportDeps =
         return;
       }
       if (endpoint === undefined) return;
-      const resolved = resolveKey(key !== undefined ? key : optionKey, op8x, () => undefined);
+      const resolved = resolveKey(key !== undefined ? key : optionKey, op8x, () => undefined, KEY_MISSING_TRANSPORT);
       if (!resolved.ok) {
-        warnOnce(resolved.warning);
+        warn(resolved.warning);
         return;
       }
       const headers: Record<string, string> = {

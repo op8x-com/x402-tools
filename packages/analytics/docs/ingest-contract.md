@@ -19,7 +19,7 @@ authorization: Bearer <key>
 | --- | --- |
 | `content-type` | Always, `application/json`. |
 | `user-agent` | Always, `op8x-analytics/<version>`. |
-| `authorization` | `Bearer <key>` when the module has a key: the `key` option, or for the endpoint origin `https://ingest.op8x.com` only, `OP8X_KEY` from the Worker environment. Other endpoints without the `key` option get no `authorization` header. |
+| `authorization` | `Bearer <key>` when the module has a key: the `key` option, or for the endpoint origin `https://ingest.op8x.com` only, `OP8X_KEY` from the Worker environment. Surrounding whitespace in the key is trimmed. Other endpoints without the `key` option get no `authorization` header. |
 
 The Workers runtime itself may add a `cf-worker` header. Redirects are not followed, so the request and its `authorization` header reach exactly the configured URL. The body is at most 16 KB (16384 bytes); a collector may refuse larger bodies with `413`.
 
@@ -80,7 +80,7 @@ Record format version `1`. Strings are trimmed, stripped of control characters (
 ## Compatibility
 
 1. Optional, additive fields do not change `v`.
-2. A collector accepts a field before any module release sends it; until then the collector drops it.
+2. A collector accepts a field before any module release sends it; until it does, the collector drops that field.
 3. A missing field means "unknown". A collector never reads it as false or as a default.
 4. The meaning of an existing field never changes within `v: 1`. A new meaning needs a new field name.
 5. Unknown fields are dropped, never refused.
