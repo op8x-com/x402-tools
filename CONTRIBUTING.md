@@ -38,6 +38,8 @@ Before non-trivial work, search `docs/solutions/`. After solving something surpr
 
 CI runs `scripts/boundary-check.mjs`, which keeps unpublished wording and private paths out of this repository. Its rules are not public; if it flags your pull request, a maintainer will tell you what to change.
 
+It also keeps the top level of the repository intentional: a new folder or root file must be added to `ALLOWED_TOP_LEVEL` in `scripts/boundary-check.mjs`.
+
 ## Security
 
 Please report vulnerabilities privately to security@op8x.com instead of opening an issue.
