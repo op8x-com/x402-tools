@@ -1,0 +1,29 @@
+{
+  "name": "@op8x/demo-api",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A small paid API on Cloudflare Workers that shows @op8x/analytics in an x402 flow on testnet.",
+  "type": "module",
+  "scripts": {
+    "pack-analytics": "node scripts/pack-analytics.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "facilitator": "node ../../packages/analytics/examples/workers/scripts/fake-facilitator.mjs",
+    "dev": "wrangler dev --ip 127.0.0.1 --port 8787 --var FACILITATOR_URL:http://127.0.0.1:4021",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@op8x/analytics": "file:vendor/op8x-analytics-0.0.1.tgz",
+    "@x402/core": "2.28.0",
+    "@x402/evm": "2.28.0",
+    "@x402/hono": "2.28.0",
+    "hono": "4.13.14"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "wrangler": "4.152.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "workerd@1.20261019.1": true
+  }
+}
