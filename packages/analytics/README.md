@@ -38,7 +38,7 @@ npm install hono @x402/hono@~2.28.0 @x402/core@~2.28.0 @x402/evm@~2.28.0
 ```ts
 import { Hono, type MiddlewareHandler } from "hono";
 import { analytics } from "@op8x/analytics/hono";
-import { paymentMiddleware, x402ResourceServer } from "@x402/hono";
+import { paymentMiddlewareFromHTTPServer, x402HTTPResourceServer, x402ResourceServer } from "@x402/hono";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 
@@ -47,25 +47,35 @@ const app = new Hono();
 // Analytics goes first, so it sees the 402 that the payment middleware produces.
 app.use(analytics({ log: true }));
 
-// Workers forbid network I/O in global scope, and paymentMiddleware() contacts the
-// facilitator when it is created. Build it on the first request instead.
-let pay: MiddlewareHandler | undefined;
-app.use(async (c, next) => {
-  pay ??= paymentMiddleware(
-    {
-      "GET /paid": {
-        accepts: { scheme: "exact", price: "$0.01", network: "eip155:84532", payTo: "0xYourAddress" },
-        description: "Paid route",
-      },
+// Set up the payment middleware only on the paid route, not on "the first request of any route":
+// its facilitator fetch is cancelled when a free route's request ends, and /paid would then hang.
+let pay: Promise<MiddlewareHandler> | undefined;
+async function buildPayment(): Promise<MiddlewareHandler> {
+  const server = new x402ResourceServer(new HTTPFacilitatorClient({ url: "https://your-facilitator.example" }))
+    .register("eip155:84532", new ExactEvmScheme());
+  const http = new x402HTTPResourceServer(server, {
+    "GET /paid": {
+      accepts: { scheme: "exact", price: "$0.01", network: "eip155:84532", payTo: "0xYourAddress" },
+      description: "Paid route",
     },
-    new x402ResourceServer(new HTTPFacilitatorClient({ url: "https://your-facilitator.example" })).register(
-      "eip155:84532",
-      new ExactEvmScheme(),
-    ),
-  );
-  return pay(c, next);
+  });
+  await http.initialize(); // fetches the facilitator's /supported
+  return paymentMiddlewareFromHTTPServer(http, undefined, undefined, false);
+}
+app.use("/paid", async (c, next) => {
+  const ready = (pay ??= buildPayment());
+  c.executionCtx.waitUntil(ready.then(() => undefined, () => undefined)); // keep the fetch alive
+  let handler: MiddlewareHandler;
+  try {
+    handler = await ready;
+  } catch {
+    if (pay === ready) pay = undefined; // setup failed: retry on the next request
+    return c.json({ error: "payment setup failed" }, 503);
+  }
+  return handler(c, next);
 });
 
+app.get("/", (c) => c.text("free route"));
 app.get("/paid", (c) => c.json({ ok: true }));
 
 export default app;
@@ -79,7 +89,7 @@ op8x.analytics {"v":1,"id":"...","ts":"2026-10-25T16:13:37.144Z","ms":19,"method
 
 Build `analytics()` once per isolate (at module scope, as above, or lazily once), not per request. One-time warnings are deduplicated per isolate either way, but a per-request instance does needless setup work on every request.
 
-A complete, runnable app with a local fake facilitator (no money, no network) is in [`examples/workers`](examples/workers).
+A complete, runnable app with a local fake facilitator (no money, no network) is in [`examples/workers`](examples/workers); it uses the same payment setup, with bindings and error logging.
 
 The middleware works at the transport level: it reads request headers, the response status and headers, and, for 402 responses only, a copy of the response body. It does not depend on `@x402/hono` or `@x402/core`, so it also records hand-written 402 responses.
 
@@ -150,7 +160,7 @@ The payer address behind `payment.payer` is taken from the receipt's `payer`, fa
 ## Workers notes
 
 - **Compatibility date.** With `compatibility_date = "2026-10-01"` or later, `@x402/hono` runs without the `nodejs_compat` flag. With `2024-09-01` the build fails because `@x402/extensions` imports `url`; older projects need `nodejs_compat` or a newer date.
-- **Global scope.** Do not call `paymentMiddleware(...)` at module top level: it contacts the facilitator, which Workers forbid in global scope. Requests to routes protected by the payment middleware then return 500 ("Disallowed operation called within global scope"); unprotected routes keep working. Build it lazily on the first request as in the quick start.
+- **Global scope.** Do not call `paymentMiddleware(...)` at module top level: it contacts the facilitator, which Workers forbid in global scope. Requests to routes protected by the payment middleware then return 500 ("Disallowed operation called within global scope"); unprotected routes keep working. Set it up on the paid route only, as in the quick start: a lazy setup on the first request of any route leaves `/paid` hanging when that first request was a free route.
 - **Body challenges over 64 KB.** Only the first 64 KB of a 402 body are read, and only within `timeoutMs`. A longer or slower body challenge is truncated, does not parse, and is recorded as `location: "none"` (or `"header"` when a header challenge is present).
 - **`ms` on Workers.** Workers advance the clock only across I/O, so `ms` covers time spent waiting on I/O downstream (fetches, KV, the facilitator); CPU time in your handlers does not advance it.
 
