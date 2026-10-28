@@ -161,7 +161,7 @@ test("top-level message is a single line without raw control characters", () => 
   }
 });
 
-function runCheck(files, rulesArg) {
+function runCheck(files, rulesArg, { rulesText = "zzterm\n", remove = [] } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "bc-"));
   try {
     const run = (cmd, args) => spawnSync(cmd, args, { cwd: dir, encoding: "utf8", env: { ...process.env, CI: "" } });
@@ -172,8 +172,9 @@ function runCheck(files, rulesArg) {
       mkdirSync(join(dir, f, ".."), { recursive: true });
       writeFileSync(join(dir, f), "hello\n");
     }
-    writeFileSync(join(dir, ".git", "rules.txt"), "zzterm\n");
+    writeFileSync(join(dir, ".git", "rules.txt"), rulesText);
     run("git", ["add", "--", ...files]);
+    for (const f of remove) rmSync(join(dir, f));
     const script = fileURLToPath(new URL("./boundary-check.mjs", import.meta.url));
     return run(process.execPath, [script, "--all", "--rules", rulesArg ?? join(dir, ".git", "rules.txt")]);
   } finally {
@@ -197,4 +198,10 @@ test("main prints top-level findings before a config error and exits 2", () => {
 test("main exits 0 when clean", () => {
   const r = runCheck(["README.md", "docs/a.md"]);
   assert.equal(r.status, 0, r.stderr);
+});
+
+test("a path rule still applies to a listed entry that cannot be read", () => {
+  const r = runCheck(["README.md", "docs/private/a.md"], undefined, { rulesText: "path:docs/private/\n", remove: ["docs/private/a.md"] });
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stderr, /docs\/private\/a\.md: path reserved for the private repository \(#1\)/);
 });

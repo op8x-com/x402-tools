@@ -138,11 +138,13 @@ export function readableNames(names, exists = existsSync) {
   return names.filter((path) => exists(path));
 }
 
+// Unreadable names keep an entry with empty content: path rules still apply, no content is scanned.
 function readFiles(names, staged) {
-  return names.map((path) => ({
-    path,
-    content: staged ? gitBuffer(["show", `:${path}`]) : readFileSync(path).toString("utf8"),
-  }));
+  const readable = new Set(staged ? names : readableNames(names));
+  return names.map((path) => {
+    if (!readable.has(path)) return { path, content: "" };
+    return { path, content: staged ? gitBuffer(["show", `:${path}`]) : readFileSync(path).toString("utf8") };
+  });
 }
 
 function main(argv) {
@@ -162,7 +164,7 @@ function main(argv) {
   let files;
   try {
     rules = loadRules(argv);
-    files = readFiles(staged ? names : readableNames(names), staged);
+    files = readFiles(names, staged);
   } catch (err) {
     for (const f of topLevel) console.error(formatFinding(f, undefined, redact));
     fail(err);
