@@ -6,6 +6,8 @@ import type { RecordInput } from "./record.ts";
 import { clampTimeout, createTransport, validEndpoint } from "./transport.ts";
 import type { Transport } from "./transport.ts";
 import type { AnalyticsOptions } from "./types.ts";
+import { envKey, isOp8xEndpoint, KEY_MISSING, resolveKey } from "./key.ts";
+import type { KeyResolution } from "./key.ts";
 import { firstTime } from "./warnings.ts";
 
 export type { AnalyticsOptions } from "./types.ts";
@@ -138,9 +140,21 @@ export function analytics(options: AnalyticsOptions = {}): MiddlewareHandler {
   let idleMessage = "";
   let readDeadlineMs = 0;
   let chainCheck = false;
+  // Key handling: only relevant with a usable endpoint. The key may come from c.env, so
+  // whether a request can be sent is decided per request, not here.
+  let endpointOk = false;
+  let op8x = false;
+  let explicitKey: unknown;
+  let logOnly: Transport | undefined;
   try {
     const opts = options ?? {};
     transport = createTransport(opts);
+    const endpoint = validEndpoint(opts.endpoint);
+    endpointOk = endpoint !== undefined;
+    op8x = isOp8xEndpoint(endpoint);
+    explicitKey = opts.key;
+    // Used when a request has no usable key: the record is still logged, never sent.
+    if (opts.log === true) logOnly = createTransport({ log: true });
     // Idle: nothing can be recorded, i.e. no usable endpoint and no log.
     if (opts.log !== true) {
       idle = validEndpoint(opts.endpoint) === undefined;
@@ -173,6 +187,28 @@ export function analytics(options: AnalyticsOptions = {}): MiddlewareHandler {
       warnOnce(idleMessage);
       await next();
       return;
+    }
+
+    let sender: Transport = transport;
+    let key: string | undefined;
+    if (endpointOk) {
+      let resolved: KeyResolution;
+      try {
+        resolved = resolveKey(explicitKey, op8x, () => envKey(c.env));
+      } catch {
+        resolved = { ok: false, warning: KEY_MISSING };
+      }
+      if (resolved.ok) {
+        key = resolved.key;
+      } else {
+        warnOnce(resolved.warning);
+        if (logOnly === undefined) {
+          // Nothing can be recorded for this request: same path as idle.
+          await next();
+          return;
+        }
+        sender = logOnly;
+      }
     }
 
     let startMs = 0;
@@ -227,7 +263,8 @@ export function analytics(options: AnalyticsOptions = {}): MiddlewareHandler {
       }
       const warnSalt = badSalt;
       badSalt = false;
-      const send = transport;
+      const send = sender;
+      const sendKey = key;
       const reqHeaders = requestHeaders;
 
       const task = (async (): Promise<void> => {
@@ -249,7 +286,7 @@ export function analytics(options: AnalyticsOptions = {}): MiddlewareHandler {
           };
           if (body !== undefined) input.body = body;
           const record = await buildRecord(input, hash, { chainCheck });
-          await send.send(record);
+          await send.send(record, sendKey);
         } catch {
           // fail open: nothing may escape
         }

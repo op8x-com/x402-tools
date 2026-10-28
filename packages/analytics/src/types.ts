@@ -1,6 +1,12 @@
 export interface AnalyticsOptions {
   /** https URL (http allowed only for localhost/127.0.0.1); omitted = no network sends. */
   endpoint?: string;
+  /**
+   * Write key, sent as `Authorization: Bearer <key>`. Wins over the environment. Without it,
+   * the Hono middleware reads `OP8X_KEY` from `c.env` on every request, but only for the
+   * endpoint origin `https://ingest.op8x.com`; other endpoints then send no key.
+   */
+  key?: string;
   /** Default false; one console.log line per record. */
   log?: boolean;
   /** Enables payer hashing; omitted = no payer field at all. */

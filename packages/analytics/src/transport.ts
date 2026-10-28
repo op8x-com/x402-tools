@@ -1,10 +1,14 @@
 import type { AnalyticsOptions, AnalyticsRecord } from "./types.ts";
 import { VERSION } from "./version.ts";
-import { rateLimitOk } from "./warnings.ts";
+import { isOp8xEndpoint, resolveKey } from "./key.ts";
+import { firstTime, rateLimitOk } from "./warnings.ts";
 
 export interface Transport {
-  /** Never rejects. */
-  send(record: AnalyticsRecord): Promise<void>;
+  /**
+   * Never rejects. `key` (else `options.key`) is sent as `Authorization: Bearer <key>`;
+   * the op8x collector endpoint sends nothing without a valid key.
+   */
+  send(record: AnalyticsRecord, key?: string): Promise<void>;
 }
 
 export interface TransportDeps {
@@ -40,6 +44,8 @@ export function createTransport(options: AnalyticsOptions, deps: TransportDeps =
   let endpoint: string | undefined;
   let invalid = false;
   let timeoutMs = DEFAULT_TIMEOUT_MS;
+  let optionKey: unknown;
+  let op8x = false;
   const wantLog = options?.log === true;
 
   try {
@@ -48,6 +54,8 @@ export function createTransport(options: AnalyticsOptions, deps: TransportDeps =
       invalid = endpoint === undefined;
     }
     timeoutMs = clampTimeout(options?.timeoutMs);
+    op8x = isOp8xEndpoint(endpoint);
+    optionKey = options?.key;
   } catch {
     invalid = options?.endpoint !== undefined;
     endpoint = undefined;
@@ -65,7 +73,15 @@ export function createTransport(options: AnalyticsOptions, deps: TransportDeps =
     }
   }
 
-  async function send(record: AnalyticsRecord): Promise<void> {
+  function warnOnce(message: string): void {
+    try {
+      if (firstTime(message)) (deps.warn ?? console.warn)(message);
+    } catch {
+      // never let diagnostics break the seller
+    }
+  }
+
+  async function send(record: AnalyticsRecord, key?: string): Promise<void> {
     try {
       if (wantLog) {
         try {
@@ -82,12 +98,22 @@ export function createTransport(options: AnalyticsOptions, deps: TransportDeps =
         return;
       }
       if (endpoint === undefined) return;
+      const resolved = resolveKey(key !== undefined ? key : optionKey, op8x, () => undefined);
+      if (!resolved.ok) {
+        warnOnce(resolved.warning);
+        return;
+      }
+      const headers: Record<string, string> = {
+        "content-type": "application/json",
+        "user-agent": `op8x-analytics/${VERSION}`,
+      };
+      if (resolved.key !== undefined) headers["authorization"] = `Bearer ${resolved.key}`;
       const body = JSON.stringify(record);
       let reason: string | undefined;
       try {
         const res = await (deps.fetch ?? fetch)(endpoint, {
           method: "POST",
-          headers: { "content-type": "application/json", "user-agent": `op8x-analytics/${VERSION}` },
+          headers,
           body,
           // Never follow: a redirect would bypass the endpoint rule, and a loop would repeat the POST.
           redirect: "manual",

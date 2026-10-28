@@ -88,6 +88,7 @@ The middleware works at the transport level: it reads request headers, the respo
 ```ts
 analytics({
   endpoint: "https://collector.example/v1/events",
+  key: "your-collector-key",
   log: true,
   salt: "a-long-random-secret",
   timeoutMs: 2000,
@@ -98,30 +99,37 @@ analytics({
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `endpoint` | none | `https` URL that receives each record as a JSON `POST` (`http` only for `localhost` and `127.0.0.1`). Omitted: no network sends. An invalid value is not an error: one warning is logged and sending stays off. |
+| `key` | none | Write key, sent as `Authorization: Bearer <key>`. Wins over `OP8X_KEY` from the environment, see "Write key". |
 | `log` | `false` | Write one `console.log("op8x.analytics", <json>)` line per record. |
 | `salt` | none | Enables the `payer` field (a keyed hash of the payer address). Omitted: no `payer` field at all. A blank or non-string value also disables hashing and logs one warning, `op8x.analytics: salt must be a non-empty string, payer hashing disabled`. Keep it secret. |
 | `timeoutMs` | `2000` | Abort the send after this long; also the limit for reading the 402 body copy. Clamped to 100..10000. |
 | `chainCheck` | `false` | Add `receipt.transaction` so the collector can confirm settlement on-chain. Omitted: the transaction hash is never read. |
 
+## Write key
+
+The op8x collector accepts records only with a write key, sent as `Authorization: Bearer <key>`. On Workers, store it as a secret; the middleware reads `OP8X_KEY` from the Worker environment on every request, so a new secret takes effect without a code change:
+
+```
+npx wrangler secret put OP8X_KEY
+```
+
+```ts
+app.use(analytics({ endpoint: "https://ingest.op8x.com/v1/events" }));
+```
+
+- The environment is read only when the endpoint's origin is exactly `https://ingest.op8x.com`. A key meant for op8x is never sent to another host.
+- The `key` option wins over the environment and is the only way to send a key to any other endpoint.
+- Without a usable key for the op8x endpoint nothing is sent, and one warning is logged: `op8x.analytics: OP8X_KEY missing, sending disabled` or `op8x.analytics: invalid key, sending disabled`. With `log: true` the record is still logged.
+- A key is invalid when it is not a string, is empty, is longer than 256 characters or contains characters outside printable ASCII; for the op8x endpoint also when it does not start with `op8x_w_`. Surrounding whitespace is trimmed.
+- The key never appears in records, `log: true` output or warnings, and redirects are not followed.
+
 ## Record fields
 
-Version 1. One record per request that passes through the middleware. Strings are trimmed, stripped of control characters (including Unicode bidi controls) and capped at 128 characters (256 for `challenge.error` and `receipt.errorReason`). Unknown or undecodable values are omitted, never guessed.
+One record per request that passes through the middleware. The fields, headers and response codes are described in the [ingest contract](docs/ingest-contract.md).
 
-| Field | Meaning |
-| --- | --- |
-| `v` | Record format version, `1`. |
-| `id` | Random UUID per request. |
-| `ts` | ISO 8601 time the request started. |
-| `ms` | Time spent downstream of the middleware, in milliseconds. |
-| `method` | HTTP method. |
-| `route` | Pattern of the last matched route registered after the middleware, such as `/posts/:id`. `app.use` middlewares and `app.all()` handlers (method `ALL`) are ignored, so a handler registered with `app.all()` records `""`, as does a request where no such route matched. Never the concrete path. |
-| `status` | Final response status. |
-| `ua` | User-Agent class: `x402-client`, `axios`, `node`, `python`, `go`, `curl`, `browser`, `op8x`, `none` or `other`. The raw header is never stored. |
-| `type` | `payment.received` when the request carried a payment header, else `challenge.issued` for a 402, else `request.unpaid`. |
-| `challenge` | With status 402. `location` (`header`, `body`, `both`, `none`), `version` (1 or 2), `drift` (header and body challenges both present and different), `error`, and up to 5 `accepts` entries with `scheme`, `network`, `amount`, `asset`. |
-| `payment` | When a payment header was sent. `header` (`PAYMENT-SIGNATURE` or `X-PAYMENT`), `decodable`, `version`, `scheme`, `network`, `amount`, `asset`, and `payer` (first 32 hex characters of HMAC-SHA-256 over the lowercase address, only with `salt`). The address is taken from the receipt's `payer`, falling back to `payload.authorization.from` in the payment header, and is hashed with the salt; it can be present even when the payment header itself was undecodable (`decodable: false`). |
-| `receipt` | When a receipt header came back. `header` (`PAYMENT-RESPONSE` or `X-PAYMENT-RESPONSE`), `decodable`, `success`, `network`, `errorReason`, and `transaction` only with `chainCheck: true`. |
-| `delivery` | With `payment`: `ok` when the final status is below 400, else `failed`. |
+`route` is the pattern of the last matched route registered after the middleware, such as `/posts/:id`. `app.use` middlewares and `app.all()` handlers (method `ALL`) are ignored, so a handler registered with `app.all()` records `""`, as does a request where no such route matched.
+
+The payer address behind `payment.payer` is taken from the receipt's `payer`, falling back to `payload.authorization.from` in the payment header, and is hashed with the salt; it can be present even when the payment header itself was undecodable (`decodable: false`).
 
 ## What is never collected
 
@@ -134,7 +142,7 @@ Version 1. One record per request that passes through the middleware. Strings ar
 
 ## Guarantees
 
-- **Fail-open.** Errors inside the middleware are caught and never reach your code. An unreachable, slow, failing or misconfigured endpoint changes nothing for your API and its buyers. One send attempt per request, aborted after `timeoutMs`; send failures produce at most one warning per minute per isolate for each kind of failure, without record data. Each send is a `POST` with the headers `content-type` and `user-agent` only; the Workers runtime itself may add a `cf-worker` header to outgoing requests.
+- **Fail-open.** Errors inside the middleware are caught and never reach your code. An unreachable, slow, failing or misconfigured endpoint changes nothing for your API and its buyers. One send attempt per request, aborted after `timeoutMs`; send failures produce at most one warning per minute per isolate for each kind of failure, without record data. Each send is a `POST` with the headers `content-type` and `user-agent`, plus `authorization` when there is a key (see "Write key"); the Workers runtime itself may add a `cf-worker` header to outgoing requests.
 - **No added latency.** Body copy, hashing, sending and logging run after the response is returned, through `waitUntil`. Before returning, the middleware only reads headers and starts one `clone()` of a 402 response.
 - **Response unchanged.** Status, headers and body leave the middleware exactly as they arrived. Errors thrown by your own handlers propagate unchanged.
 
