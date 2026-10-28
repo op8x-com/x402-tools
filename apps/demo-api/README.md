@@ -13,7 +13,7 @@ A small paid API on Cloudflare Workers that shows `@op8x/analytics` in an x402 f
 | `FACILITATOR_URL` | var | `wrangler.toml` | x402 facilitator; the public testnet facilitator by default |
 | `PAY_TO` | var | `wrangler.toml` | Address that receives the testnet payments |
 | `ANALYTICS_ENDPOINT` | var | `wrangler.toml`, commented out | Where records are sent; unset means log only |
-| `OP8X_KEY` | secret | `wrangler secret put OP8X_KEY` | Write key for the op8x collector; never in a file |
+| `OP8X_KEY` | secret | `npx wrangler secret put OP8X_KEY` | Write key for the op8x collector; never in a file |
 
 ## The module comes from a packed tarball
 
@@ -63,9 +63,13 @@ curl.exe -i http://127.0.0.1:8787/
 curl.exe -i http://127.0.0.1:8787/paid
 ```
 
-`/paid` returns `402 Payment Required` with a `PAYMENT-REQUIRED` header. Terminal 2 shows one `op8x.analytics {...}` line per request.
+`/paid` (and `HEAD /paid`) returns `402 Payment Required` with a `PAYMENT-REQUIRED` header. Terminal 2 shows one `op8x.analytics {...}` line per request.
 
-To run against the public testnet facilitator instead, use `npx wrangler dev --ip 127.0.0.1 --port 8787`.
+To run against the public testnet facilitator instead:
+
+```
+npx wrangler dev --ip 127.0.0.1 --port 8787
+```
 
 ## Deploy
 
@@ -83,13 +87,26 @@ The Worker is named `demo-api` and is served only under `workers.dev` (no routes
    npx wrangler deploy
    ```
 
-3. Store the write key as the secret `OP8X_KEY` (`wrangler secret put OP8X_KEY`). The secret is set on the deployed Worker and never written to a file in this repository.
+3. Store the write key as the secret `OP8X_KEY`. The prompt hides what you type, so no value appears on screen, and the secret is set on the deployed Worker and never written to a file in this repository:
 
-4. In `wrangler.toml`, remove the `#` in front of the `ANALYTICS_ENDPOINT` line, then deploy again:
+   ```
+   npx wrangler secret put OP8X_KEY
+   ```
+
+4. In `wrangler.toml`, remove the `#` in front of the `ANALYTICS_ENDPOINT` line, then deploy again. This leaves a changed `wrangler.toml` in the working tree; commit it or discard it as you prefer:
 
    ```
    npx wrangler deploy
    ```
+
+5. Check that the Worker answers and that `/paid` asks for payment (expect `200` and `402`):
+
+   ```
+   curl.exe -s -o NUL -w "%{http_code}\n" https://demo-api.<your-subdomain>.workers.dev/
+   curl.exe -s -o NUL -w "%{http_code}\n" https://demo-api.<your-subdomain>.workers.dev/paid
+   ```
+
+   Replace `<your-subdomain>` with the account subdomain that `npx wrangler deploy` prints in its output URL.
 
 To watch the log lines of the deployed Worker:
 
@@ -99,5 +116,5 @@ npx wrangler tail demo-api
 
 ## Notes
 
-- The payment middleware is set up on the first request to `/paid`, not in global scope and not on other routes: Workers forbid network I/O in global scope, and I/O started by one request is cancelled when that request ends. If the facilitator cannot be reached, `/paid` answers `503` and the setup is retried on the next request.
+- The payment middleware is set up on the first request to `/paid`, not in global scope and not on other routes: Workers forbid network I/O in global scope, and I/O started by one request is cancelled when that request ends. The facilitator client times out after 10 seconds. If the facilitator cannot be reached, `/paid` answers `503` and the setup is retried on the next request.
 - Workers observability is off; console output is visible only live through `wrangler tail`.

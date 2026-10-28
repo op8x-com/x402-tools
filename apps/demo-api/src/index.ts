@@ -6,6 +6,8 @@ import { ExactEvmScheme } from "@x402/evm/exact/server";
 
 const NETWORK = "eip155:84532"; // Base Sepolia (testnet)
 const PRICE = "$0.001";
+// A slow facilitator must fail the setup (503, retried next request) before the waitUntil limit hangs it.
+const FACILITATOR_TIMEOUT_MS = 10_000;
 
 interface Bindings {
   FACILITATOR_URL: string;
@@ -33,16 +35,16 @@ app.use(async (c, next) => {
 let pay: Promise<MiddlewareHandler> | undefined;
 
 async function buildPayment(env: Bindings): Promise<MiddlewareHandler> {
-  const server = new x402ResourceServer(new HTTPFacilitatorClient({ url: env.FACILITATOR_URL })).register(
+  const server = new x402ResourceServer(new HTTPFacilitatorClient({ url: env.FACILITATOR_URL, timeoutMs: FACILITATOR_TIMEOUT_MS })).register(
     NETWORK,
     new ExactEvmScheme(),
   );
-  const http = new x402HTTPResourceServer(server, {
-    "GET /paid": {
-      accepts: { scheme: "exact", price: PRICE, network: NETWORK, payTo: env.PAY_TO },
-      description: "Demo paid route",
-    },
-  });
+  const route = {
+    accepts: { scheme: "exact" as const, price: PRICE, network: NETWORK as `${string}:${string}`, payTo: env.PAY_TO },
+    description: "Demo paid route",
+  };
+  // Hono answers HEAD with the GET handler but keeps the method HEAD, so x402 needs its own entry.
+  const http = new x402HTTPResourceServer(server, { "GET /paid": route, "HEAD /paid": route });
   await http.initialize(); // fetches /supported and validates the route configuration
   return paymentMiddlewareFromHTTPServer(http, undefined, undefined, false);
 }
