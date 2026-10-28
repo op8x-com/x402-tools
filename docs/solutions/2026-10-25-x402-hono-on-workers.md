@@ -18,17 +18,17 @@ Two separate failures when putting `@x402/hono` (2.28.x) on a Worker under `wran
 
 ## Fix
 1. Use `compatibility_date = "2026-10-01"` (or later). Both the 402 path and the paid path then work without `nodejs_compat`. Older projects need the flag or a newer date.
-2. Build the payment middleware lazily on the first request, not at module top level:
+2. Do not create the payment middleware at module top level. Do not build it lazily for all routes either: that pattern hangs the paid route when a free route is requested first (see `2026-10-28-x402-hono-lazy-init-cross-request.md`). Build it on the paid route only, initialize it explicitly and keep the setup alive with `waitUntil`:
 
 ```ts
-let pay: MiddlewareHandler | undefined;
-app.use(async (c, next) => {
-  pay ??= paymentMiddleware(routes, server);
-  return pay(c, next);
+app.use("/paid", async (c, next) => {
+  const ready = (pay ??= buildPayment(c.env)); // await http.initialize(), then paymentMiddlewareFromHTTPServer(http, undefined, undefined, false)
+  c.executionCtx.waitUntil(ready.then(() => undefined, () => undefined));
+  return (await ready)(c, next);
 });
 ```
 
-See `packages/analytics/examples/workers/src/index.ts`.
+See `packages/analytics/examples/workers/src/index.ts` for the complete version with error handling.
 
 ## Prevention
-The README of `@op8x/analytics` and the example under `packages/analytics/examples/workers` use the lazy pattern and the new date, so copied code works. No automated test yet: the example is checked by hand under `wrangler dev` (no CI run of Workers).
+The README of `@op8x/analytics` and the example under `packages/analytics/examples/workers` use the paid-route-only pattern and the new date, so copied code works. No automated test yet: the example is checked by hand under `wrangler dev` (no CI run of Workers).

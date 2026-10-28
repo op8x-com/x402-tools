@@ -38,7 +38,7 @@ npm install hono @x402/hono@~2.28.0 @x402/core@~2.28.0 @x402/evm@~2.28.0
 ```ts
 import { Hono, type MiddlewareHandler } from "hono";
 import { analytics } from "@op8x/analytics/hono";
-import { paymentMiddleware, x402ResourceServer } from "@x402/hono";
+import { paymentMiddlewareFromHTTPServer, x402HTTPResourceServer, x402ResourceServer } from "@x402/hono";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 
@@ -47,25 +47,35 @@ const app = new Hono();
 // Analytics goes first, so it sees the 402 that the payment middleware produces.
 app.use(analytics({ log: true }));
 
-// Workers forbid network I/O in global scope, and paymentMiddleware() contacts the
-// facilitator when it is created. Build it on the first request instead.
-let pay: MiddlewareHandler | undefined;
-app.use(async (c, next) => {
-  pay ??= paymentMiddleware(
-    {
-      "GET /paid": {
-        accepts: { scheme: "exact", price: "$0.01", network: "eip155:84532", payTo: "0xYourAddress" },
-        description: "Paid route",
-      },
+// Set up the payment middleware only on the paid route, not on "the first request of any route":
+// its facilitator fetch is cancelled when a free route's request ends, and /paid would then hang.
+let pay: Promise<MiddlewareHandler> | undefined;
+async function buildPayment(): Promise<MiddlewareHandler> {
+  const server = new x402ResourceServer(new HTTPFacilitatorClient({ url: "https://your-facilitator.example", timeoutMs: 10_000 }))
+    .register("eip155:84532", new ExactEvmScheme());
+  const http = new x402HTTPResourceServer(server, {
+    "GET /paid": {
+      accepts: { scheme: "exact", price: "$0.01", network: "eip155:84532", payTo: "0xYourAddress" },
+      description: "Paid route",
     },
-    new x402ResourceServer(new HTTPFacilitatorClient({ url: "https://your-facilitator.example" })).register(
-      "eip155:84532",
-      new ExactEvmScheme(),
-    ),
-  );
-  return pay(c, next);
+  });
+  await http.initialize(); // fetches the facilitator's /supported
+  return paymentMiddlewareFromHTTPServer(http, undefined, undefined, false);
+}
+app.use("/paid", async (c, next) => {
+  const ready = (pay ??= buildPayment());
+  c.executionCtx.waitUntil(ready.then(() => undefined, () => undefined)); // keep the fetch alive
+  let handler: MiddlewareHandler;
+  try {
+    handler = await ready;
+  } catch {
+    if (pay === ready) pay = undefined; // setup failed: retry on the next request
+    return c.json({ error: "payment setup failed" }, 503);
+  }
+  return handler(c, next);
 });
 
+app.get("/", (c) => c.text("free route"));
 app.get("/paid", (c) => c.json({ ok: true }));
 
 export default app;
@@ -79,7 +89,7 @@ op8x.analytics {"v":1,"id":"...","ts":"2026-10-25T16:13:37.144Z","ms":19,"method
 
 Build `analytics()` once per isolate (at module scope, as above, or lazily once), not per request. One-time warnings are deduplicated per isolate either way, but a per-request instance does needless setup work on every request.
 
-A complete, runnable app with a local fake facilitator (no money, no network) is in [`examples/workers`](examples/workers).
+A complete, runnable app with a local fake facilitator (no money, no network) is in [`examples/workers`](examples/workers); it uses the same payment setup, with bindings and error logging.
 
 The middleware works at the transport level: it reads request headers, the response status and headers, and, for 402 responses only, a copy of the response body. It does not depend on `@x402/hono` or `@x402/core`, so it also records hand-written 402 responses.
 
@@ -88,6 +98,7 @@ The middleware works at the transport level: it reads request headers, the respo
 ```ts
 analytics({
   endpoint: "https://collector.example/v1/events",
+  key: "your-collector-key",
   log: true,
   salt: "a-long-random-secret",
   timeoutMs: 2000,
@@ -97,35 +108,43 @@ analytics({
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `endpoint` | none | `https` URL that receives each record as a JSON `POST` (`http` only for `localhost` and `127.0.0.1`). Omitted: no network sends. An invalid value is not an error: one warning is logged and sending stays off. |
+| `endpoint` | none | `https` URL (no username or password) that receives each record as a JSON `POST` (`http` only for `localhost` and `127.0.0.1`). Omitted: no network sends. An invalid value is not an error: one warning is logged and sending stays off. |
+| `key` | none | Write key, sent as `Authorization: Bearer <key>`. Wins over `OP8X_KEY` from the environment, see "Write key". |
 | `log` | `false` | Write one `console.log("op8x.analytics", <json>)` line per record. |
 | `salt` | none | Enables the `payer` field (a keyed hash of the payer address). Omitted: no `payer` field at all. A blank or non-string value also disables hashing and logs one warning, `op8x.analytics: salt must be a non-empty string, payer hashing disabled`. Keep it secret. |
 | `timeoutMs` | `2000` | Abort the send after this long; also the limit for reading the 402 body copy. Clamped to 100..10000. |
 | `chainCheck` | `false` | Add `receipt.transaction` so the collector can confirm settlement on-chain. Omitted: the transaction hash is never read. |
 
+## Write key
+
+The op8x collector accepts records only with a write key, sent as `Authorization: Bearer <key>`. On Workers, store it as a secret; the middleware reads `OP8X_KEY` from the Worker environment on every request, so a new secret takes effect without a code change:
+
+```
+npx wrangler secret put OP8X_KEY
+```
+
+```ts
+app.use(analytics({ endpoint: "https://ingest.op8x.com/v1/events" }));
+```
+
+- The environment is read only when the endpoint's origin is exactly `https://ingest.op8x.com`. A key meant for op8x is never sent to another host.
+- Outside Cloudflare Workers (for example Node) there is no Worker environment: pass the key as the `key` option. The same holds for `createTransport` used directly, which never reads the environment.
+- The `key` option wins over the environment and is the only way to send a key to any other endpoint. A key starting with `op8x_w_` is sent only to `https://ingest.op8x.com`; for any other origin it is refused (nothing is sent, one warning `op8x.analytics: op8x write key refused for a non-op8x endpoint`). Explicit keys without that prefix work for other endpoints. Prefer `OP8X_KEY`; never commit a key to source control.
+- Without a usable key for the op8x endpoint nothing is sent, and one warning is logged: `op8x.analytics: OP8X_KEY missing, sending disabled` or `op8x.analytics: invalid key, sending disabled` (`createTransport` without a key: `op8x.analytics: no key for the op8x endpoint (set the key option or OP8X_KEY), sending disabled`). Key warnings repeat at most once per minute. An invalid explicit key stops sending for every endpoint. With `log: true` the record is still logged.
+- A key is invalid when it is not a string, is empty, is longer than 256 characters or contains characters outside printable ASCII; for the op8x endpoint also when it does not start with `op8x_w_`. Surrounding whitespace is trimmed.
+- The key never appears in records, `log: true` output or warnings, and redirects are not followed.
+
 ## Record fields
 
-Version 1. One record per request that passes through the middleware. Strings are trimmed, stripped of control characters (including Unicode bidi controls) and capped at 128 characters (256 for `challenge.error` and `receipt.errorReason`). Unknown or undecodable values are omitted, never guessed.
+One record per request that passes through the middleware. The fields, headers and response codes are described in the [ingest contract](docs/ingest-contract.md).
 
-| Field | Meaning |
-| --- | --- |
-| `v` | Record format version, `1`. |
-| `id` | Random UUID per request. |
-| `ts` | ISO 8601 time the request started. |
-| `ms` | Time spent downstream of the middleware, in milliseconds. |
-| `method` | HTTP method. |
-| `route` | Pattern of the last matched route registered after the middleware, such as `/posts/:id`. `app.use` middlewares and `app.all()` handlers (method `ALL`) are ignored, so a handler registered with `app.all()` records `""`, as does a request where no such route matched. Never the concrete path. |
-| `status` | Final response status. |
-| `ua` | User-Agent class: `x402-client`, `axios`, `node`, `python`, `go`, `curl`, `browser`, `op8x`, `none` or `other`. The raw header is never stored. |
-| `type` | `payment.received` when the request carried a payment header, else `challenge.issued` for a 402, else `request.unpaid`. |
-| `challenge` | With status 402. `location` (`header`, `body`, `both`, `none`), `version` (1 or 2), `drift` (header and body challenges both present and different), `error`, and up to 5 `accepts` entries with `scheme`, `network`, `amount`, `asset`. |
-| `payment` | When a payment header was sent. `header` (`PAYMENT-SIGNATURE` or `X-PAYMENT`), `decodable`, `version`, `scheme`, `network`, `amount`, `asset`, and `payer` (first 32 hex characters of HMAC-SHA-256 over the lowercase address, only with `salt`). The address is taken from the receipt's `payer`, falling back to `payload.authorization.from` in the payment header, and is hashed with the salt; it can be present even when the payment header itself was undecodable (`decodable: false`). |
-| `receipt` | When a receipt header came back. `header` (`PAYMENT-RESPONSE` or `X-PAYMENT-RESPONSE`), `decodable`, `success`, `network`, `errorReason`, and `transaction` only with `chainCheck: true`. |
-| `delivery` | With `payment`: `ok` when the final status is below 400, else `failed`. |
+`route` is the pattern of the last matched route registered after the middleware, such as `/posts/:id`. `app.use` middlewares and `app.all()` handlers (method `ALL`) are ignored, so a handler registered with `app.all()` records `""`, as does a request where no such route matched.
+
+The payer address behind `payment.payer` is taken from the receipt's `payer`, falling back to `payload.authorization.from` in the payment header, and is hashed with the salt; it can be present even when the payment header itself was undecodable (`decodable: false`).
 
 ## What is never collected
 
-- Request bodies and response bodies. The one exception is the 402 challenge: only the fields listed above are taken from it, and at most 64 KB of the body is read.
+- Request bodies and response bodies. The one exception is the 402 challenge: only the fields listed in the [ingest contract](docs/ingest-contract.md) are taken from it, and at most 64 KB of the body is read.
 - IP addresses (`cf-connecting-ip`, `x-forwarded-for` and any other source).
 - The URL path and query string; only the route pattern is recorded.
 - Cookies, `authorization` and the raw User-Agent.
@@ -134,14 +153,14 @@ Version 1. One record per request that passes through the middleware. Strings ar
 
 ## Guarantees
 
-- **Fail-open.** Errors inside the middleware are caught and never reach your code. An unreachable, slow, failing or misconfigured endpoint changes nothing for your API and its buyers. One send attempt per request, aborted after `timeoutMs`; send failures produce at most one warning per minute per isolate for each kind of failure, without record data. Each send is a `POST` with the headers `content-type` and `user-agent` only; the Workers runtime itself may add a `cf-worker` header to outgoing requests.
+- **Fail-open.** Errors inside the middleware are caught and never reach your code. An unreachable, slow, failing or misconfigured endpoint changes nothing for your API and its buyers. One send attempt per request, aborted after `timeoutMs`; send failures produce at most one warning per minute per isolate for each kind of failure, without record data. Each send is a `POST` with the headers `content-type` and `user-agent`, plus `authorization` when there is a key (see "Write key"); the Workers runtime itself may add a `cf-worker` header to outgoing requests.
 - **No added latency.** Body copy, hashing, sending and logging run after the response is returned, through `waitUntil`. Before returning, the middleware only reads headers and starts one `clone()` of a 402 response.
 - **Response unchanged.** Status, headers and body leave the middleware exactly as they arrived. Errors thrown by your own handlers propagate unchanged.
 
 ## Workers notes
 
 - **Compatibility date.** With `compatibility_date = "2026-10-01"` or later, `@x402/hono` runs without the `nodejs_compat` flag. With `2024-09-01` the build fails because `@x402/extensions` imports `url`; older projects need `nodejs_compat` or a newer date.
-- **Global scope.** Do not call `paymentMiddleware(...)` at module top level: it contacts the facilitator, which Workers forbid in global scope. Requests to routes protected by the payment middleware then return 500 ("Disallowed operation called within global scope"); unprotected routes keep working. Build it lazily on the first request as in the quick start.
+- **Global scope.** Do not call `paymentMiddleware(...)` at module top level: it contacts the facilitator, which Workers forbid in global scope. Requests to routes protected by the payment middleware then return 500 ("Disallowed operation called within global scope"); unprotected routes keep working. Set it up on the paid route only, as in the quick start: a lazy setup on the first request of any route leaves `/paid` hanging when that first request was a free route.
 - **Body challenges over 64 KB.** Only the first 64 KB of a 402 body are read, and only within `timeoutMs`. A longer or slower body challenge is truncated, does not parse, and is recorded as `location: "none"` (or `"header"` when a header challenge is present).
 - **`ms` on Workers.** Workers advance the clock only across I/O, so `ms` covers time spent waiting on I/O downstream (fetches, KV, the facilitator); CPU time in your handlers does not advance it.
 

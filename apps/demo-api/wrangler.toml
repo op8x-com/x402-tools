@@ -1,0 +1,20 @@
+name = "demo-api"
+main = "src/index.ts"
+# A date from 2026-10 on provides Buffer globally, so no nodejs_compat flag is needed.
+compatibility_date = "2026-10-01"
+
+# Served only under workers.dev; no routes or custom domains.
+workers_dev = true
+preview_urls = false
+
+# Console output (including the analytics log lines) is visible only live via `wrangler tail`.
+[observability]
+enabled = false
+
+[vars]
+# Public x402 facilitator for testnets. For a local run, override it with the example's fake facilitator (see README).
+FACILITATOR_URL = "https://x402.org/facilitator"
+# Address that receives the testnet payments.
+PAY_TO = "0x867E28740B8175d92A14E6A416415d1ca9fF24d2"
+# Set only once the write key exists (the key is the secret OP8X_KEY, never a var):
+# ANALYTICS_ENDPOINT = "https://ingest.op8x.com/v1/events"
