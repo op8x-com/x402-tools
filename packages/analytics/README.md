@@ -51,7 +51,7 @@ app.use(analytics({ log: true }));
 // its facilitator fetch is cancelled when a free route's request ends, and /paid would then hang.
 let pay: Promise<MiddlewareHandler> | undefined;
 async function buildPayment(): Promise<MiddlewareHandler> {
-  const server = new x402ResourceServer(new HTTPFacilitatorClient({ url: "https://your-facilitator.example" }))
+  const server = new x402ResourceServer(new HTTPFacilitatorClient({ url: "https://your-facilitator.example", timeoutMs: 10_000 }))
     .register("eip155:84532", new ExactEvmScheme());
   const http = new x402HTTPResourceServer(server, {
     "GET /paid": {

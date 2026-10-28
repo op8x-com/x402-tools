@@ -26,7 +26,7 @@ app.use(async (c, next) => {
 let pay: Promise<MiddlewareHandler> | undefined;
 
 async function buildPayment(env: Bindings): Promise<MiddlewareHandler> {
-  const server = new x402ResourceServer(new HTTPFacilitatorClient({ url: env.FACILITATOR_URL })).register(
+  const server = new x402ResourceServer(new HTTPFacilitatorClient({ url: env.FACILITATOR_URL, timeoutMs: 10_000 })).register(
     "eip155:84532",
     new ExactEvmScheme(),
   );
