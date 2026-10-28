@@ -20,7 +20,7 @@ app.use(analytics({ endpoint: "https://ingest.op8x.com/v1/events" }));
 5. **Invalid key.** Not a string, empty after trimming, longer than 256 characters, or containing characters outside printable ASCII; for the op8x endpoint also a missing `op8x_w_` prefix. Nothing is sent, one warning without the value. The module does not check the length of the random part; the collector does.
 6. **Warning rate.** Key warnings (missing, invalid, refused) are limited to one line per minute per message and isolate, like send failures, so a long-lived process shows a misconfiguration again.
 7. **Never visible.** The key never appears in records, `log: true` output, warnings or error messages.
-7. **Fail open as before.** A `401` or any other status changes nothing for the seller's response.
+8. **Fail open as before.** A `401` or any other status changes nothing for the seller's response.
 
 ## Ingest contract
 
