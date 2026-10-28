@@ -16,3 +16,9 @@ dist/
 
 # Local tooling
 .semgrep/
+
+# Design drafting scratch files
+/concepts_brief.md
+/design_draft.md
+/discussion_summary.md
+/scratch/
