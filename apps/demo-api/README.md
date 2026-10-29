@@ -12,15 +12,16 @@ A small paid API on Cloudflare Workers that shows `@op8x/analytics` in an x402 f
 | --- | --- | --- | --- |
 | `FACILITATOR_URL` | var | `wrangler.toml` | x402 facilitator; the public testnet facilitator by default |
 | `PAY_TO` | var | `wrangler.toml` | Address that receives the testnet payments |
-| `ANALYTICS_ENDPOINT` | var | `wrangler.toml`, commented out | Where records are sent; unset means log only |
+| `ANALYTICS_ENDPOINT` | var | `wrangler.toml` | Where records are sent (the op8x collector); unset means log only |
 | `OP8X_KEY` | secret | `npx wrangler secret put OP8X_KEY` | Write key for the op8x collector; never in a file |
 
 ## The module comes from a packed tarball
 
-`@op8x/analytics` is installed from `vendor/op8x-analytics-0.0.1.tgz`, the output of `npm pack` in `packages/analytics`, so the demo runs exactly the artifact a seller would install. `vendor/SOURCE` records the source commit and the tarball's SHA-256. To check the tarball:
+`@op8x/analytics` is installed from `vendor/op8x-analytics-0.0.1.tgz`, the output of `npm pack` in `packages/analytics`, so the demo runs exactly the artifact a seller would install. `vendor/SOURCE` records the source commit and the tarball's SHA-256. To check that the tarball matches `SOURCE` and that no packed file in `packages/analytics` changed since that commit (CI runs the same check, so a forgotten repack fails the pull request):
 
 ```
-node -e "const c=require('crypto'),f=require('fs');console.log(c.createHash('sha256').update(f.readFileSync('vendor/op8x-analytics-0.0.1.tgz')).digest('hex'))"
+cd apps/demo-api
+npm run check-vendor
 ```
 
 To pack a new version (after committing the changes in `packages/analytics`):
@@ -81,25 +82,19 @@ The Worker is named `demo-api` and is served only under `workers.dev` (no routes
    npm ci
    ```
 
-2. Deploy without an analytics endpoint. Records are only logged:
+2. Deploy. `wrangler.toml` sets `ANALYTICS_ENDPOINT` to the op8x collector; until step 3 the collector cannot accept the records, and they are only logged. To deploy with logging only, put a `#` in front of that line first:
 
    ```
    npx wrangler deploy
    ```
 
-3. Store the write key as the secret `OP8X_KEY`. The prompt hides what you type, so no value appears on screen, and the secret is set on the deployed Worker and never written to a file in this repository:
+3. On the first deploy only, store the write key as the secret `OP8X_KEY`. The prompt hides what you type, so no value appears on screen, and the secret is set on the deployed Worker and never written to a file in this repository. Later deploys keep the secret:
 
    ```
    npx wrangler secret put OP8X_KEY
    ```
 
-4. In `wrangler.toml`, remove the `#` in front of the `ANALYTICS_ENDPOINT` line, then deploy again. This leaves a changed `wrangler.toml` in the working tree; commit it or discard it as you prefer:
-
-   ```
-   npx wrangler deploy
-   ```
-
-5. Check that the Worker answers and that `/paid` asks for payment (expect `200` and `402`):
+4. Check that the Worker answers and that `/paid` asks for payment (expect `200` and `402`):
 
    ```
    curl.exe -s -o NUL -w "%{http_code}\n" https://demo-api.<your-subdomain>.workers.dev/
