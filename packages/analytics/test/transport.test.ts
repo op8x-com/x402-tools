@@ -276,7 +276,7 @@ test("fetch is called with redirect: manual", async () => {
   assert.equal(init?.redirect, "manual");
 });
 
-test("the rate limit is shared by transports of one isolate, per warning text", async () => {
+test("the rate limit is shared by transports of one isolate, per kind of failure", async () => {
   const s = spies();
   const f = (async () => {
     throw new TypeError("boom");
@@ -287,5 +287,22 @@ test("the rate limit is shared by transports of one isolate, per warning text", 
   assert.equal(s.warns.length, 1);
   const bad = (async () => new Response(null, { status: 500 })) as typeof fetch;
   await createTransport({ endpoint: "https://collector.example/x" }, { ...s, now: () => 5_000_000, fetch: bad }).send(record);
-  assert.equal(s.warns.length, 2, "a different text is limited separately");
+  assert.equal(s.warns.length, 2, "a different kind of failure is limited separately");
+});
+
+test("non-2xx statuses share one rate limit; the line names the first status", async () => {
+  let now = 7_000_000;
+  const s = spies();
+  for (const status of [500, 502, 503, 429, 404]) {
+    const f = (async () => new Response(null, { status })) as typeof fetch;
+    await createTransport({ endpoint: "https://collector.example/x" }, { ...s, now: () => now, fetch: f }).send(record);
+  }
+  assert.equal(s.warns.length, 1);
+  assert.equal(String(s.warns[0]![0]), "op8x.analytics: send failed (status 500)");
+  now += 60_000;
+  const f = (async () => new Response(null, { status: 503 })) as typeof fetch;
+  await createTransport({ endpoint: "https://collector.example/x" }, { ...s, now: () => now, fetch: f }).send(record);
+  assert.equal(s.warns.length, 2);
+  assert.equal(String(s.warns[1]![0]), "op8x.analytics: send failed (status 503)");
+  noLeak(s.warns);
 });
