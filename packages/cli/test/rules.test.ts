@@ -239,7 +239,7 @@ test("allow list without Access-Control-Expose-Headers gets the SDK retry adviso
   const exact = { ...ORIGIN_OK, "access-control-allow-headers": "payment-signature, content-type" };
   const f = runRules([corsV2("POST")], pf(204, exact)).find((x) => x.id === "cors-client-retry");
   assert.equal(f?.level, "info");
-  assert.match(f?.detail ?? "", /2\.28\.0/);
+  assert.match(f?.detail ?? "", /2\.29\.0/);
   assert.match(f?.detail ?? "", /3478/);
 });
 
@@ -542,4 +542,31 @@ test("a valid v1 JSON challenge body of about 600 KiB is readable: no false erro
 test("official client and own decoder both reject: header-not-base64 stays an error", () => {
   const fs = runRules([extract(pr("GET", 402, { ...NS, "payment-required": "eyJh-_" }, {}))]);
   assert.equal(find(fs, "header-not-base64")?.level, "error");
+});
+
+test("header that decodes to JSON but not an object: header-not-object names the type", () => {
+  for (const [value, kind] of [[[], "an array"], ["x", "a string"], [42, "a number"], [true, "a boolean"], [null, "null"]] as const) {
+    const fs = runRules([extract(pr("GET", 402, { ...NS, "payment-required": b64(value) }, {}))], undefined, "<url>", "9.9.9");
+    assert.deepEqual(nonCors(fs), ["header-not-object", "official-client"], kind);
+    const f = find(fs, "header-not-object");
+    assert.equal(f?.level, "error");
+    assert.equal(f?.detail, `The header is valid base64 JSON, but it decodes to ${kind}, not to the challenge object.`);
+    assert.equal(find(fs, "official-client")?.level, "error");
+  }
+});
+
+test("non-object header with a v1 body: the body is ignored, as in the official client, and no drift is reported", () => {
+  const fs = runRules([extract(pr("GET", 402, { ...NS, "payment-required": b64([]) }, v1))]);
+  assert.deepEqual(nonCors(fs), ["header-not-object", "official-client"]);
+});
+
+test("non-object header with a v2 body: no v2-body-only, the header is present", () => {
+  const fs = runRules([extract(pr("GET", 402, { ...NS, "payment-required": b64("x") }, v2))]);
+  assert.deepEqual(nonCors(fs), ["header-not-object", "official-client"]);
+});
+
+test("412 with a non-object header is not a 402: no header-not-object", () => {
+  const fs = runRules([extract(pr("GET", 412, { ...NS, "payment-required": b64([]) }, {}))]);
+  assert.equal(find(fs, "header-not-object"), undefined);
+  assert.ok(ids(fs).includes("no-402"));
 });

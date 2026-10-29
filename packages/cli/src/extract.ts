@@ -29,6 +29,11 @@ function looksLikeChallenge(v: unknown): boolean {
   return isObject(v) && ("x402Version" in v || Array.isArray(v.accepts));
 }
 
+/** The header is present, not empty, and decodes to JSON of any type. */
+export function headerDecoded(e: Pick<Extracted, "headerRaw" | "headerError">): boolean {
+  return e.headerRaw !== undefined && e.headerError === undefined;
+}
+
 function versionOf(v: unknown): 1 | 2 | undefined {
   if (!isObject(v)) return undefined;
   return v.x402Version === 1 || v.x402Version === 2 ? v.x402Version : undefined;
@@ -73,7 +78,8 @@ export function extract(p: ProbeResult): Extracted {
   const inHeader = out.headerRaw !== undefined;
   const inBody = out.bodyChallenge !== undefined;
   out.location = inHeader && inBody ? "both" : inHeader ? "header" : inBody ? "body" : "none";
-  out.challenge = out.header ?? out.bodyChallenge;
+  // A decoded header wins even when it is not an object (or null), as in the official client.
+  out.challenge = headerDecoded(out) ? out.header : out.bodyChallenge;
   out.version = versionOf(out.challenge);
   return { ...out, official: officialClientRead(out) };
 }
