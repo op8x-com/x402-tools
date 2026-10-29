@@ -1,5 +1,4 @@
 import { PaymentRequiredV1Schema, PaymentRequiredV2Schema } from "@x402/core/schemas";
-import { officialClientCanRead } from "./extract.ts";
 import { quote } from "./report.ts";
 import type { Extracted, Finding, Level, Method, PreflightResult } from "./types.ts";
 
@@ -243,7 +242,7 @@ function methodRules(e: Extracted): Finding[] {
       'Send "Cache-Control: no-store" with 402 responses.',
     );
   }
-  if (officialClientCanRead(e)) {
+  if (e.official.readable) {
     add("official-client", "pass", "Official x402 client can read the challenge", "The challenge is where the official client looks for it.");
   } else {
     add(

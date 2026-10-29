@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { decodeHeader, extract, officialClientCanRead } from "../src/extract.ts";
+import { cleanReason, decodeHeader, extract } from "../src/extract.ts";
 import { b64, pr, v1, v2 } from "./fixtures.ts";
 
 test("decodeHeader decodes standard base64 JSON", () => {
@@ -24,21 +24,21 @@ test("v2 challenge in header", () => {
   assert.equal(e.location, "header");
   assert.equal(e.version, 2);
   assert.deepEqual(e.challenge, v2);
-  assert.equal(officialClientCanRead(e), true);
+  assert.equal(e.official.readable, true);
 });
 
 test("v1 challenge in body", () => {
   const e = extract(pr("GET", 402, {}, v1));
   assert.equal(e.location, "body");
   assert.equal(e.version, 1);
-  assert.equal(officialClientCanRead(e), true);
+  assert.equal(e.official.readable, true);
 });
 
 test("v2 challenge only in body is unreadable for the official client", () => {
   const e = extract(pr("GET", 402, {}, v2));
   assert.equal(e.location, "body");
   assert.equal(e.version, 2);
-  assert.equal(officialClientCanRead(e), false);
+  assert.equal(e.official.readable, false);
 });
 
 test("challenge in header and body", () => {
@@ -51,7 +51,7 @@ test("broken header counts as header location and is unreadable", () => {
   const e = extract(pr("GET", 402, { "payment-required": "not base64!" }, {}));
   assert.equal(e.location, "header");
   assert.equal(e.headerError, "not-base64");
-  assert.equal(officialClientCanRead(e), false);
+  assert.equal(e.official.readable, false);
 });
 
 test("empty JSON body is not a challenge", () => {
@@ -92,4 +92,72 @@ test("body with a leading UTF-8 BOM is parsed like fetch().json() does", () => {
   assert.equal(e.location, "body");
   assert.equal(e.version, 1);
   assert.deepEqual(e.bodyChallenge, v1);
+});
+
+test("decodeHeader rejects base64 with wrong padding, like atob", () => {
+  assert.equal(decodeHeader("eyJhIjoxfQ=").error, "not-base64");
+});
+
+test("decodeHeader drops a BOM in the decoded text, like TextDecoder", () => {
+  const raw = Buffer.from("\uFEFF" + JSON.stringify(v2), "utf8").toString("base64");
+  assert.deepEqual(decodeHeader(raw).value, v2);
+});
+
+test("extract keeps the probe's headers", () => {
+  const e = extract(pr("GET", 402, { "payment-required": "", "x-other": "1" }, v1));
+  assert.equal(e.headers["payment-required"], "");
+  assert.equal(e.headers["x-other"], "1");
+});
+
+test("empty header with v1 body: treated as absent, readable", () => {
+  const e = extract(pr("GET", 402, { "payment-required": "" }, v1));
+  assert.equal(e.headerEmpty, true);
+  assert.equal(e.headerRaw, undefined);
+  assert.equal(e.headerError, undefined);
+  assert.equal(e.location, "body");
+  assert.equal(e.official.readable, true);
+});
+
+test("empty header without body: no challenge, not readable", () => {
+  const e = extract(pr("GET", 402, { "payment-required": "" }));
+  assert.equal(e.location, "none");
+  assert.equal(e.official.readable, false);
+  assert.ok(!e.official.readable && e.official.reason.length > 0);
+});
+
+test("base64url header: official reason names the header", () => {
+  const e = extract(pr("GET", 402, { "payment-required": "eyJh-_" }, {}));
+  assert.ok(!e.official.readable && e.official.reason.includes("Invalid payment required header"));
+});
+
+test("base64 header that is not JSON: not readable with a reason", () => {
+  const e = extract(pr("GET", 402, { "payment-required": Buffer.from("hello").toString("base64") }, {}));
+  assert.ok(!e.official.readable && e.official.reason.length > 0);
+});
+
+test("wrong padding: not-base64 and not readable", () => {
+  const e = extract(pr("GET", 402, { "payment-required": "eyJhIjoxfQ=" }, {}));
+  assert.equal(e.headerError, "not-base64");
+  assert.equal(e.official.readable, false);
+});
+
+test("BOM inside the header: decoded and readable", () => {
+  const raw = Buffer.from("\uFEFF" + JSON.stringify(v2), "utf8").toString("base64");
+  const e = extract(pr("GET", 402, { "payment-required": raw }, {}));
+  assert.equal(e.headerError, undefined);
+  assert.equal(e.version, 2);
+  assert.equal(e.official.readable, true);
+});
+
+test("header that decodes to a non-object is not readable", () => {
+  const e = extract(pr("GET", 402, { "payment-required": b64(42) }, {}));
+  assert.deepEqual(e.official, { readable: false, reason: "challenge is not a JSON object" });
+});
+
+test("cleanReason strips unsafe characters, a trailing period, and caps the length", () => {
+  assert.equal(cleanReason(new Error("bad\u0000\u007f\u0085\u200b\u202e\u2028 value.")), "bad value");
+  assert.equal(cleanReason(new Error("x".repeat(300))).length, 200);
+  assert.equal(cleanReason(new Error("")), "unknown error");
+  assert.equal(cleanReason("thrown string"), "unknown error");
+  assert.equal(cleanReason(undefined), "unknown error");
 });

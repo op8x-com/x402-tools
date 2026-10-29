@@ -41,16 +41,23 @@ export interface PreflightResult {
 
 export type Location = "header" | "body" | "both" | "none";
 
+/** What the official client of the installed @x402/core makes of a response. */
+export type OfficialRead = { readable: true } | { readable: false; reason: string };
+
 export interface Extracted {
   method: Method;
   status?: number;
   error?: string;
-  /** Raw PAYMENT-REQUIRED header value, if present. */
+  /** Response headers as the probe saw them, keys lower-cased. */
+  headers: Record<string, string>;
+  /** Raw non-empty PAYMENT-REQUIRED header value, if present. */
   headerRaw?: string;
+  /** PAYMENT-REQUIRED present with an empty value; treated as absent. */
+  headerEmpty?: true;
   headerError?: "not-base64" | "not-json";
   /** Decoded PAYMENT-REQUIRED header JSON. */
   header?: unknown;
-  /** Parsed JSON body, if the body is JSON. */
+  /** Parsed JSON body, if the body is JSON; as @x402/fetch passes it to the official client. */
   body?: unknown;
   /** The body, if it looks like a challenge (has x402Version or accepts[]). */
   bodyChallenge?: unknown;
@@ -67,4 +74,6 @@ export interface Extracted {
   /** Status of the same request sent with an Origin header, when that probe ran. */
   originStatus?: number;
   originError?: string;
+  /** What the official client of the installed @x402/core makes of this response. */
+  official: OfficialRead;
 }
