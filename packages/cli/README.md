@@ -12,6 +12,7 @@ Or install it once and use the short command: `npm install -g @op8x/cli`, then `
 
 - v2 challenge only in the body (the official v2 client reads the `PAYMENT-REQUIRED` header only)
 - `PAYMENT-REQUIRED` header that is not standard base64 or not JSON
+- an empty `PAYMENT-REQUIRED` header (`header-empty`)
 - header and body challenges that disagree
 - `x402Version` missing or a string, mixed v1/v2 fields, legacy network names in v2
 - GET and POST behaving differently, redirects, missing `Cache-Control: no-store`
@@ -32,6 +33,8 @@ The plain requests carry no `Origin`, so a server that refuses browsers is still
 
 Exit codes: `0` no errors, `1` errors found, `2` usage error or the URL was unreachable.
 
+The JSON report names the `@x402/core` version that read the challenge (`x402Core`).
+
 ## Example
 
 ```
@@ -46,7 +49,7 @@ op8x check https://api.example.com/weather
         The body contains an x402Version 2 challenge, but the PAYMENT-REQUIRED header is missing. The official v2 client reads v2 challenges only from the header and fails before signing.
         Fix: Send the challenge in the PAYMENT-REQUIRED header (base64 JSON). A body copy is optional.
 ✖ error [both] Official x402 client cannot read the challenge
-        The official client would fail before signing; see the other findings.
+        @x402/core 2.29.0: Invalid payment required response. The official client would fail before signing; see the other findings.
 i info  [both] 402 without Access-Control-Allow-Origin
         A browser hides the whole 402 from cross-origin pages, so a web app cannot read the price. Fine if only servers and agents should pay. Affects browser clients only.
         Fix: If browser apps should pay this endpoint, send Access-Control-Allow-Origin on the 402 and on the preflight.

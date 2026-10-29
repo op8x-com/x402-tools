@@ -1,7 +1,7 @@
 # op8x CLI: official client verdict from `@x402/core`
 
 *   **Author:** op8x
-*   **Status:** Proposed
+*   **Status:** Approved
 *   **Date:** 2026-10-28
 
 --------------------------------------------------------------------------------
