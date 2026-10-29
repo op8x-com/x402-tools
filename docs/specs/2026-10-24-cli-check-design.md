@@ -47,7 +47,7 @@ Package `op8x` in `packages/cli`, TypeScript, ESM, Node >= 20, single runtime de
 - Methods: `GET` and `POST` (POST with `Content-Type: application/json`, body `{}`), unless `--method` restricts to one.
 - Headers: `Accept: application/json`, `User-Agent: op8x-cli/<version> (+https://op8x.com)`. Never sends `X-PAYMENT` or `PAYMENT-SIGNATURE`.
 - `redirect: "manual"`; a redirect is reported, not followed.
-- Timeout per request, default 10 s. Body read capped at 256 KB.
+- Timeout per request, default 10 s. Body read capped at 256 KB; a body longer than that is never parsed as JSON.
 - Network errors (DNS, TLS, timeout) become a probe result with an error, not an exception.
 
 ### Findings

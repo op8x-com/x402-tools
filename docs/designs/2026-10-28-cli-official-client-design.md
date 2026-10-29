@@ -97,7 +97,7 @@ report ──► JSON adds "x402Core": "<version>"; text unchanged apart from fi
     *   `e.body` is the body as `@x402/fetch` passes it on (see Open Questions and Decisions): the parsed JSON after BOM removal, `undefined` if the body is not JSON, whatever the content type.
     *   A returned value that is not a non-null, non-array object gives `{ readable: false, reason: "challenge is not a JSON object" }`.
     *   Any exception becomes `{ readable: false, reason: cleanReason(err) }`. Nothing escapes the function.
-*   `cleanReason(thrown: unknown): string` takes the thrown value: an `Error` (including `DOMException` from `atob`) with a non-empty message gives that message; an empty message or anything else gives `"unknown error"`. It then removes characters of the Unicode categories Cc (C0, DEL, C1), Cf (format and bidi characters such as U+200B, U+202A-U+202E, U+2066-U+2069), Zl and Zp (U+2028, U+2029), drops one trailing period, and caps the text at 200 characters.
+*   `cleanReason(thrown: unknown): string` takes the thrown value: an `Error` (including `DOMException` from `atob`) with a non-empty message gives that message; an empty message or anything else gives `"unknown error"`. It then removes characters of the Unicode categories Cc (C0, DEL, C1), Cf (format and bidi characters such as U+200B, U+202A-U+202E, U+2066-U+2069), Zl and Zp (U+2028, U+2029) and Cs (lone surrogates), trims surrounding whitespace, drops one trailing period, and caps the text at 200 code points; a result that is empty gives `"unknown error"`.
 *   `extract` calls it for every probe; the rules only read `e.official` for responses where `is402` holds (402, and 412 with `permit2_allowance_required`), as today; per-method rules stop earlier for other statuses.
 
 ### Own decoder
@@ -175,13 +175,13 @@ report ──► JSON adds "x402Core": "<version>"; text unchanged apart from fi
 
 ## Risks & Mitigations
 
-*   **Untrusted input in a third-party parser**: The CLI parses untrusted network input. The new call runs `atob`, `TextDecoder` and `JSON.parse` inside `decodePaymentRequiredHeader` on input the own decoder already parses; every exception is caught in `officialClientRead`. Headers are bounded by Node's HTTP header limit (16 KB by default), bodies by the existing 256 KB cap. The exception message goes into report text. Mitigation: `cleanReason` removes control, format, bidi and line-separator characters and caps the length at 200 characters.
+*   **Untrusted input in a third-party parser**: The CLI parses untrusted network input. The new call runs `atob`, `TextDecoder` and `JSON.parse` inside `decodePaymentRequiredHeader` on input the own decoder already parses; every exception is caught in `officialClientRead`. Headers are bounded by Node's HTTP header limit (16 KB by default), bodies by the existing 256 KB cap. The exception message goes into report text. Mitigation: `cleanReason` removes control, format, bidi and line-separator characters, removes lone surrogates, trims, and caps the length at 200 code points.
 *   **Verdict differs between installs of one CLI version**: `~2.29.0` allows patch updates, so two installs can run different client code. Mitigation: the report names the installed version (`x402Core`), so each verdict can be re-derived.
 *   **Version lookup fails**: bundled or relocated installs, or a `package.json` more than 8 parent directories up, give `"unknown"`. Accepted limit: the report stays valid; the detail then reads "@x402/core unknown: ...".
 *   **Constructor changes in a patch release**: Mitigation: the client is created inside the `try` on first use, so a failing constructor gives an `official-client` error instead of crashing every command, including `--help` and `--version`. Accepted limit: a failure while `@x402/core` modules load would stop every command, as it does today for `@x402/core/schemas`.
 *   **Decoders drift apart again**: the own decoder copies the official decoding steps today. Mitigation: the official verdict decides in both directions (see Own decoder), so the report never contradicts it.
 *   **Body handling is a small copy**: the body rule (text, `JSON.parse`, failure gives `undefined`) copies four lines of `@x402/fetch`, which is not a dependency. Mitigation: the Verification Plan reads that code in the version current at build time; a change there is a change to this design.
-*   **Body size**: the CLI cuts bodies at 256 KB, while `@x402/fetch` 2.29.0 reads up to 1 MiB. A challenge body between the two limits is not JSON to the CLI. Accepted limit.
+*   **Body size**: the CLI cuts bodies at 256 KB, while `@x402/fetch` 2.29.0 reads up to 1 MiB. A body the CLI had to cut is never parsed as JSON (`ProbeResult.bodyTruncated`), so the official client sees no body; a challenge body between the two limits is therefore not JSON to the CLI. Accepted limit.
 *   **Unfiltered server text elsewhere**: other findings already print server-controlled text unfiltered (`Location` in `redirect`, the first 40 characters of the header in `header-not-base64`, schema messages with field paths). `cleanReason` is the first place that removes control characters; applying the same cleaning to every server-derived string in finding details is a separate change. Accepted limit (separate change).
 
 ## Rollout
@@ -259,7 +259,7 @@ Paths relative to `packages/cli/` unless marked "repository root". Before buildi
     *   standard base64 with wrong padding → `headerError: "not-base64"`, not readable;
     *   base64 of a BOM followed by a v2 challenge → decoded, readable, no `headerError`;
     *   base64 of `42` → not readable, reason "challenge is not a JSON object";
-    *   `cleanReason`: removes control characters, DEL, bidi/format characters (U+202E, U+200B) and U+2028, drops a trailing period, caps at 200 characters, maps an `Error` to its message, and an `Error` with an empty message or anything else to `"unknown error"`.
+    *   `cleanReason`: removes control characters, DEL, bidi/format characters (U+202E, U+200B), U+2028 and lone surrogates, trims, drops a trailing period, caps at 200 code points without splitting a surrogate pair, maps an `Error` to its message, and an `Error` with an empty message or anything else to `"unknown error"`.
 
 #### 8. `test/rules.test.ts` (Modify)
 
