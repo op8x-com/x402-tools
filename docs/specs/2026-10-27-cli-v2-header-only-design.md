@@ -32,7 +32,7 @@ The summary counts only `error` and `warn`, so with this finding alone the summa
 
 ## Non-goals
 
-- No change to `official-client`: it mirrors the current official client (`@x402/core`), which reads the header.
+- No change to `official-client`: it asks the official client of the installed `@x402/core` (see `2026-10-28-cli-official-client-design.md`), which reads the header.
 - No v1 parse of the body copy, no advice to serve a different dialect in the body.
 - No new request, option, exit code or JSON field.
 

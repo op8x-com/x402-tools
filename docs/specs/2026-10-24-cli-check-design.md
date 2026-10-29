@@ -86,7 +86,7 @@ Each rule has a stable id. Levels: `error` breaks real clients, `warn` is risky 
 | `mixed-dialect` | error | v2 entry uses v1 fields (`maxAmountRequired`, string `resource`) or v1 entry uses `amount` | Use one dialect consistently |
 | `v1-legacy` | info | Valid v1 challenge | v1 works with v1 clients; v2 is the current standard |
 | `cache-control` | warn | 402 without `no-store` in `Cache-Control` | Send `Cache-Control: no-store` so proxies do not cache challenges |
-| `official-client` | pass/error | Whether the official client of the installed `@x402/core` reads the challenge | Derived from the rules above |
+| `official-client` | pass/error | Whether the official client of the installed `@x402/core` reads the challenge | Fix the errors reported by the other rules; if none is reported, the detail names what the official client rejects (the two decoders can disagree) |
 
 Legacy-to-CAIP-2 hint map (EVM only): `base` → `eip155:8453`, `base-sepolia` → `eip155:84532`, `polygon` → `eip155:137`, `polygon-amoy` → `eip155:80002`, `avalanche` → `eip155:43114`, `avalanche-fuji` → `eip155:43113`.
 

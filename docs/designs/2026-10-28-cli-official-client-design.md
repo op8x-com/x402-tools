@@ -282,7 +282,7 @@ Paths relative to `packages/cli/` unless marked "repository root". Before buildi
 #### 11. `test/server.ts` and `test/cli.test.ts` (Modify)
 
 *   **Type / Scope**: Integration test.
-*   **Proposed Changes**: New route `/empty-header-v1`: 402 with `PAYMENT-REQUIRED: ""`, a valid v1 body with `Content-Type: application/json` and `Cache-Control: no-store`. Test: exit 0, findings contain `header-empty` (warn) and `official-client` (pass), JSON `x402Core` equals `X402_CORE_VERSION`. Second route `/blank-header-v1`, the same with `PAYMENT-REQUIRED: " "`: the same findings, which pins that `fetch` delivers a whitespace-only value as `""`.
+*   **Proposed Changes**: New route `/empty-header-v1`: 402 with `PAYMENT-REQUIRED: ""`, a valid v1 body with `Content-Type: application/json` and `Cache-Control: no-store`. Test: exit 0, findings contain `header-empty` (warn) and `official-client` (pass), JSON `x402Core` equals `X402_CORE_VERSION`. Second route `/blank-header-v1`, the same with `PAYMENT-REQUIRED: " "`: the same findings, which pins that `fetch` delivers a whitespace-only value as `""`. Third route `/empty-header-no-body`: `PAYMENT-REQUIRED: ""` and body `{}`; test: exit 1, findings `header-empty` (warn), `no-challenge` (error), `official-client` (error).
 
 #### 12. `README.md` (Modify)
 
