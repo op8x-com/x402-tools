@@ -78,7 +78,7 @@ export function withBrowserView(e: Extracted, browser: ProbeResult): Extracted {
 }
 
 /**
- * Mirrors x402HTTPClient.getPaymentRequiredResponse in @x402/core 2.28:
+ * Mirrors x402HTTPClient.getPaymentRequiredResponse in @x402/core 2.29:
  * header first; without a header, only a v1 body is accepted.
  */
 export function officialClientCanRead(e: Extracted): boolean {
