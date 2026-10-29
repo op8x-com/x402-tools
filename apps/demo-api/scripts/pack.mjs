@@ -1,6 +1,7 @@
 // Shared by pack-analytics.mjs and check-vendor.mjs: builds and packs packages/analytics, and reads
 // npm pack tarballs. The package's dev dependencies must be installed first (npm ci in packages/analytics).
 import { spawnSync } from "node:child_process";
+import { rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
@@ -27,6 +28,8 @@ export function run(cmd, args, cwd) {
 
 /** Builds packages/analytics and packs it into destDir; returns the package name, version and tarball file name. */
 export function packAnalytics(destDir) {
+  // tsc leaves output of deleted sources behind; start from an empty dist so the pack matches a fresh clone.
+  rmSync(join(pkgDir, "dist"), { recursive: true, force: true });
   run("npm", ["run", "build"], pkgDir);
   const out = JSON.parse(run("npm", ["pack", "--json", "--pack-destination", destDir], pkgDir));
   const { filename, name, version } = out[0];

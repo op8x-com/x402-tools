@@ -36,6 +36,8 @@ npm run pack-analytics
 npm install ./vendor/op8x-analytics-0.0.1.tgz
 ```
 
+Dependabot keeps the dependencies of `packages/analytics` and of this app current. An update that changes the build output of `packages/analytics` (for example a new TypeScript version) fails the check until the tarball is repacked on that pull request's branch.
+
 The script refuses to pack while `packages/analytics` has uncommitted changes. Naming the file in `npm install` refreshes the integrity in `package-lock.json`.
 
 ## Run it locally
