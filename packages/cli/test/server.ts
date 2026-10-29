@@ -84,6 +84,19 @@ export async function startServer(): Promise<{ url: string; close: () => Promise
       case "/body-over-cap-v2":
         res.writeHead(402, challenge);
         return res.end(" ".repeat(1024 * 1024 + 1));
+      case "/bom-v1":
+        res.writeHead(402, { "content-type": "application/json" });
+        return res.end(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(JSON.stringify(v1))]));
+      case "/double-bom-v1":
+        res.writeHead(402, { "content-type": "application/json" });
+        return res.end(
+          Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf, 0xef, 0xbb, 0xbf]), Buffer.from(JSON.stringify(v1))]),
+        );
+      case "/body-stalls":
+        // Status and headers arrive at once, the body never completes.
+        res.writeHead(402, challenge);
+        res.write(" ");
+        return;
       case "/body-reset":
         // Valid header, then part of a body, then the connection breaks off.
         res.writeHead(402, challenge);

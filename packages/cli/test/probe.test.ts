@@ -112,3 +112,21 @@ test("a body that breaks off sets bodyError and keeps status and headers", async
   assert.ok(r.bodyError);
   assert.equal(r.error, undefined);
 });
+
+test("a single BOM is dropped by the decoder, like @x402/fetch", async () => {
+  const r = await probe(`${server.url}/bom-v1`, "GET", opts);
+  assert.equal(r.bodyText[0], "{");
+  assert.equal(r.bodyError, undefined);
+});
+
+test("a double BOM leaves one in bodyText, like @x402/fetch", async () => {
+  const r = await probe(`${server.url}/double-bom-v1`, "GET", opts);
+  assert.equal(r.bodyText[0], "\uFEFF");
+});
+
+test("our timeout while reading the body is a request error, not a bodyError", async () => {
+  const r = await probe(`${server.url}/body-stalls`, "GET", { timeoutMs: 200, version: "0.0.1" });
+  assert.match(r.error ?? "", /^Timed out after /);
+  assert.equal(r.bodyError, undefined);
+  assert.equal(r.status, undefined);
+});

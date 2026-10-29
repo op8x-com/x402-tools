@@ -44,11 +44,13 @@ async function send(
     res.headers.forEach((value, key) => {
       responseHeaders[key.toLowerCase()] = value;
     });
-    // Read like @x402/fetch does (1 MiB limit, stream errors thrown). A failure here keeps status and headers.
+    // Read like @x402/fetch does (1 MiB limit, stream errors thrown). A failure here keeps status and headers,
+    // except our own timeout: @x402/fetch has none, so it is the CLI's limit and counts as a request error.
     try {
       const bodyText = await readLimitedText(res, MAX_CONTROL_PLANE_RESPONSE_BYTES);
       return { status: res.status, headers: responseHeaders, bodyText, ms: elapsed() };
     } catch (e) {
+      if (e instanceof Error && e.name === "TimeoutError") throw e;
       return { status: res.status, headers: responseHeaders, bodyText: "", ms: elapsed(), bodyError: failure(e) };
     }
   } catch (e) {

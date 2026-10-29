@@ -62,8 +62,8 @@ export function extract(p: ProbeResult): Extracted {
   // On a body error bodyText is empty, so nothing is parsed.
   if (p.bodyText) {
     try {
-      // Like fetch().json(), ignore a leading UTF-8 byte order mark.
-      out.body = JSON.parse(p.bodyText.replace(/^\uFEFF/, ""));
+      // The decoder in readLimitedText already dropped one BOM, as it does for @x402/fetch; strip nothing more.
+      out.body = JSON.parse(p.bodyText);
     } catch {
       // Not JSON (e.g. an HTML paywall); not a challenge.
     }
