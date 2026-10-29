@@ -64,10 +64,11 @@ export function createTransport(options: AnalyticsOptions, deps: TransportDeps =
 
   let invalidWarned = false;
 
-  function warn(message: string): void {
+  /** `limitKey` groups messages under one rate limit; it defaults to the message itself. */
+  function warn(message: string, limitKey: string = message): void {
     try {
       const now = (deps.now ?? Date.now)();
-      if (!rateLimitOk(message, now, WARN_INTERVAL_MS)) return;
+      if (!rateLimitOk(limitKey, now, WARN_INTERVAL_MS)) return;
       (deps.warn ?? console.warn)(message);
     } catch {
       // never let diagnostics break the seller
@@ -102,6 +103,7 @@ export function createTransport(options: AnalyticsOptions, deps: TransportDeps =
       };
       if (resolved.key !== undefined) headers["authorization"] = `Bearer ${resolved.key}`;
       const body = JSON.stringify(record);
+      let kind: "status" | "timeout" | "network" | undefined;
       let reason: string | undefined;
       try {
         const res = await (deps.fetch ?? fetch)(endpoint, {
@@ -117,11 +119,16 @@ export function createTransport(options: AnalyticsOptions, deps: TransportDeps =
         } catch {
           // ignore
         }
-        if (res.status < 200 || res.status > 299) reason = `status ${res.status}`;
+        if (res.status < 200 || res.status > 299) {
+          kind = "status";
+          reason = `status ${res.status}`;
+        }
       } catch (err) {
-        reason = (err as { name?: unknown } | null)?.name === "TimeoutError" ? "timeout" : "network";
+        kind = (err as { name?: unknown } | null)?.name === "TimeoutError" ? "timeout" : "network";
+        reason = kind;
       }
-      if (reason !== undefined) warn(`op8x.analytics: send failed (${reason})`);
+      // Limited per kind, not per text: a collector cycling 500/502/503 still yields one line a minute.
+      if (kind !== undefined) warn(`op8x.analytics: send failed (${reason})`, `op8x.analytics: send failed (${kind})`);
     } catch {
       // fail open: nothing may escape
     }

@@ -63,7 +63,7 @@ Checked on 2026-10-25 against `@x402/core` 2.28.0, `@x402/hono` 2.28.0, `hono` 4
 | --- | --- | --- |
 | `src/types.ts` | `AnalyticsRecord`, `AnalyticsOptions`, sub-types | none |
 | `src/version.ts` | `VERSION` constant, used in the transport User-Agent | none |
-| `src/warnings.ts` | Module-scoped warning state: once-per-isolate keys and per-message rate limit, shared by every `analytics()` instance and transport in the isolate | none |
+| `src/warnings.ts` | Module-scoped warning state: once-per-isolate keys and per-key rate limit, shared by every `analytics()` instance and transport in the isolate | none |
 | `src/decode.ts` | Safe base64-JSON decode, never throws: strict padded standard base64 only (length a multiple of 4, no base64url, no whitespace), input capped at 16384 decoded bytes before decoding, UTF-8 decoded with `fatal: true`, result must be a plain JSON object | none |
 | `src/ua.ts` | User-Agent to class | none |
 | `src/record.ts` | Pure: request headers, response status and headers, optional body text → `AnalyticsRecord` | `decode`, `ua` |
@@ -95,7 +95,7 @@ Invalid options never throw. Warnings, all prefixed `op8x.analytics:`:
 | Invalid `endpoint`, `log: true` | `invalid endpoint, sending disabled` | From the transport on the first record of each `analytics()` instance, rate-limited to one per 60 s per isolate. Records are still logged. |
 | `salt` set but not a string with non-whitespace content | `salt must be a non-empty string, payer hashing disabled` | On the first recorded request of the instance, once per isolate. Never emitted while the middleware is idle (rows 1 and 2). |
 | Setting up the middleware throws | `setup failed, analytics disabled` | When `analytics()` is called, once per isolate. Requests then pass through untouched. |
-| Send fails (network, timeout, non-2xx) | `send failed (network)`, `send failed (timeout)`, `send failed (status <code>)` | At most one per 60 s per isolate per text, so each status code has its own budget (see Transport). |
+| Send fails (network, timeout, non-2xx) | `send failed (network)`, `send failed (timeout)`, `send failed (status <code>)` | At most one per 60 s per isolate per kind (network, timeout, status), so all non-2xx codes share one budget; the line names the status that triggered it (see Transport). |
 | Matched routes unreadable (second hono copy) | `route unavailable (duplicate hono copy?)` | On a request; once per isolate. The record gets route `""`. |
 | Key missing, invalid or refused | texts in the write-key document | On each request where nothing can be sent, at most one per 60 s per isolate per text. With `log: true` the record is still logged. |
 
@@ -200,7 +200,7 @@ If `c.executionCtx` is unavailable (for example in plain Node tests without an e
 
 - `POST <endpoint>` with `content-type: application/json`, body = one `AnalyticsRecord`, `user-agent: op8x-analytics/<version>`; the module adds only these two headers, plus `authorization: Bearer <key>` when a key applies (see the write-key document). The Workers runtime itself may add a `cf-worker` header to outgoing requests. The wire format is described in `packages/analytics/docs/ingest-contract.md`.
 - Abort after `timeoutMs` via `AbortSignal.timeout`. Redirects are not followed (`redirect: "manual"`), so a redirect cannot bypass the endpoint rule or repeat the POST. The response body is not read; any non-2xx status, including 3xx, counts as a failure.
-- Errors (network, timeout, non-2xx) are swallowed. At most one `console.warn` per 60 seconds per isolate for each kind of failure (keyed by warning text; a non-2xx status is part of the text, so each status code counts separately), without record data, so failures are visible in `wrangler tail` but cannot flood it.
+- Errors (network, timeout, non-2xx) are swallowed. At most one `console.warn` per 60 seconds per isolate for each kind of failure (network, timeout, non-2xx status; all status codes share one limit and the line names the first one), without record data, so failures are visible in `wrangler tail` but cannot flood it.
 - With `log: true`, each record is written as `console.log("op8x.analytics", JSON.stringify(record))`.
 
 ## Testing
