@@ -38,7 +38,7 @@ The summary counts only `error` and `warn`, so with this finding alone the summa
 
 ## Known limits
 
-- The probe reads at most 256 KB of the body. A body copy larger than that is cut off, no longer parses, and the hint appears although the body holds the challenge. Real challenges are a few KB.
+- The probe reads at most 1 MiB of the body, as `@x402/fetch` does (`readLimitedText`). A larger body is not parsed and the official client counts as unable to read the response. Real challenges are a few KB.
 
 ## Testing
 
