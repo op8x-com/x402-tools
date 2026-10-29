@@ -58,7 +58,8 @@ export function extract(p: ProbeResult): Extracted {
     else out.header = decoded.value;
   }
 
-  if (p.bodyText) {
+  // A cut-off body is not valid JSON for the official client either (it reads up to 1 MiB, we read less).
+  if (p.bodyText && !p.bodyTruncated) {
     try {
       // Like fetch().json(), ignore a leading UTF-8 byte order mark.
       out.body = JSON.parse(p.bodyText.replace(/^\uFEFF/, ""));
@@ -88,12 +89,12 @@ export function withBrowserView(e: Extracted, browser: ProbeResult): Extracted {
   };
 }
 
-const UNSAFE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
+const UNSAFE = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/gu;
 
 /** Report-safe text of a thrown value: no control, format or line-separator characters, at most 200 characters. */
 export function cleanReason(thrown: unknown): string {
   const message = thrown instanceof Error ? thrown.message : "";
-  const clean = message.replace(UNSAFE, "").replace(/\.$/, "").slice(0, 200);
+  const clean = Array.from(message.replace(UNSAFE, "").trim().replace(/\.$/, "")).slice(0, 200).join("");
   return clean || "unknown error";
 }
 

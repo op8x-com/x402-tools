@@ -82,3 +82,15 @@ test("preflight network error becomes a result", async () => {
   const r = await preflight("http://127.0.0.1:9/", "GET", "payment-signature", opts);
   assert.ok(r.error);
 });
+
+test("a body larger than the read cap is marked truncated", async () => {
+  const r = await probe(`${server.url}/body-over-cap`, "GET", opts);
+  assert.equal(r.bodyTruncated, true);
+  assert.equal(r.bodyText.length, 256 * 1024);
+});
+
+test("a body of exactly the read cap is not truncated", async () => {
+  const r = await probe(`${server.url}/body-at-cap`, "GET", opts);
+  assert.equal(r.bodyTruncated, undefined);
+  assert.equal(r.bodyText.length, 256 * 1024);
+});

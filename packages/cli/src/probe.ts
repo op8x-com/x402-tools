@@ -18,6 +18,7 @@ interface Sent {
   status?: number;
   headers: Record<string, string>;
   bodyText: string;
+  bodyTruncated?: true;
   ms: number;
   error?: string;
 }
@@ -44,8 +45,8 @@ async function send(
     res.headers.forEach((value, key) => {
       responseHeaders[key.toLowerCase()] = value;
     });
-    const bodyText = await readCapped(res, MAX_BODY_BYTES);
-    return { status: res.status, headers: responseHeaders, bodyText, ms: elapsed() };
+    const { text: bodyText, truncated } = await readCapped(res, MAX_BODY_BYTES);
+    return { status: res.status, headers: responseHeaders, bodyText, ...(truncated ? { bodyTruncated: true as const } : {}), ms: elapsed() };
   } catch (e) {
     const err = e instanceof Error ? e : new Error(String(e));
     const message = err.name === "TimeoutError" ? `Timed out after ${opts.timeoutMs / 1000} s` : describe(err);
@@ -73,7 +74,7 @@ export async function preflight(
     "access-control-request-method": requestMethod,
     "access-control-request-headers": requestHeaders,
   };
-  const { bodyText: _bodyText, ...r } = await send(url, { method: "OPTIONS", headers }, opts);
+  const { bodyText: _bodyText, bodyTruncated: _bodyTruncated, ...r } = await send(url, { method: "OPTIONS", headers }, opts);
   return { method: "OPTIONS", url, requestMethod, requestHeaders, ...r };
 }
 
@@ -84,17 +85,18 @@ function describe(err: Error): string {
   return err.message;
 }
 
-async function readCapped(res: Response, limit: number): Promise<string> {
-  if (!res.body) return "";
+/** Reads at most `limit` bytes; `truncated` is true only when the server sent more than that. */
+async function readCapped(res: Response, limit: number): Promise<{ text: string; truncated: boolean }> {
+  if (!res.body) return { text: "", truncated: false };
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
-  while (size < limit) {
+  while (size <= limit) {
     const { done, value } = await reader.read();
     if (done) break;
     chunks.push(value);
     size += value.byteLength;
   }
   await reader.cancel().catch(() => {});
-  return Buffer.concat(chunks).subarray(0, limit).toString("utf8");
+  return { text: Buffer.concat(chunks).subarray(0, limit).toString("utf8"), truncated: size > limit };
 }

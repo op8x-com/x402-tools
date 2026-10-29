@@ -161,3 +161,25 @@ test("cleanReason strips unsafe characters, a trailing period, and caps the leng
   assert.equal(cleanReason("thrown string"), "unknown error");
   assert.equal(cleanReason(undefined), "unknown error");
 });
+
+test("cleanReason removes a lone surrogate", () => {
+  assert.equal(cleanReason(new Error("a\ud800b")), "ab");
+});
+
+test("cleanReason caps by code points and never splits a surrogate pair", () => {
+  const out = cleanReason(new Error("\u{1F600}".repeat(300)));
+  assert.equal(Array.from(out).length, 200);
+  assert.equal(out, "\u{1F600}".repeat(200));
+});
+
+test("cleanReason turns a whitespace-only message into unknown error", () => {
+  assert.equal(cleanReason(new Error("   ")), "unknown error");
+});
+
+test("a truncated body is never parsed as JSON", () => {
+  const p = { ...pr("GET", 402, {}), bodyText: JSON.stringify(v1), bodyTruncated: true as const };
+  const e = extract(p);
+  assert.equal(e.body, undefined);
+  assert.equal(e.location, "none");
+  assert.equal(e.bodyChallenge, undefined);
+});

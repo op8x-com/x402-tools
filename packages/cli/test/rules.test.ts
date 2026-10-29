@@ -515,6 +515,23 @@ test("official client reads a header the own decoder rejects: header-not-base64 
   assert.equal(find(fs, "official-client")?.level, "pass");
 });
 
+test("official client reads a header the own decoder rejects as not JSON: header-not-json is only a warning", () => {
+  const raw = Buffer.from("hello").toString("base64");
+  const e = { ...extract(pr("GET", 402, { ...NS, "payment-required": raw }, {})), official: { readable: true } as const };
+  const fs = runRules([e], undefined, "<url>", "9.9.9");
+  const decoder = find(fs, "header-not-json");
+  assert.equal(decoder?.level, "warn");
+  assert.match(decoder?.detail ?? "", /@x402\/core 9\.9\.9 reads this header; clients with a stricter decoder may not\.$/);
+  assert.equal(find(fs, "official-client")?.level, "pass");
+});
+
+test("a v1 challenge in a truncated body is not readable: no official-client pass", () => {
+  const p = { ...pr("GET", 402, NS, v1), bodyTruncated: true as const };
+  const fs = runRules([extract(p)], undefined, "<url>", "9.9.9");
+  assert.ok(ids(fs).includes("no-challenge"));
+  assert.equal(find(fs, "official-client")?.level, "error");
+});
+
 test("official client and own decoder both reject: header-not-base64 stays an error", () => {
   const fs = runRules([extract(pr("GET", 402, { ...NS, "payment-required": "eyJh-_" }, {}))]);
   assert.equal(find(fs, "header-not-base64")?.level, "error");

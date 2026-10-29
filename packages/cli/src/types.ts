@@ -17,6 +17,8 @@ export interface ProbeResult {
   /** Response headers, keys lower-cased. */
   headers: Record<string, string>;
   bodyText: string;
+  /** Set when the server sent more body bytes than the CLI reads; `bodyText` is then only a prefix. */
+  bodyTruncated?: true;
   ms: number;
   /** Set when the request failed at network level (DNS, TLS, timeout). */
   error?: string;
