@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping make x402 easier for sellers. This repository holds the open tools: `@op8x/cli` in `packages/cli`, `@op8x/analytics` in `packages/analytics`, a demo API in `apps/demo-api` and the static site in `apps/site`.
+Thanks for helping make x402 easier for sellers. This repository holds the open tools: `@op8x/cli` in `packages/cli`, `@op8x/analytics` in `packages/analytics` and a demo API in `apps/demo-api`.
 
 ## Setup
 
