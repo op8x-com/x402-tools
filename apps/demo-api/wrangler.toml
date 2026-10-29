@@ -16,5 +16,5 @@ enabled = false
 FACILITATOR_URL = "https://x402.org/facilitator"
 # Address that receives the testnet payments.
 PAY_TO = "0x867E28740B8175d92A14E6A416415d1ca9fF24d2"
-# Set only once the write key exists (the key is the secret OP8X_KEY, never a var):
+# The op8x collector. Sending also needs the write key, the secret OP8X_KEY (never a var); without it the module logs that sending is disabled.
 ANALYTICS_ENDPOINT = "https://ingest.op8x.com/v1/events"

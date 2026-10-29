@@ -3,33 +3,13 @@
 // The package's dev dependencies must be installed first (npm ci in packages/analytics).
 // Refuses to run when packages/analytics has uncommitted changes, so vendor/SOURCE always names
 // a commit that reproduces the tarball. Pass --allow-dirty to pack anyway (SOURCE then says so).
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, copyFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { appDir, packAnalytics, pkgDir, run, vendorDir } from "./pack.mjs";
 
-const appDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const pkgDir = resolve(appDir, "../../packages/analytics");
-const vendorDir = join(appDir, "vendor");
 const allowDirty = process.argv.includes("--allow-dirty");
-
-function run(cmd, args, cwd) {
-  // npm is a .cmd file on Windows and needs a shell there. The arguments are fixed strings plus a
-  // temp path, quoted here because the shell only concatenates.
-  const res =
-    process.platform === "win32"
-      ? spawnSync([cmd, ...args.map((a) => `"${a}"`)].join(" "), { cwd, encoding: "utf8", shell: true })
-      : spawnSync(cmd, args, { cwd, encoding: "utf8" });
-  if (res.error) throw res.error;
-  if (res.status !== 0) {
-    process.stderr.write(res.stdout ?? "");
-    process.stderr.write(res.stderr ?? "");
-    throw new Error(`${cmd} ${args.join(" ")} failed with exit code ${res.status}`);
-  }
-  return res.stdout;
-}
 
 const commit = run("git", ["rev-parse", "HEAD"], pkgDir).trim();
 const dirty = run("git", ["status", "--porcelain", "--", "."], pkgDir).trim() !== "";
@@ -38,13 +18,9 @@ if (dirty && !allowDirty) {
   process.exit(1);
 }
 
-run("npm", ["run", "build"], pkgDir);
-
 const tmp = mkdtempSync(join(tmpdir(), "op8x-pack-"));
 try {
-  const out = JSON.parse(run("npm", ["pack", "--json", "--pack-destination", tmp], pkgDir));
-  const { filename, name, version } = out[0];
-  const tarball = filename.replace(/^.*[\\/]/, "");
+  const { name, version, tarball } = packAnalytics(tmp);
 
   for (const f of readdirSync(vendorDir)) {
     if (f.endsWith(".tgz")) rmSync(join(vendorDir, f));

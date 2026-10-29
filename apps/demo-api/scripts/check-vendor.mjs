@@ -1,17 +1,16 @@
-// Fails when vendor/ no longer matches packages/analytics, so a forgotten repack shows up in CI.
+// Fails when vendor/ no longer matches packages/analytics, so a forgotten repack or a hand-edited
+// tarball shows up in CI.
 // Usage (from apps/demo-api): node scripts/check-vendor.mjs
-// Needs the full git history (actions/checkout with fetch-depth: 0) to find the commit in vendor/SOURCE.
-// Checks that vendor/SOURCE names a clean commit, that the tarball's SHA-256 matches SOURCE, that
-// package.json installs that tarball, and that no packed file in packages/analytics changed since.
-import { spawnSync } from "node:child_process";
+// The package's dev dependencies must be installed first (npm ci in packages/analytics).
+// Packs packages/analytics afresh and compares the files with the vendored tarball, file by file.
+// Also checks that vendor/SOURCE was written from a clean tree, that the tarball's SHA-256 matches
+// SOURCE and that package.json installs that tarball.
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-
-// Everything npm pack puts into the tarball, plus what the build reads. Keep in step with "files"
-// in packages/analytics/package.json.
-export const PACKED_PATHS = ["src", "docs", "README.md", "LICENSE", "package.json", "tsconfig.json"];
+import { appDir, packAnalytics, readTarball, vendorDir } from "./pack.mjs";
 
 export function parseSource(text) {
   const fields = {};
@@ -21,27 +20,43 @@ export function parseSource(text) {
   }
   const pkg = /^(@?[^@\s]+)@(\S+)$/.exec(fields.package ?? "");
   const src = /^packages\/analytics at commit ([0-9a-f]{40})( \(with uncommitted changes\))?$/.exec(fields.source ?? "");
-  if (!pkg || !src || !fields.tarball || !/^[0-9a-f]{64}$/.test(fields.sha256 ?? "")) {
+  const tarball = /^[a-z0-9][a-z0-9.-]*\.tgz$/.test(fields.tarball ?? "") ? fields.tarball : undefined;
+  if (!pkg || !src || !tarball || !/^[0-9a-f]{64}$/.test(fields.sha256 ?? "")) {
     throw new Error("vendor/SOURCE is not in the format written by scripts/pack-analytics.mjs");
   }
-  return { name: pkg[1], version: pkg[2], commit: src[1], dirty: Boolean(src[2]), tarball: fields.tarball, sha256: fields.sha256 };
+  return { name: pkg[1], version: pkg[2], commit: src[1], dirty: Boolean(src[2]), tarball, sha256: fields.sha256 };
 }
 
-function git(args, cwd) {
-  const res = spawnSync("git", args, { cwd, encoding: "utf8" });
-  if (res.error) throw res.error;
-  return res;
+// devDependencies never reach a project that installs the package, so a dev-only update in
+// packages/analytics does not require a repack.
+function installedManifest(buf) {
+  const manifest = JSON.parse(buf.toString("utf8"));
+  delete manifest.devDependencies;
+  return JSON.stringify(manifest);
+}
+
+/** Paths that differ between two tarballs (Maps from readTarball), sorted. */
+export function diffTarballs(vendored, fresh) {
+  const differ = [];
+  for (const path of new Set([...vendored.keys(), ...fresh.keys()])) {
+    const a = vendored.get(path);
+    const b = fresh.get(path);
+    if (!a || !b) differ.push(`${path} (${a ? "only in vendor" : "missing from vendor"})`);
+    else if (path === "package/package.json" ? installedManifest(a) !== installedManifest(b) : !a.equals(b)) {
+      differ.push(path);
+    }
+  }
+  return differ.sort();
 }
 
 function main() {
-  const appDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-  const repoDir = resolve(appDir, "../..");
-  const source = parseSource(readFileSync(join(appDir, "vendor", "SOURCE"), "utf8"));
+  const source = parseSource(readFileSync(join(vendorDir, "SOURCE"), "utf8"));
+  const vendored = readFileSync(join(vendorDir, source.tarball));
   const problems = [];
 
   if (source.dirty) problems.push("vendor/SOURCE says the tarball was packed with uncommitted changes.");
 
-  const sha256 = createHash("sha256").update(readFileSync(join(appDir, "vendor", source.tarball))).digest("hex");
+  const sha256 = createHash("sha256").update(vendored).digest("hex");
   if (sha256 !== source.sha256) problems.push(`vendor/${source.tarball} does not match the SHA-256 in vendor/SOURCE.`);
 
   const manifest = JSON.parse(readFileSync(join(appDir, "package.json"), "utf8"));
@@ -50,16 +65,19 @@ function main() {
     problems.push(`package.json must install "${source.name}": "${expected}".`);
   }
 
-  if (git(["cat-file", "-e", `${source.commit}^{commit}`], repoDir).status !== 0) {
-    problems.push(`commit ${source.commit} from vendor/SOURCE is not in this clone (shallow checkout?).`);
-  } else {
-    const paths = PACKED_PATHS.map((p) => `packages/analytics/${p}`);
-    const diff = git(["diff", "--name-only", source.commit, "HEAD", "--", ...paths], repoDir);
-    if (diff.status !== 0) throw new Error(`git diff failed: ${diff.stderr}`);
-    const changed = diff.stdout.trim();
-    if (changed) {
-      problems.push(`packages/analytics changed since the tarball was packed:\n${changed.replace(/^/gm, "  ")}`);
+  const tmp = mkdtempSync(join(tmpdir(), "op8x-check-"));
+  try {
+    const fresh = packAnalytics(tmp);
+    if (fresh.tarball !== source.tarball) {
+      problems.push(`packages/analytics now packs as ${fresh.tarball}, vendor/ has ${source.tarball}.`);
+    } else {
+      const differ = diffTarballs(readTarball(vendored), readTarball(readFileSync(join(tmp, fresh.tarball))));
+      if (differ.length > 0) {
+        problems.push(`vendor/${source.tarball} differs from a fresh pack of packages/analytics:\n${differ.map((p) => `  ${p}`).join("\n")}`);
+      }
     }
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
   }
 
   if (problems.length > 0) {
@@ -70,7 +88,7 @@ function main() {
     );
     process.exit(1);
   }
-  console.log(`vendor/${source.tarball} matches packages/analytics at ${source.commit.slice(0, 7)}.`);
+  console.log(`vendor/${source.tarball} matches a fresh pack of packages/analytics.`);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

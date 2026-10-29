@@ -12,15 +12,17 @@ A small paid API on Cloudflare Workers that shows `@op8x/analytics` in an x402 f
 | --- | --- | --- | --- |
 | `FACILITATOR_URL` | var | `wrangler.toml` | x402 facilitator; the public testnet facilitator by default |
 | `PAY_TO` | var | `wrangler.toml` | Address that receives the testnet payments |
-| `ANALYTICS_ENDPOINT` | var | `wrangler.toml` | Where records are sent (the op8x collector); unset means log only |
+| `ANALYTICS_ENDPOINT` | var | `wrangler.toml` | Where records are sent (the op8x collector); unset, or without `OP8X_KEY`, records are only logged |
 | `OP8X_KEY` | secret | `npx wrangler secret put OP8X_KEY` | Write key for the op8x collector; never in a file |
 
 ## The module comes from a packed tarball
 
-`@op8x/analytics` is installed from `vendor/op8x-analytics-0.0.1.tgz`, the output of `npm pack` in `packages/analytics`, so the demo runs exactly the artifact a seller would install. `vendor/SOURCE` records the source commit and the tarball's SHA-256. To check that the tarball matches `SOURCE` and that no packed file in `packages/analytics` changed since that commit (CI runs the same check, so a forgotten repack fails the pull request):
+`@op8x/analytics` is installed from `vendor/op8x-analytics-0.0.1.tgz`, the output of `npm pack` in `packages/analytics`, so the demo runs exactly the artifact a seller would install. `vendor/SOURCE` records the source commit and the tarball's SHA-256. To check the tarball, pack `packages/analytics` afresh and compare the two file by file. The check also verifies the SHA-256 in `SOURCE` and the dependency in `package.json`. Changes to `devDependencies` alone do not count, since they never reach the demo. CI runs the same check, so a forgotten repack or a hand-edited tarball fails the pull request:
 
 ```
-cd apps/demo-api
+cd packages/analytics
+npm ci
+cd ../../apps/demo-api
 npm run check-vendor
 ```
 
@@ -82,7 +84,7 @@ The Worker is named `demo-api` and is served only under `workers.dev` (no routes
    npm ci
    ```
 
-2. Deploy. `wrangler.toml` sets `ANALYTICS_ENDPOINT` to the op8x collector; until step 3 the collector cannot accept the records, and they are only logged. To deploy with logging only, put a `#` in front of that line first:
+2. Deploy. `wrangler.toml` sets `ANALYTICS_ENDPOINT` to the op8x collector; until step 3 sets the write key, nothing is sent: records are only logged, with a warning that sending is disabled. To deploy with logging only, put a `#` in front of that line first:
 
    ```
    npx wrangler deploy

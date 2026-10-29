@@ -68,13 +68,15 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          # check-vendor compares packages/analytics with the commit named in vendor/SOURCE.
-          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
           package-manager-cache: false
       - run: node --test scripts/*.test.mjs
+      # check-vendor packs packages/analytics afresh and compares it with vendor/, file by file.
+      - run: npm ci
+        working-directory: packages/analytics
       - run: node scripts/check-vendor.mjs
       - run: npm ci
       - run: npm run typecheck
