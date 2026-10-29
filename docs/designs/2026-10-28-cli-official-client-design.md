@@ -71,12 +71,14 @@ No open questions. Decisions taken while drafting and review (2026-10-28 and 202
 ### Data flow
 
 ```text
-probe ──► ProbeResult (headers lower-cased, bodyText)
+probe ──► ProbeResult (headers lower-cased, bodyText read like @x402/fetch; bodyError if the body failed)
             │
             ▼
 extract ──► Extracted
-            ├─ headers (the probe's map), headerRaw (non-empty only), headerEmpty, headerError, header, body, bodyChallenge, location
-            └─ official = officialClientRead(e) ──► x402HTTPClient.getPaymentRequiredResponse(getHeader, e.body)
+            ├─ headers (the probe's map), headerRaw (non-empty only), headerEmpty, headerError, header, body, bodyChallenge, location, bodyError
+            └─ official = officialClientRead(e)
+                                         bodyError set     → { readable: false, reason: cleanReason(bodyError) } (client not called)
+                                         else ──► x402HTTPClient.getPaymentRequiredResponse(getHeader, e.body)
                                          returns an object → { readable: true }
                                          returns other     → { readable: false, reason: "challenge is not a JSON object" }
                                          throws            → { readable: false, reason: cleanReason(err) }
@@ -92,7 +94,7 @@ report ──► JSON adds "x402Core": "<version>"; text unchanged apart from fi
 ### Calling the official client
 
 *   `extract.ts` imports `x402HTTPClient` from `@x402/core/http`. The instance is created on first use inside the `try` of `officialClientRead`, with an empty client object (`new x402HTTPClient({} as never)` or an equivalent typed stub), and kept for later calls. A constructor that throws in a future version becomes `{ readable: false, reason }`, not a crash of the CLI at load time. `getPaymentRequiredResponse` does not use the inner client; no network, no signing.
-*   `officialClientRead(e: Extracted): OfficialRead` (type in `types.ts`) calls `getPaymentRequiredResponse(getHeader, e.body)`. `extract` calls it once and stores the result in `e.official`; `rules.ts` only reads `e.official`, so rule tests can set it directly.
+*   `officialClientRead(e: Pick<Extracted, "headers" | "body" | "bodyError">): OfficialRead` (type in `types.ts`) returns `{ readable: false, reason: cleanReason(bodyError) }` without calling the client when `e.bodyError` is set (as `@x402/fetch` fails in `readLimitedText` before it reads the header; see Risks, Body size), and otherwise calls `getPaymentRequiredResponse(getHeader, e.body)`. `extract` calls it once and stores the result in `e.official`; `rules.ts` only reads `e.official`, so rule tests can set it directly.
     *   `getHeader(name)` returns `e.headers[name.toLowerCase()]`: every response header the probe saw, so a future `@x402/core` that reads another header sees it too. An empty `PAYMENT-REQUIRED` stays `""` in that map; the official logic, not ours, decides what an empty value means.
     *   `e.body` is the body as `@x402/fetch` passes it on (see Open Questions and Decisions): the parsed JSON after the decoder's BOM removal, `undefined` if the body is not JSON, whatever the content type.
     *   A returned value that is not a non-null, non-array object gives `{ readable: false, reason: "challenge is not a JSON object" }`.
@@ -132,11 +134,12 @@ report ──► JSON adds "x402Core": "<version>"; text unchanged apart from fi
 
 | File | Change | Depends on |
 | --- | --- | --- |
-| `src/extract.ts` | `headers`, `headerEmpty`, `official`; decoder like `@x402/core`; `officialClientRead` calls the official client | `@x402/core/http` |
+| `src/probe.ts` | reads bodies with `readLimitedText` and `MAX_CONTROL_PLANE_RESPONSE_BYTES` (1 MiB) like `@x402/fetch`; a body error sets `bodyError`, a timeout stays a request error | global `fetch`, `@x402/core/http` |
+| `src/extract.ts` | `headers`, `headerEmpty`, `official`, `bodyError`; decoder like `@x402/core`; body parsed as decoded; `officialClientRead` calls the official client | `@x402/core/http` |
 | `src/core-version.ts` | new: installed `@x402/core` version | `node:module`, `node:fs`, `node:path` |
 | `src/rules.ts` | `header-empty`; `official-client` and the level of `header-not-*` use `e.official` and the passed version | `@x402/core/schemas`, `report` |
 | `src/report.ts` | `x402Core` field | `probe` |
-| `src/types.ts` | `Extracted.headers`, `Extracted.headerEmpty`, `Extracted.official`, `OfficialRead` | none |
+| `src/types.ts` | `Extracted.headers`, `Extracted.headerEmpty`, `Extracted.official`, `OfficialRead`, `ProbeResult.bodyError`, `Extracted.bodyError` | none |
 | `src/cli.ts` | passes the version to `runRules` and `buildReport` | as today, plus `core-version` |
 
 `rules.ts` remains free of I/O and no longer touches `@x402/core/http`: it gets the version as a parameter and the official result in `e.official`. `officialClientRead` works on in-memory data only; its one piece of state is the cached client instance, which has no visible effect.
@@ -209,7 +212,7 @@ Paths relative to `packages/cli/` unless marked "repository root". Before buildi
 #### 1. `src/types.ts` (Modify)
 
 *   **Type / Scope**: TypeScript types.
-*   **Proposed Changes**: `Extracted` gets `headers: Record<string, string>` ("Response headers as the probe saw them, keys lower-cased"), `headerEmpty?: true` ("`PAYMENT-REQUIRED` present with an empty value; treated as absent") and `official: OfficialRead` ("What the official client of the installed `@x402/core` makes of this response"). The doc comment of `body` adds "as `@x402/fetch` passes it to the official client". New exported type `OfficialRead = { readable: true } | { readable: false; reason: string }`. The doc comment of `headerRaw` becomes "Raw non-empty `PAYMENT-REQUIRED` header value".
+*   **Proposed Changes**: `Extracted` gets `headers: Record<string, string>` ("Response headers as the probe saw them, keys lower-cased"), `headerEmpty?: true` ("`PAYMENT-REQUIRED` present with an empty value; treated as absent") and `official: OfficialRead` ("What the official client of the installed `@x402/core` makes of this response"). The doc comment of `body` adds "as `@x402/fetch` passes it to the official client". New exported type `OfficialRead = { readable: true } | { readable: false; reason: string }`. The doc comment of `headerRaw` becomes "Raw non-empty `PAYMENT-REQUIRED` header value". `ProbeResult` and `Extracted` get `bodyError?: string` ("Set when the response arrived but its body could not be read in full, as @x402/fetch reads it (over 1 MiB, or the stream broke off).").
 
 #### 2. `src/extract.ts` (Modify)
 
@@ -217,8 +220,8 @@ Paths relative to `packages/cli/` unless marked "repository root". Before buildi
 *   **Proposed Changes**:
     *   `decodeHeader`: after the regex, decode with `atob`, convert to bytes and decode with `TextDecoder("utf-8")`, then `JSON.parse`. An `atob` failure returns `not-base64`. The comment above `BASE64` says the regex and the decoding steps match `@x402/core`.
     *   Import `x402HTTPClient` from `@x402/core/http`; the instance is created on first use inside the `try` of `officialClientRead` and kept in a module variable.
-    *   In `extract`: copy `p.headers` into `headers`. If the `payment-required` value is `""`, set `headerEmpty: true` and leave `headerRaw` unset; `location` and `challenge` ignore the empty header. Body parsing is unchanged. Last step: `official = officialClientRead(out)`.
-    *   Replace `officialClientCanRead(e): boolean` with `officialClientRead(e): OfficialRead`. `getHeader(name)` returns `e.headers[name.toLowerCase()]`. Body argument: `e.body`. A result that is not a non-null, non-array object gives `{ readable: false, reason: "challenge is not a JSON object" }`. `try/catch` around construction and call; the thrown value goes through the exported helper `cleanReason(thrown: unknown): string` (see Technical Plan).
+    *   In `extract`: copy `p.headers` into `headers`. If the `payment-required` value is `""`, set `headerEmpty: true` and leave `headerRaw` unset; `location` and `challenge` ignore the empty header. Copy `p.bodyError` into `bodyError`. The body text is parsed as the probe decoded it, without removing a BOM again (`TextDecoder` already drops one, as in `@x402/fetch`). Last step: `official = officialClientRead(out)`.
+    *   Replace `officialClientCanRead(e): boolean` with `officialClientRead(e: Pick<Extracted, "headers" | "body" | "bodyError">): OfficialRead`. With `e.bodyError` set it returns `{ readable: false, reason: cleanReason(new Error(e.bodyError)) }` before the client. `getHeader(name)` returns `e.headers[name.toLowerCase()]`. Body argument: `e.body`. A result that is not a non-null, non-array object gives `{ readable: false, reason: "challenge is not a JSON object" }`. `try/catch` around construction and call; the thrown value goes through the exported helper `cleanReason(thrown: unknown): string` (see Technical Plan).
     *   The comment above the function says it calls `@x402/core` and that the own decoder is for detailed findings only.
 
 #### 3. `src/core-version.ts` (Create)
@@ -291,7 +294,7 @@ Paths relative to `packages/cli/` unless marked "repository root". Before buildi
 *   **Type / Scope**: Design document.
 *   **Proposed Changes**:
     *   Section "Background facts", bullet "Official client" (line 27 today): one sentence pointing to this design for how `official-client` is decided.
-    *   Section "Architecture", units table (line 36 today): `extract.ts` depends on `@x402/core/http` only; `rules.ts` on `@x402/core/schemas`, `report`; `report.ts` on `probe`; the `cli.ts` row adds `core-version`; add rows for `core-version.ts`, `version.ts`, `bin.ts` and `types.ts`.
+    *   Section "Architecture", units table (line 36 today): `probe.ts` depends on global `fetch` and `@x402/core/http`; `extract.ts` depends on `@x402/core/http` only; `rules.ts` on `@x402/core/schemas`, `report`; `report.ts` on `probe`; the `cli.ts` row adds `core-version`; add rows for `core-version.ts`, `version.ts`, `bin.ts` and `types.ts`.
     *   Rules table, row `official-client` (line 84 today): add `header-empty` directly before `header-not-base64`; the `official-client` condition becomes "the official client of the installed `@x402/core` reads the challenge".
     *   Rules table, rows `header-not-base64` and `header-not-json` (lines 72-73 today): Level becomes "error (warn when the official client of the installed `@x402/core` reads the header)".
     *   JSON example adds `x402Core`.
@@ -300,6 +303,16 @@ Paths relative to `packages/cli/` unless marked "repository root". Before buildi
 
 *   **Type / Scope**: Design document (this document).
 *   **Proposed Changes**: Set Status to "Approved" after review.
+
+#### 15. `src/probe.ts` (Modify)
+
+*   **Type / Scope**: TypeScript module.
+*   **Proposed Changes**: Replace the own 256 KB reader with `readLimitedText(res, MAX_CONTROL_PLANE_RESPONSE_BYTES)` from `@x402/core/http`, in its own `try` inside the request `try`. A body error keeps `status` and `headers`, sets `bodyText: ""` and `bodyError`; a `TimeoutError` while reading the body goes to the request-level `error` ("Timed out after N s"), as a timeout before the response does. `preflight` does not carry `bodyError`. Tests in `test/probe.test.ts`: exactly 1 MiB, 1 MiB + 1, a reset mid-body, a stalled body (timeout), one and two leading BOMs.
+
+#### 16. `docs/specs/2026-10-27-cli-v2-header-only-design.md` (Modify, repository root)
+
+*   **Type / Scope**: Design document.
+*   **Proposed Changes**: The known-limits line on the body cap names the 1 MiB limit of `readLimitedText`; the test line on BOMs says that one BOM is dropped by the probe's decoder and a body that still starts with a BOM is not JSON.
 
 ### Verification Plan
 

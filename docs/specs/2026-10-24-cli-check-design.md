@@ -32,7 +32,7 @@ Package `op8x` in `packages/cli`, TypeScript, ESM, Node >= 20, single runtime de
 
 | File | Job | Depends on |
 | --- | --- | --- |
-| `src/probe.ts` | Send unpaid requests, collect status, headers, body text, timing | global `fetch` |
+| `src/probe.ts` | Send unpaid requests, collect status, headers, body text (read like `@x402/fetch`), timing | global `fetch`, `@x402/core/http` |
 | `src/extract.ts` | Decode header, parse body, classify challenge location and version | `@x402/core/http` |
 | `src/rules.ts` | Pure functions: extracted data in, findings out | `@x402/core/schemas`, `report` |
 | `src/report.ts` | Render findings as text or JSON | `probe` |
