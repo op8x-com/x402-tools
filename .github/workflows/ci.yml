@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
@@ -32,6 +34,8 @@ jobs:
         working-directory: packages/cli
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
@@ -48,6 +52,8 @@ jobs:
         working-directory: packages/analytics
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
@@ -59,3 +65,28 @@ jobs:
       # The peer range starts at hono 4.8.0, the first version with hono/route; test against that floor too.
       - name: Test against the minimum hono version
         run: npm i --no-save hono@4.8.0 && npm test
+
+  demo-api:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/demo-api
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - run: node --test scripts/*.test.mjs
+      # check-vendor packs packages/analytics afresh and compares it with vendor/, file by file.
+      - run: npm ci
+        working-directory: packages/analytics
+      - run: node scripts/check-vendor.mjs
+      - run: npm ci
+      - run: npm run typecheck
+      # Bundles the Worker without deploying or logging in, so a dependency update that breaks the build fails here.
+      - run: npx wrangler deploy --dry-run --outdir "$RUNNER_TEMP/demo-api"
+        env:
+          WRANGLER_SEND_METRICS: "false"

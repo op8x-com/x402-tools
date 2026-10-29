@@ -1,0 +1,30 @@
+# Only patch and minor updates arrive automatically; major updates are planned
+# by hand. The @x402 packages move together, so each directory gets one pull
+# request for all of them.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directories:
+      - /packages/cli
+      - /packages/analytics
+      - /apps/demo-api
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      x402:
+        patterns:
+          - "@x402/*"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
