@@ -77,10 +77,18 @@ export async function startServer(): Promise<{ url: string; close: () => Promise
         );
       case "/body-at-cap":
         res.writeHead(200);
-        return res.end(" ".repeat(256 * 1024));
+        return res.end(" ".repeat(1024 * 1024));
       case "/body-over-cap":
         res.writeHead(200);
-        return res.end(" ".repeat(256 * 1024 + 1));
+        return res.end(" ".repeat(1024 * 1024 + 1));
+      case "/body-over-cap-v2":
+        res.writeHead(402, challenge);
+        return res.end(" ".repeat(1024 * 1024 + 1));
+      case "/body-reset":
+        // Valid header, then part of a body, then the connection breaks off.
+        res.writeHead(402, challenge);
+        res.write(" ".repeat(300 * 1024), () => setTimeout(() => res.destroy(), 20));
+        return;
       case "/echo-headers":
         return json(200, {}, { method: req.method, headers: req.headers });
       default:

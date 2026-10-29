@@ -525,11 +525,18 @@ test("official client reads a header the own decoder rejects as not JSON: header
   assert.equal(find(fs, "official-client")?.level, "pass");
 });
 
-test("a v1 challenge in a truncated body is not readable: no official-client pass", () => {
-  const p = { ...pr("GET", 402, NS, v1), bodyTruncated: true as const };
+test("a valid v2 header with a body error: official-client is an error, not a pass", () => {
+  const p = { ...pr("GET", 402, { ...NS, "payment-required": b64(v2) }), bodyError: "http response body too large: limit 1048576 bytes" };
   const fs = runRules([extract(p)], undefined, "<url>", "9.9.9");
-  assert.ok(ids(fs).includes("no-challenge"));
-  assert.equal(find(fs, "official-client")?.level, "error");
+  const official = find(fs, "official-client");
+  assert.equal(official?.level, "error");
+  assert.match(official?.detail ?? "", /http response body too large: limit 1048576 bytes/);
+});
+
+test("a valid v1 JSON challenge body of about 600 KiB is readable: no false error", () => {
+  const big = { ...v1, padding: "x".repeat(600 * 1024) };
+  const fs = runRules([extract(pr("GET", 402, NS, big))], undefined, "<url>", "9.9.9");
+  assert.equal(find(fs, "official-client")?.level, "pass");
 });
 
 test("official client and own decoder both reject: header-not-base64 stays an error", () => {

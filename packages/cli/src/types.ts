@@ -17,8 +17,8 @@ export interface ProbeResult {
   /** Response headers, keys lower-cased. */
   headers: Record<string, string>;
   bodyText: string;
-  /** Set when the server sent more body bytes than the CLI reads; `bodyText` is then only a prefix. */
-  bodyTruncated?: true;
+  /** Set when the response arrived but its body could not be read in full, as @x402/fetch reads it (over 1 MiB, or the stream broke off). */
+  bodyError?: string;
   ms: number;
   /** Set when the request failed at network level (DNS, TLS, timeout). */
   error?: string;
@@ -76,6 +76,8 @@ export interface Extracted {
   /** Status of the same request sent with an Origin header, when that probe ran. */
   originStatus?: number;
   originError?: string;
+  /** From the probe: the body could not be read in full, so the official client fails before it looks at the header. */
+  bodyError?: string;
   /** What the official client of the installed @x402/core makes of this response. */
   official: OfficialRead;
 }

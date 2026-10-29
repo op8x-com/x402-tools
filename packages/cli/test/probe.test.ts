@@ -83,14 +83,32 @@ test("preflight network error becomes a result", async () => {
   assert.ok(r.error);
 });
 
-test("a body larger than the read cap is marked truncated", async () => {
-  const r = await probe(`${server.url}/body-over-cap`, "GET", opts);
-  assert.equal(r.bodyTruncated, true);
-  assert.equal(r.bodyText.length, 256 * 1024);
+test("a body larger than 1 MiB sets bodyError and keeps status and headers", async () => {
+  const r = await probe(`${server.url}/body-over-cap-v2`, "GET", opts);
+  assert.equal(r.status, 402);
+  assert.ok(r.headers["payment-required"]);
+  assert.equal(r.bodyText, "");
+  assert.match(r.bodyError ?? "", /too large/);
+  assert.equal(r.error, undefined);
 });
 
-test("a body of exactly the read cap is not truncated", async () => {
+test("a body of 1 MiB + 1 byte on a 200 sets bodyError", async () => {
+  const r = await probe(`${server.url}/body-over-cap`, "GET", opts);
+  assert.equal(r.status, 200);
+  assert.ok(r.bodyError);
+});
+
+test("a body of exactly 1 MiB is read in full", async () => {
   const r = await probe(`${server.url}/body-at-cap`, "GET", opts);
-  assert.equal(r.bodyTruncated, undefined);
-  assert.equal(r.bodyText.length, 256 * 1024);
+  assert.equal(r.bodyError, undefined);
+  assert.equal(r.bodyText.length, 1024 * 1024);
+});
+
+test("a body that breaks off sets bodyError and keeps status and headers", async () => {
+  const r = await probe(`${server.url}/body-reset`, "GET", opts);
+  assert.equal(r.status, 402);
+  assert.ok(r.headers["payment-required"]);
+  assert.equal(r.bodyText, "");
+  assert.ok(r.bodyError);
+  assert.equal(r.error, undefined);
 });

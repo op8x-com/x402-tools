@@ -39,6 +39,7 @@ export function extract(p: ProbeResult): Extracted {
     method: p.method,
     status: p.status,
     error: p.error,
+    ...(p.bodyError !== undefined ? { bodyError: p.bodyError } : {}),
     headers: { ...p.headers },
     location: "none",
     cacheControl: p.headers["cache-control"],
@@ -58,8 +59,8 @@ export function extract(p: ProbeResult): Extracted {
     else out.header = decoded.value;
   }
 
-  // A cut-off body is not valid JSON for the official client either (it reads up to 1 MiB, we read less).
-  if (p.bodyText && !p.bodyTruncated) {
+  // On a body error bodyText is empty, so nothing is parsed.
+  if (p.bodyText) {
     try {
       // Like fetch().json(), ignore a leading UTF-8 byte order mark.
       out.body = JSON.parse(p.bodyText.replace(/^\uFEFF/, ""));
@@ -105,7 +106,9 @@ let client: x402HTTPClient | undefined;
  * Asks x402HTTPClient.getPaymentRequiredResponse of the installed @x402/core whether it can read
  * the challenge. The own decoder above only explains failures; this call decides them.
  */
-export function officialClientRead(e: Pick<Extracted, "headers" | "body">): OfficialRead {
+export function officialClientRead(e: Pick<Extracted, "headers" | "body" | "bodyError">): OfficialRead {
+  // @x402/fetch reads the body (readLimitedText) before it looks at the header, outside any try.
+  if (e.bodyError !== undefined) return { readable: false, reason: cleanReason(new Error(e.bodyError)) };
   try {
     client ??= new x402HTTPClient({} as never);
     const result: unknown = client.getPaymentRequiredResponse((name) => e.headers[name.toLowerCase()], e.body);
