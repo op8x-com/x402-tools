@@ -17,6 +17,10 @@ export async function startServer(): Promise<{ url: string; close: () => Promise
         return json(402, { "cache-control": "no-store" }, v2);
       case "/v1-good":
         return json(402, { "cache-control": "no-store" }, v1);
+      case "/empty-header-v1":
+        return json(402, { "payment-required": "", "cache-control": "no-store" }, v1);
+      case "/blank-header-v1":
+        return json(402, { "payment-required": " ", "cache-control": "no-store" }, v1);
       case "/drift":
         return json(402, challenge, { ...v2, accepts: [{ ...v2.accepts[0], amount: "20000" }] });
       case "/get-405":

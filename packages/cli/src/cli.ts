@@ -5,6 +5,7 @@ import { buildReport, renderJson, renderText } from "./report.ts";
 import { is402, preflightPlan, runRules } from "./rules.ts";
 import type { Method, ProbeResult } from "./types.ts";
 import { VERSION } from "./version.ts";
+import { X402_CORE_VERSION } from "./core-version.ts";
 
 export interface Io {
   out: (s: string) => void;
@@ -108,9 +109,9 @@ export async function run(argv: string[], io: Io): Promise<number> {
   }
   const plan = preflightPlan(extracted);
   const pre = plan ? await preflight(url.href, plan.method, plan.headers, opts) : undefined;
-  const findings = runRules(extracted, pre, url.href);
+  const findings = runRules(extracted, pre, url.href, X402_CORE_VERSION);
   const sent = [...probes, ...browserProbes, ...(pre ? [pre] : [])];
-  const report = buildReport(url.href, VERSION, sent, findings);
+  const report = buildReport(url.href, VERSION, X402_CORE_VERSION, sent, findings);
   io.out(values.json ? renderJson(report) : renderText(report, io.color));
 
   if (probes.every((p) => p.error)) return 2;
