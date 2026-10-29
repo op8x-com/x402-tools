@@ -1,6 +1,5 @@
+import { MAX_CONTROL_PLANE_RESPONSE_BYTES, readLimitedText } from "@x402/core/http";
 import type { Method, PreflightResult, ProbeResult } from "./types.ts";
-
-const MAX_BODY_BYTES = 256 * 1024;
 
 /**
  * Sent on the browser-like probe and the preflight only. The plain probes go without it,
@@ -18,6 +17,7 @@ interface Sent {
   status?: number;
   headers: Record<string, string>;
   bodyText: string;
+  bodyError?: string;
   ms: number;
   error?: string;
 }
@@ -44,12 +44,22 @@ async function send(
     res.headers.forEach((value, key) => {
       responseHeaders[key.toLowerCase()] = value;
     });
-    const bodyText = await readCapped(res, MAX_BODY_BYTES);
-    return { status: res.status, headers: responseHeaders, bodyText, ms: elapsed() };
+    // Read like @x402/fetch does (1 MiB limit, stream errors thrown). A failure here keeps status and headers,
+    // except our own timeout: @x402/fetch has none, so it is the CLI's limit and counts as a request error.
+    try {
+      const bodyText = await readLimitedText(res, MAX_CONTROL_PLANE_RESPONSE_BYTES);
+      return { status: res.status, headers: responseHeaders, bodyText, ms: elapsed() };
+    } catch (e) {
+      if (e instanceof Error && e.name === "TimeoutError") throw e;
+      return { status: res.status, headers: responseHeaders, bodyText: "", ms: elapsed(), bodyError: failure(e) };
+    }
   } catch (e) {
+    return { headers: {}, bodyText: "", ms: elapsed(), error: failure(e) };
+  }
+
+  function failure(e: unknown): string {
     const err = e instanceof Error ? e : new Error(String(e));
-    const message = err.name === "TimeoutError" ? `Timed out after ${opts.timeoutMs / 1000} s` : describe(err);
-    return { headers: {}, bodyText: "", ms: elapsed(), error: message };
+    return err.name === "TimeoutError" ? `Timed out after ${opts.timeoutMs / 1000} s` : describe(err);
   }
 }
 
@@ -73,7 +83,7 @@ export async function preflight(
     "access-control-request-method": requestMethod,
     "access-control-request-headers": requestHeaders,
   };
-  const { bodyText: _bodyText, ...r } = await send(url, { method: "OPTIONS", headers }, opts);
+  const { bodyText: _bodyText, bodyError: _bodyError, ...r } = await send(url, { method: "OPTIONS", headers }, opts);
   return { method: "OPTIONS", url, requestMethod, requestHeaders, ...r };
 }
 
@@ -82,19 +92,4 @@ function describe(err: Error): string {
   if (cause?.code) return `${err.message} (${cause.code})`;
   if (cause?.message) return `${err.message}: ${cause.message}`;
   return err.message;
-}
-
-async function readCapped(res: Response, limit: number): Promise<string> {
-  if (!res.body) return "";
-  const reader = res.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  while (size < limit) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    size += value.byteLength;
-  }
-  await reader.cancel().catch(() => {});
-  return Buffer.concat(chunks).subarray(0, limit).toString("utf8");
 }

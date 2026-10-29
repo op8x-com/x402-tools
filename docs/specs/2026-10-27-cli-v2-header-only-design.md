@@ -32,16 +32,16 @@ The summary counts only `error` and `warn`, so with this finding alone the summa
 
 ## Non-goals
 
-- No change to `official-client`: it mirrors the current official client (`@x402/core`), which reads the header.
+- No change to `official-client`: it asks the official client of the installed `@x402/core` (see `2026-10-28-cli-official-client-design.md`), which reads the header.
 - No v1 parse of the body copy, no advice to serve a different dialect in the body.
 - No new request, option, exit code or JSON field.
 
 ## Known limits
 
-- The probe reads at most 256 KB of the body. A body copy larger than that is cut off, no longer parses, and the hint appears although the body holds the challenge. Real challenges are a few KB.
+- The probe reads at most 1 MiB of the body, as `@x402/fetch` does (`readLimitedText`). A larger body is not parsed and the official client counts as unable to read the response. Real challenges are a few KB.
 
 ## Testing
 
-- Unit tests in `rules.test.ts`: the finding appears for a v2 header with body `{}`, an empty body, a non-JSON body and a JSON body without a challenge; GET and POST merge into `both`; level `info`, no new errors. It does not appear for a mirrored body, a v2 or v1 challenge only in the body, a broken header, a header with `x402Version: 1` or `"2"`, a non-402 status, a header that fails the v2 schema (missing `accepts`, legacy network name), or a mirrored body with a leading BOM. It does appear for a 412 `permit2_allowance_required` with a valid v2 header. The extract test covers a body with a leading BOM.
+- Unit tests in `rules.test.ts`: the finding appears for a v2 header with body `{}`, an empty body, a non-JSON body and a JSON body without a challenge; GET and POST merge into `both`; level `info`, no new errors. It does not appear for a mirrored body, a v2 or v1 challenge only in the body, a broken header, a header with `x402Version: 1` or `"2"`, a non-402 status, a header that fails the v2 schema (missing `accepts`, legacy network name). A mirrored body after one leading BOM counts as mirrored (the probe's `TextDecoder` drops that BOM, see `probe.test.ts`); a body that still starts with a BOM after decoding (two BOMs on the wire) is not JSON, so the finding appears, as `@x402/fetch` would not read that body either. It does appear for a 412 `permit2_allowance_required` with a valid v2 header. The extract test covers a body that still starts with a BOM after decoding.
 - Integration test in `cli.test.ts` against the existing fixture route `/v2-good` (v2 header, body `{}`): title in the text report, `v2-header-only` with level `info` in JSON, exit code `0`, summary `0 errors, 0 warnings`.
 - Regression: before the change, text and `--json` output and exit code are recorded for every fixture route; after the change the only difference is the new finding (three text lines, one JSON object) on routes that send a v2 header with a body that is not a challenge. Normalised before comparing: fixture server port, `checkedAt`, request timings.

@@ -82,3 +82,51 @@ test("preflight network error becomes a result", async () => {
   const r = await preflight("http://127.0.0.1:9/", "GET", "payment-signature", opts);
   assert.ok(r.error);
 });
+
+test("a body larger than 1 MiB sets bodyError and keeps status and headers", async () => {
+  const r = await probe(`${server.url}/body-over-cap-v2`, "GET", opts);
+  assert.equal(r.status, 402);
+  assert.ok(r.headers["payment-required"]);
+  assert.equal(r.bodyText, "");
+  assert.match(r.bodyError ?? "", /too large/);
+  assert.equal(r.error, undefined);
+});
+
+test("a body of 1 MiB + 1 byte on a 200 sets bodyError", async () => {
+  const r = await probe(`${server.url}/body-over-cap`, "GET", opts);
+  assert.equal(r.status, 200);
+  assert.ok(r.bodyError);
+});
+
+test("a body of exactly 1 MiB is read in full", async () => {
+  const r = await probe(`${server.url}/body-at-cap`, "GET", opts);
+  assert.equal(r.bodyError, undefined);
+  assert.equal(r.bodyText.length, 1024 * 1024);
+});
+
+test("a body that breaks off sets bodyError and keeps status and headers", async () => {
+  const r = await probe(`${server.url}/body-reset`, "GET", opts);
+  assert.equal(r.status, 402);
+  assert.ok(r.headers["payment-required"]);
+  assert.equal(r.bodyText, "");
+  assert.ok(r.bodyError);
+  assert.equal(r.error, undefined);
+});
+
+test("a single BOM is dropped by the decoder, like @x402/fetch", async () => {
+  const r = await probe(`${server.url}/bom-v1`, "GET", opts);
+  assert.equal(r.bodyText[0], "{");
+  assert.equal(r.bodyError, undefined);
+});
+
+test("a double BOM leaves one in bodyText, like @x402/fetch", async () => {
+  const r = await probe(`${server.url}/double-bom-v1`, "GET", opts);
+  assert.equal(r.bodyText[0], "\uFEFF");
+});
+
+test("our timeout while reading the body is a request error, not a bodyError", async () => {
+  const r = await probe(`${server.url}/body-stalls`, "GET", { timeoutMs: 200, version: "0.0.1" });
+  assert.match(r.error ?? "", /^Timed out after /);
+  assert.equal(r.bodyError, undefined);
+  assert.equal(r.status, undefined);
+});

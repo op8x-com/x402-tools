@@ -1,5 +1,4 @@
 import { PaymentRequiredV1Schema, PaymentRequiredV2Schema } from "@x402/core/schemas";
-import { officialClientCanRead } from "./extract.ts";
 import { quote } from "./report.ts";
 import type { Extracted, Finding, Level, Method, PreflightResult } from "./types.ts";
 
@@ -49,7 +48,7 @@ function statusHint(status: number | undefined): string {
   return "Return 402 with a challenge for unpaid requests.";
 }
 
-function methodRules(e: Extracted): Finding[] {
+function methodRules(e: Extracted, x402Core: string): Finding[] {
   const out: Finding[] = [];
   const add = (id: string, level: Level, title: string, detail: string, fix?: string) => {
     out.push({ id, level, method: e.method, title, detail, ...(fix ? { fix } : {}) });
@@ -71,21 +70,35 @@ function methodRules(e: Extracted): Finding[] {
   }
   if (!is402(e)) return out;
 
+  if (e.headerEmpty) {
+    add(
+      "header-empty",
+      "warn",
+      "PAYMENT-REQUIRED header is empty",
+      "The header is present with an empty value. The official client ignores it and falls back to the body; clients that only check whether the header exists will fail.",
+      "Remove the empty header, or put the base64 challenge in it.",
+    );
+  }
+  // The official verdict stands: a header it reads is only a warning for the own decoder.
+  const decoderLevel: Level = e.official.readable ? "warn" : "error";
+  const officialReads = e.official.readable
+    ? ` @x402/core ${x402Core} reads this header; clients with a stricter decoder may not.`
+    : "";
   if (e.headerError === "not-base64") {
     add(
       "header-not-base64",
-      "error",
+      decoderLevel,
       "PAYMENT-REQUIRED header is not standard base64",
-      `Value starts with: ${(e.headerRaw ?? "").slice(0, 40)}`,
+      `Value starts with: ${(e.headerRaw ?? "").slice(0, 40)}${officialReads}`,
       "Encode the JSON challenge with standard base64 (A-Z a-z 0-9 + / =): no base64url, no whitespace.",
     );
   }
   if (e.headerError === "not-json") {
     add(
       "header-not-json",
-      "error",
+      decoderLevel,
       "PAYMENT-REQUIRED header does not decode to JSON",
-      "The header is valid base64, but the decoded text is not JSON.",
+      `The header is valid base64, but the decoded text is not JSON.${officialReads}`,
       "The header must be base64 of the JSON challenge object.",
     );
   }
@@ -243,14 +256,14 @@ function methodRules(e: Extracted): Finding[] {
       'Send "Cache-Control: no-store" with 402 responses.',
     );
   }
-  if (officialClientCanRead(e)) {
-    add("official-client", "pass", "Official x402 client can read the challenge", "The challenge is where the official client looks for it.");
+  if (e.official.readable) {
+    add("official-client", "pass", "Official x402 client can read the challenge", `@x402/core ${x402Core} reads the challenge where the official client looks for it.`);
   } else {
     add(
       "official-client",
       "error",
       "Official x402 client cannot read the challenge",
-      "The official client would fail before signing; see the other findings.",
+      `@x402/core ${x402Core}: ${e.official.reason}. The official client would fail before signing; see the other findings.`,
     );
   }
   return out;
@@ -465,8 +478,9 @@ function mcpFinding(ok: Extracted[], url: string): Finding | undefined {
 }
 
 // The "<url>" default is a placeholder for callers without a URL (tests); cli.ts always passes the real URL.
-export function runRules(results: Extracted[], preflight?: PreflightResult, url = "<url>"): Finding[] {
-  const all = results.flatMap(methodRules);
+export function runRules(results: Extracted[], preflight?: PreflightResult, url = "<url>", x402Core = "unknown"): Finding[] {
+  // A bare flatMap(methodRules) would pass the array index as the version.
+  const all = results.flatMap((e) => methodRules(e, x402Core));
   const ok = results.filter((e) => !e.error);
 
   const mcp = ok.length > 0 && !ok.some(is402) ? mcpFinding(ok, url) : undefined;

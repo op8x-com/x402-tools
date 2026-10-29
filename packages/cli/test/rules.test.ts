@@ -450,9 +450,9 @@ test("drift still reports an error and no header-only hint", () => {
   assert.equal(ids(fs).includes("v2-header-only"), false);
 });
 
-test("no v2 header-only hint and no drift for a mirrored body with a leading BOM", () => {
+test("a body text that still starts with a BOM (double BOM on the wire) is not parsed: header-only hint, no drift", () => {
   const fs = runRules([withBodyText("\uFEFF" + JSON.stringify(v2))]);
-  assert.equal(ids(fs).includes("v2-header-only"), false);
+  assert.equal(headerOnly(fs).length, 1);
   assert.equal(ids(fs).includes("header-body-drift"), false);
 });
 
@@ -479,4 +479,67 @@ test("v2 header-only hint also applies to a 412 permit2_allowance_required", () 
 test("v2 header-only fix names the official clients to move to", () => {
   const f = headerOnly(runRules([v2ok("GET")]));
   assert.match(f[0].fix ?? "", /@x402\/fetch or @x402\/axios/);
+});
+
+const nonCors = (fs: Finding[]) => ids(fs).filter((id) => !id.startsWith("cors-")).sort();
+const find = (fs: Finding[], id: string) => fs.find((f) => f.id === id);
+
+test("empty header with v1 body: header-empty warn, official pass, no errors", () => {
+  const fs = runRules([extract(pr("GET", 402, { ...NS, "payment-required": "" }, v1))], undefined, "<url>", "9.9.9");
+  assert.deepEqual(nonCors(fs), ["header-empty", "official-client", "v1-legacy"]);
+  assert.equal(find(fs, "header-empty")?.level, "warn");
+  assert.equal(find(fs, "official-client")?.level, "pass");
+  assert.equal(find(fs, "official-client")?.detail, "@x402/core 9.9.9 reads the challenge where the official client looks for it.");
+  assert.deepEqual(errors(fs), []);
+});
+
+test("empty header without body challenge: header-empty, no-challenge, official error", () => {
+  const fs = runRules([extract(pr("GET", 402, { ...NS, "payment-required": "" }, {}))], undefined, "<url>", "9.9.9");
+  assert.deepEqual(nonCors(fs), ["header-empty", "no-challenge", "official-client"]);
+  const official = find(fs, "official-client");
+  assert.equal(official?.level, "error");
+  assert.match(official?.detail ?? "", /^@x402\/core 9\.9\.9: Invalid payment required response\. The official client would fail before signing; see the other findings\.$/);
+});
+
+test("header-empty only for an empty header on a 402", () => {
+  assert.equal(find(runRules([extract(pr("GET", 402, NS, v1))]), "header-empty"), undefined);
+  assert.equal(find(runRules([extract(pr("GET", 200, { "payment-required": "" }))]), "header-empty"), undefined);
+});
+
+test("official client reads a header the own decoder rejects: header-not-base64 is only a warning", () => {
+  const e = { ...extract(pr("GET", 402, { ...NS, "payment-required": "eyJh-_" }, {})), official: { readable: true } as const };
+  const fs = runRules([e], undefined, "<url>", "9.9.9");
+  const decoder = find(fs, "header-not-base64");
+  assert.equal(decoder?.level, "warn");
+  assert.match(decoder?.detail ?? "", /@x402\/core 9\.9\.9 reads this header; clients with a stricter decoder may not\.$/);
+  assert.equal(find(fs, "official-client")?.level, "pass");
+});
+
+test("official client reads a header the own decoder rejects as not JSON: header-not-json is only a warning", () => {
+  const raw = Buffer.from("hello").toString("base64");
+  const e = { ...extract(pr("GET", 402, { ...NS, "payment-required": raw }, {})), official: { readable: true } as const };
+  const fs = runRules([e], undefined, "<url>", "9.9.9");
+  const decoder = find(fs, "header-not-json");
+  assert.equal(decoder?.level, "warn");
+  assert.match(decoder?.detail ?? "", /@x402\/core 9\.9\.9 reads this header; clients with a stricter decoder may not\.$/);
+  assert.equal(find(fs, "official-client")?.level, "pass");
+});
+
+test("a valid v2 header with a body error: official-client is an error, not a pass", () => {
+  const p = { ...pr("GET", 402, { ...NS, "payment-required": b64(v2) }), bodyError: "http response body too large: limit 1048576 bytes" };
+  const fs = runRules([extract(p)], undefined, "<url>", "9.9.9");
+  const official = find(fs, "official-client");
+  assert.equal(official?.level, "error");
+  assert.match(official?.detail ?? "", /http response body too large: limit 1048576 bytes/);
+});
+
+test("a valid v1 JSON challenge body of about 600 KiB is readable: no false error", () => {
+  const big = { ...v1, padding: "x".repeat(600 * 1024) };
+  const fs = runRules([extract(pr("GET", 402, NS, big))], undefined, "<url>", "9.9.9");
+  assert.equal(find(fs, "official-client")?.level, "pass");
+});
+
+test("official client and own decoder both reject: header-not-base64 stays an error", () => {
+  const fs = runRules([extract(pr("GET", 402, { ...NS, "payment-required": "eyJh-_" }, {}))]);
+  assert.equal(find(fs, "header-not-base64")?.level, "error");
 });

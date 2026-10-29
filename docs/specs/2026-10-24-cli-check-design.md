@@ -24,7 +24,7 @@ Focus is **dialect diagnosis**: where the challenge lives (header, body, both), 
 
 - **v2:** challenge in response header `PAYMENT-REQUIRED`, standard base64 of UTF-8 JSON (`/^[A-Za-z0-9+/]*={0,2}$/`; base64url and whitespace are rejected by the official decoder). Body is `{}` or custom; the official server sets `Cache-Control: no-store`. Shape: `x402Version: 2`, `resource {url, description?, mimeType?, ...}`, `accepts[]` (min 1) of `{scheme, network (CAIP-2), amount, asset, payTo, maxTimeoutSeconds, extra?}`, optional `error`, `extensions`.
 - **v1:** challenge in JSON body: `x402Version: 1`, `accepts[]` of `{scheme, network (legacy name, e.g. base-sepolia), maxAmountRequired, resource, description, mimeType?, payTo, asset, maxTimeoutSeconds, outputSchema?, extra?}`, optional `error`.
-- **Official client** (`x402HTTPClient.getPaymentRequiredResponse`): uses the `PAYMENT-REQUIRED` header if present; otherwise accepts the body only if `body.x402Version === 1`; otherwise throws. A v2 challenge that exists only in the body is therefore unreadable.
+- **Official client** (`x402HTTPClient.getPaymentRequiredResponse`): uses the `PAYMENT-REQUIRED` header if present; otherwise accepts the body only if `body.x402Version === 1`; otherwise throws. A v2 challenge that exists only in the body is therefore unreadable. How `official-client` is decided is described in `docs/designs/2026-10-28-cli-official-client-design.md`.
 
 ## Architecture
 
@@ -32,18 +32,22 @@ Package `op8x` in `packages/cli`, TypeScript, ESM, Node >= 20, single runtime de
 
 | File | Job | Depends on |
 | --- | --- | --- |
-| `src/probe.ts` | Send unpaid requests, collect status, headers, body text, timing | global `fetch` |
-| `src/extract.ts` | Decode header, parse body, classify challenge location and version | `@x402/core/http`, `@x402/core/schemas` |
-| `src/rules.ts` | Pure functions: extracted data in, findings out | `@x402/core/schemas` |
-| `src/report.ts` | Render findings as text or JSON | none |
-| `src/cli.ts` | Parse arguments, wire the pipeline, set exit code | all of the above |
+| `src/probe.ts` | Send unpaid requests, collect status, headers, body text (read like `@x402/fetch`), timing | global `fetch`, `@x402/core/http` |
+| `src/extract.ts` | Decode header, parse body, classify challenge location and version | `@x402/core/http` |
+| `src/rules.ts` | Pure functions: extracted data in, findings out | `@x402/core/schemas`, `report` |
+| `src/report.ts` | Render findings as text or JSON | `probe` |
+| `src/cli.ts` | Parse arguments, wire the pipeline, set exit code | all of the above, `core-version` |
+| `src/core-version.ts` | Installed `@x402/core` version | `node:module`, `node:fs`, `node:path` |
+| `src/version.ts` | CLI version | none |
+| `src/bin.ts` | Entry point | `cli` |
+| `src/types.ts` | Shared types | none |
 
 ### Probe
 
 - Methods: `GET` and `POST` (POST with `Content-Type: application/json`, body `{}`), unless `--method` restricts to one.
 - Headers: `Accept: application/json`, `User-Agent: op8x-cli/<version> (+https://op8x.com)`. Never sends `X-PAYMENT` or `PAYMENT-SIGNATURE`.
 - `redirect: "manual"`; a redirect is reported, not followed.
-- Timeout per request, default 10 s. Body read capped at 256 KB.
+- Timeout per request, default 10 s. Bodies are read like `@x402/fetch` reads them (`readLimitedText`, 1 MiB from `@x402/core/http`). A body over that limit or one that breaks off keeps status and headers, is not parsed, and the official client counts as unable to read the response.
 - Network errors (DNS, TLS, timeout) become a probe result with an error, not an exception.
 
 ### Findings
@@ -69,8 +73,9 @@ Each rule has a stable id. Levels: `error` breaks real clients, `warn` is risky 
 | `no-402` | error | Neither method returns 402 (or 412 with `permit2_allowance_required`) | Return 402 with a challenge for unpaid requests; status shown (200 = not paywalled, 401/403 = auth or WAF, 404 = wrong path, 3xx = redirect) |
 | `redirect` | warn | 3xx response | Serve the 402 at the final URL; many clients do not follow redirects before paying |
 | `verb-mismatch` | warn | One method returns 402, the other does not (e.g. GET 405) | Clients probe with GET; issue the challenge on GET too, or document the method |
-| `header-not-base64` | error | `PAYMENT-REQUIRED` present but not standard base64 (base64url, whitespace, padding) | Encode with standard base64 (`+` `/` `=`), no line breaks |
-| `header-not-json` | error | Header decodes but is not JSON | Header must be base64 of the JSON challenge |
+| `header-empty` | warn | 402 with an empty `PAYMENT-REQUIRED` header | Remove the empty header, or put the base64 challenge in it |
+| `header-not-base64` | error (warn when the official client of the installed `@x402/core` reads the header) | `PAYMENT-REQUIRED` present but not standard base64 (base64url, whitespace, padding) | Encode with standard base64 (`+` `/` `=`), no line breaks |
+| `header-not-json` | error (warn when the official client of the installed `@x402/core` reads the header) | Header decodes but is not JSON | Header must be base64 of the JSON challenge |
 | `v2-body-only` | error | Body holds a v2 challenge, header missing | Move the challenge into the `PAYMENT-REQUIRED` header; the official v2 client ignores v2 bodies |
 | `no-challenge` | error | 402 without readable challenge in header or body | Add the challenge (v2: header; v1: body) |
 | `header-body-drift` | error | Header and body both carry a challenge and differ; detail lists differing field paths | Generate both from one object, or drop the body copy |
@@ -81,7 +86,7 @@ Each rule has a stable id. Levels: `error` breaks real clients, `warn` is risky 
 | `mixed-dialect` | error | v2 entry uses v1 fields (`maxAmountRequired`, string `resource`) or v1 entry uses `amount` | Use one dialect consistently |
 | `v1-legacy` | info | Valid v1 challenge | v1 works with v1 clients; v2 is the current standard |
 | `cache-control` | warn | 402 without `no-store` in `Cache-Control` | Send `Cache-Control: no-store` so proxies do not cache challenges |
-| `official-client` | pass/error | Whether the official client logic can read the challenge | Derived from the rules above |
+| `official-client` | pass/error | Whether the official client of the installed `@x402/core` reads the challenge | Fix the errors reported by the other rules; if none is reported, the detail names what the official client rejects (the two decoders can disagree) |
 
 Legacy-to-CAIP-2 hint map (EVM only): `base` → `eip155:8453`, `base-sepolia` → `eip155:84532`, `polygon` → `eip155:137`, `polygon-amoy` → `eip155:80002`, `avalanche` → `eip155:43114`, `avalanche-fuji` → `eip155:43113`.
 
@@ -95,6 +100,7 @@ JSON (`--json`):
 {
   "tool": "op8x",
   "version": "0.0.1",
+  "x402Core": "2.29.0",
   "url": "https://example.com/paid",
   "checkedAt": "2026-10-24T18:00:00.000Z",
   "requests": [{ "method": "GET", "status": 402, "ms": 120 }],

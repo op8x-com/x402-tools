@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { run, type Io } from "../src/cli.ts";
 import { startServer } from "./server.ts";
 import { VERSION } from "../src/version.ts";
+import { X402_CORE_VERSION } from "../src/core-version.ts";
 
 let server: Awaited<ReturnType<typeof startServer>>;
 before(async () => {
@@ -191,4 +192,26 @@ test("v2 only in the header gets the v1 hint without failing the check", async (
   const hint = report.findings.filter((f: JsonFinding) => f.id === "v2-header-only");
   assert.deepEqual(hint.map((f: JsonFinding) => f.level), ["info"]);
   assert.deepEqual(report.summary, { errors: 0, warnings: 0 });
+});
+
+for (const path of ["/empty-header-v1", "/blank-header-v1"]) {
+  test(`${path}: the official client falls back to the v1 body`, async () => {
+    const io = capture();
+    assert.equal(await run(["check", `${server.url}${path}`, "--json"], io), 0);
+    const report = JSON.parse(io.stdout());
+    const level = (id: string) => report.findings.find((f: { id: string }) => f.id === id)?.level;
+    assert.equal(level("header-empty"), "warn");
+    assert.equal(level("official-client"), "pass");
+    assert.equal(report.x402Core, X402_CORE_VERSION);
+  });
+}
+
+test("/empty-header-no-body: an empty header without a body challenge exits 1", async () => {
+  const io = capture();
+  assert.equal(await run(["check", `${server.url}/empty-header-no-body`, "--json"], io), 1);
+  const report = JSON.parse(io.stdout());
+  const level = (id: string) => report.findings.find((f: { id: string }) => f.id === id)?.level;
+  assert.equal(level("header-empty"), "warn");
+  assert.equal(level("no-challenge"), "error");
+  assert.equal(level("official-client"), "error");
 });

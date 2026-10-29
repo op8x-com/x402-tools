@@ -4,6 +4,7 @@ import type { Finding, Level, PreflightResult, ProbeResult } from "./types.ts";
 export interface Report {
   tool: "op8x";
   version: string;
+  x402Core: string;
   url: string;
   checkedAt: string;
   requests: {
@@ -25,6 +26,7 @@ const COLOR: Record<Level, string> = { error: "31", warn: "33", info: "36", pass
 export function buildReport(
   url: string,
   version: string,
+  x402Core: string,
   probes: (ProbeResult | PreflightResult)[],
   findings: Finding[],
   now: Date = new Date(),
@@ -32,6 +34,7 @@ export function buildReport(
   return {
     tool: "op8x",
     version,
+    x402Core,
     url,
     checkedAt: now.toISOString(),
     requests: probes.map((p) => ({

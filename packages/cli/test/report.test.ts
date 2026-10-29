@@ -22,7 +22,7 @@ const findings: Finding[] = [
   { id: "v2-body-only", level: "error", method: "GET", title: "v2 challenge only in the response body", detail: "d", fix: "f" },
   { id: "cache-control", level: "warn", method: "GET", title: "Challenge may be cached", detail: "d" },
 ];
-const report = buildReport("https://api.example.com/x", "0.0.1", probes, findings, new Date("2026-10-24T18:00:00.000Z"));
+const report = buildReport("https://api.example.com/x", "0.0.1", "2.29.0", probes, findings, new Date("2026-10-24T18:00:00.000Z"));
 
 test("buildReport counts errors and warnings", () => {
   assert.deepEqual(report.summary, { errors: 1, warnings: 1 });
@@ -66,9 +66,9 @@ test("renderText orders by severity and includes fix, repro and pointers", () =>
 });
 
 test("renderText pluralises the summary", () => {
-  const none = buildReport("https://api.example.com/x", "0.0.1", probes, []);
+  const none = buildReport("https://api.example.com/x", "0.0.1", "2.29.0", probes, []);
   assert.match(renderText(none, false), /Summary: 0 errors, 0 warnings\n/);
-  const two = buildReport("https://api.example.com/x", "0.0.1", probes, [findings[1], findings[1]]);
+  const two = buildReport("https://api.example.com/x", "0.0.1", "2.29.0", probes, [findings[1], findings[1]]);
   assert.match(renderText(two, false), /Summary: 2 errors, 0 warnings\n/);
 });
 
@@ -85,11 +85,16 @@ test("renderText: MCP footer replaces the listing footer only for mcp-endpoint",
     detail: "d",
     fix: "f",
   };
-  const r = buildReport("https://api.example.com/x", "0.0.1", probes, [mcp]);
+  const r = buildReport("https://api.example.com/x", "0.0.1", "2.29.0", probes, [mcp]);
   const text = renderText(r, false);
   assert.match(text, /\nMCP payment check: npx x402-listing-check@latest 'https:\/\/api\.example\.com\/x' --mcp-tool YOUR_TOOL\nop8x · https:\/\/op8x\.com\n$/);
   assert.equal(text.includes("Listing and Bazaar checks"), false);
-  const quoted = renderText(buildReport("https://api.example.com/it's", "0.0.1", probes, [mcp]), false);
+  const quoted = renderText(buildReport("https://api.example.com/it's", "0.0.1", "2.29.0", probes, [mcp]), false);
   assert.match(quoted, /@latest 'https:\/\/api\.example\.com\/it'\\''s' --mcp-tool YOUR_TOOL\n/);
   assert.match(renderText(report, false), /Listing and Bazaar checks: npx x402-listing-check https:\/\/api\.example\.com\/x\n/);
+});
+
+test("JSON report names the @x402/core version right after the CLI version", () => {
+  assert.equal(report.x402Core, "2.29.0");
+  assert.deepEqual(Object.keys(JSON.parse(renderJson(report))).slice(0, 3), ["tool", "version", "x402Core"]);
 });
