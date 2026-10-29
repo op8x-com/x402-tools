@@ -205,3 +205,13 @@ for (const path of ["/empty-header-v1", "/blank-header-v1"]) {
     assert.equal(report.x402Core, X402_CORE_VERSION);
   });
 }
+
+test("/empty-header-no-body: an empty header without a body challenge exits 1", async () => {
+  const io = capture();
+  assert.equal(await run(["check", `${server.url}/empty-header-no-body`, "--json"], io), 1);
+  const report = JSON.parse(io.stdout());
+  const level = (id: string) => report.findings.find((f: { id: string }) => f.id === id)?.level;
+  assert.equal(level("header-empty"), "warn");
+  assert.equal(level("no-challenge"), "error");
+  assert.equal(level("official-client"), "error");
+});
