@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { gzipSync } from "node:zlib";
+import { readFileSync } from "node:fs";
+import { gunzipSync, gzipSync } from "node:zlib";
 import { diffTarballs, parseSource } from "./check-vendor.mjs";
 import { readTarball } from "./pack.mjs";
 
@@ -9,18 +10,21 @@ const sha = "b46962762c9f5af131eced72b18910ddd180cefe214de5eff4c2345343034e5a";
 const lines = ({ source = `packages/analytics at commit ${commit}`, tarball = "op8x-analytics-0.0.1.tgz" } = {}) =>
   [`package: @op8x/analytics@0.0.1`, `source: ${source}`, `tarball: ${tarball}`, `sha256: ${sha}`, ""].join("\n");
 
-// A minimal ustar archive: one 512-byte header per file, contents padded to 512 bytes, two zero blocks.
-function tgz(files) {
+// A minimal ustar archive: one 512-byte header per entry, contents padded to 512 bytes, two zero blocks.
+// Entries are [name, content] or [name, content, type]; `trailer` is appended after the end marker.
+function tgz(files, { trailer = Buffer.alloc(0) } = {}) {
+  const entries = Array.isArray(files) ? files : Object.entries(files);
   const blocks = [];
-  for (const [name, content] of Object.entries(files)) {
+  for (const [name, content, type = "0"] of entries) {
     const body = Buffer.from(content);
     const header = Buffer.alloc(512);
     header.write(name, 0);
     header.write(body.length.toString(8).padStart(11, "0"), 124);
-    header.write("0", 156);
+    header.write(type, 156);
+    header.write("ustar\u000000", 257);
     blocks.push(header, body, Buffer.alloc((512 - (body.length % 512)) % 512));
   }
-  blocks.push(Buffer.alloc(1024));
+  blocks.push(Buffer.alloc(1024), trailer);
   return gzipSync(Buffer.concat(blocks));
 }
 
@@ -54,6 +58,23 @@ test("readTarball returns the files of an archive, including one larger than a b
   const files = readTarball(tgz({ "package/a.js": "a", "package/big.txt": big }));
   assert.deepEqual([...files.keys()], ["package/a.js", "package/big.txt"]);
   assert.equal(files.get("package/big.txt").toString(), big);
+});
+
+test("readTarball reads the vendored tarball", () => {
+  const files = readTarball(readFileSync(new URL("../vendor/op8x-analytics-0.0.1.tgz", import.meta.url)));
+  assert.ok(files.has("package/package.json"));
+  assert.ok(files.has("package/dist/index.js"));
+});
+
+test("readTarball rejects what npm pack never writes", () => {
+  assert.throws(() => readTarball(tgz([["package/a.js", "a", "7"]])), /unsupported type/);
+  assert.throws(() => readTarball(tgz([["PaxHeader/a.js", "30 path=package/b.js\n", "x"]])), /unsupported type/);
+  assert.throws(() => readTarball(tgz([["package/a.js", "a"], ["package/a.js", "evil"]])), /twice/);
+  assert.throws(() => readTarball(tgz({ "package/a.js": "a" }, { trailer: Buffer.from("x".repeat(512)) })), /after the end marker/);
+  const notUstar = gunzipSync(tgz({ "package/a.js": "a" }));
+  notUstar.write("ustar  ", 257);
+  assert.throws(() => readTarball(gzipSync(notUstar)), /ustar/);
+  assert.throws(() => readTarball(gzipSync(Buffer.alloc(0))), /end marker/);
 });
 
 test("diffTarballs reports changed, added and removed files", () => {

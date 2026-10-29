@@ -33,23 +33,38 @@ export function packAnalytics(destDir) {
   return { name, version, tarball: filename.replace(/^.*[\\/]/, "") };
 }
 
-/** Regular files of a gzipped tar archive as a Map from path to contents. */
+/**
+ * Regular files of a gzipped tar archive as a Map from path to contents. Strict on purpose: it only
+ * reads what npm pack writes (ustar headers, regular files and directories, unique paths) and throws
+ * on anything else, such as pax or GNU headers, links or data after the end marker. Another tar
+ * reader, like the one npm installs with, could otherwise see different files than this one.
+ */
 export function readTarball(gz) {
   const tar = gunzipSync(gz);
   const files = new Map();
+  const seen = new Set();
   let pos = 0;
-  while (pos + 512 <= tar.length) {
+  for (;;) {
+    if (pos + 512 > tar.length) throw new Error("tar archive has no end marker");
     const header = tar.subarray(pos, pos + 512);
-    if (header.every((b) => b === 0)) break;
+    if (header.every((b) => b === 0)) {
+      if (!tar.subarray(pos).every((b) => b === 0)) throw new Error("tar archive has data after the end marker");
+      return files;
+    }
     const field = (start, length) => header.subarray(start, start + length).toString("utf8").replace(/\0.*$/s, "");
-    const size = parseInt(field(124, 12).trim() || "0", 8);
+    if (field(257, 6) !== "ustar") throw new Error("tar entry is not in ustar format");
+    const sizeField = field(124, 12).trim();
+    if (!/^[0-7]+$/.test(sizeField)) throw new Error("tar entry has an invalid size");
+    const size = parseInt(sizeField, 8);
     const type = field(156, 1);
     const prefix = field(345, 155);
     const name = prefix ? `${prefix}/${field(0, 100)}` : field(0, 100);
+    if (type !== "0" && type !== "" && type !== "5") throw new Error(`tar entry ${name} has unsupported type ${JSON.stringify(type)}`);
+    if (seen.has(name)) throw new Error(`tar archive has ${name} twice`);
+    seen.add(name);
     const body = tar.subarray(pos + 512, pos + 512 + size);
     if (body.length !== size) throw new Error(`truncated tar entry ${name}`);
-    if (type === "0" || type === "") files.set(name, Buffer.from(body));
+    if (type !== "5") files.set(name, Buffer.from(body));
     pos += 512 + Math.ceil(size / 512) * 512;
   }
-  return files;
 }

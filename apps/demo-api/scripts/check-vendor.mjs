@@ -2,7 +2,8 @@
 // tarball shows up in CI.
 // Usage (from apps/demo-api): node scripts/check-vendor.mjs
 // The package's dev dependencies must be installed first (npm ci in packages/analytics).
-// Packs packages/analytics afresh and compares the files with the vendored tarball, file by file.
+// Packs packages/analytics afresh and compares it with the vendored tarball: identical bytes pass,
+// otherwise the files are compared one by one, and a tarball npm pack would not write fails.
 // Also checks that vendor/SOURCE was written from a clean tree, that the tarball's SHA-256 matches
 // SOURCE and that package.json installs that tarball.
 import { createHash } from "node:crypto";
@@ -71,7 +72,9 @@ function main() {
     if (fresh.tarball !== source.tarball) {
       problems.push(`packages/analytics now packs as ${fresh.tarball}, vendor/ has ${source.tarball}.`);
     } else {
-      const differ = diffTarballs(readTarball(vendored), readTarball(readFileSync(join(tmp, fresh.tarball))));
+      // npm pack is reproducible, so identical bytes are the usual case and need no tar reading.
+      const freshBytes = readFileSync(join(tmp, fresh.tarball));
+      const differ = vendored.equals(freshBytes) ? [] : diffTarballs(readTarball(vendored), readTarball(freshBytes));
       if (differ.length > 0) {
         problems.push(`vendor/${source.tarball} differs from a fresh pack of packages/analytics:\n${differ.map((p) => `  ${p}`).join("\n")}`);
       }
