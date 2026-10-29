@@ -48,7 +48,7 @@ CORS findings are `warn` or `info`, never `error`: they affect browser clients o
 | `cors-preflight` | warn | OPTIONS | Preflight returned a non-2xx status | Answer the preflight with 204 and the CORS headers |
 | `cors-preflight` | warn | OPTIONS | 2xx preflight without `Access-Control-Allow-Origin` | Send `Access-Control-Allow-Origin` on the preflight too |
 | `cors-allow-headers` | warn | OPTIONS | 2xx preflight with `Access-Control-Allow-Origin` whose `Access-Control-Allow-Headers` lacks a requested header | Add the missing names |
-| `cors-client-retry` | info | OPTIONS | 2xx preflight with `Access-Control-Allow-Origin` whose `Access-Control-Allow-Headers` lacks `Access-Control-Expose-Headers` (sent on the paid retry by `@x402/fetch` and `@x402/axios` 2.28.0) | Until the fix ships, add `Access-Control-Expose-Headers` to `Access-Control-Allow-Headers` |
+| `cors-client-retry` | info | OPTIONS | 2xx preflight with `Access-Control-Allow-Origin` whose `Access-Control-Allow-Headers` lacks `Access-Control-Expose-Headers` (sent on the paid retry by `@x402/fetch` and `@x402/axios` 2.28.0 and 2.29.0; x402-foundation/x402#3478 still open on 2026-10-29) | Until the fix ships, add `Access-Control-Expose-Headers` to `Access-Control-Allow-Headers` |
 | `payment-flow` | error | GET/POST | v2 entry with `extra.paymentFlow` not in `authorization`, `upfront`, `escrow` | Use one of the three, or omit it for the scheme default |
 | `payment-flow` | warn | GET/POST | v2 entry without `extra.paymentFlow` whose scheme default is not `authorization` | Set `extra.paymentFlow` to the default |
 

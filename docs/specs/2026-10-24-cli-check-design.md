@@ -90,6 +90,7 @@ Each rule has a stable id. Levels: `error` breaks real clients, `warn` is risky 
 | `header-empty` | warn | 402 with an empty `PAYMENT-REQUIRED` header | Remove the empty header, or put the base64 challenge in it |
 | `header-not-base64` | error (warn when the official client of the installed `@x402/core` reads the header) | `PAYMENT-REQUIRED` present but not standard base64 (base64url, whitespace, padding) | Encode with standard base64 (`+` `/` `=`), no line breaks |
 | `header-not-json` | error (warn when the official client of the installed `@x402/core` reads the header) | Header decodes but is not JSON | Header must be base64 of the JSON challenge |
+| `header-not-object` | error (the official client accepts only an object, so there is no warn case) | Header decodes to JSON that is not an object (array, string, number, boolean, `null`); detail names the type | Header must be base64 of the JSON challenge object |
 | `v2-body-only` | error | Body holds a v2 challenge, header missing | Move the challenge into the `PAYMENT-REQUIRED` header; the official v2 client ignores v2 bodies |
 | `v2-header-only` | info | Valid v2 header challenge, no body challenge | See `2026-10-27-cli-v2-header-only-design.md` |
 | `no-challenge` | error | 402 without readable challenge in header or body | Add the challenge (v2: header; v1: body) |
@@ -114,7 +115,7 @@ Order and scope of the per-method rules:
 - `schema` skips issue paths already reported by `v2-legacy-network` or `mixed-dialect`.
 - `mixed-dialect` checks `maxAmountRequired` and string `resource` inside `accepts[]` only.
 - `cache-control` and `official-client` run for every 402, also without a readable challenge.
-- The version, schema, network and dialect rules run only on a challenge that is a JSON object. A header that decodes to other JSON (an array, a string, a number) counts as a header challenge, so `no-challenge` does not apply either; such a 402 gets only `official-client` (error) and `cache-control`.
+- A header that decodes to JSON is the challenge, even when that JSON is not an object; as in the official client, a body challenge is then ignored. The version, schema, network and dialect rules run only on a challenge that is a JSON object. For any other decoded header, `header-not-object` names the JSON type, and `no-challenge` and `header-body-drift` do not apply.
 - Identical findings on GET and POST are merged into one with method `both`.
 
 Legacy-to-CAIP-2 hint map (EVM only): `base` → `eip155:8453`, `base-sepolia` → `eip155:84532`, `polygon` → `eip155:137`, `polygon-amoy` → `eip155:80002`, `avalanche` → `eip155:43114`, `avalanche-fuji` → `eip155:43113`.

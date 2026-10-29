@@ -1,4 +1,5 @@
 import { PaymentRequiredV1Schema, PaymentRequiredV2Schema } from "@x402/core/schemas";
+import { headerDecoded } from "./extract.ts";
 import { quote } from "./report.ts";
 import type { Extracted, Finding, Level, Method, PreflightResult } from "./types.ts";
 
@@ -26,6 +27,7 @@ function defaultFlow(scheme: unknown, network: unknown): string {
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
+const jsonKind = (v: unknown) => (v === null ? "null" : Array.isArray(v) ? "an array" : `a ${typeof v}`);
 
 export function is402(e: Extracted): boolean {
   if (e.status === 402) return true;
@@ -102,6 +104,16 @@ function methodRules(e: Extracted, x402Core: string): Finding[] {
       "The header must be base64 of the JSON challenge object.",
     );
   }
+  // Always an error: officialClientRead accepts only an object, so the official client never reads this header.
+  if (headerDecoded(e) && !isObj(e.header)) {
+    add(
+      "header-not-object",
+      "error",
+      "PAYMENT-REQUIRED header is JSON, but not an object",
+      `The header is valid base64 JSON, but it decodes to ${jsonKind(e.header)}, not to the challenge object.`,
+      "The header must be base64 of the JSON challenge object.",
+    );
+  }
   if (e.headerRaw === undefined && isObj(e.bodyChallenge) && e.bodyChallenge.x402Version === 2) {
     add(
       "v2-body-only",
@@ -134,7 +146,7 @@ function methodRules(e: Extracted, x402Core: string): Finding[] {
       "v2: send the challenge in the PAYMENT-REQUIRED header. v1: send it as JSON in the body.",
     );
   }
-  if (e.location === "both" && e.header !== undefined && e.bodyChallenge !== undefined) {
+  if (e.location === "both" && isObj(e.header) && e.bodyChallenge !== undefined) {
     const paths = diffPaths(e.header, e.bodyChallenge);
     if (paths.length > 0) {
       add(
@@ -443,7 +455,7 @@ function corsRules(results: Extracted[], pre: PreflightResult | undefined): Find
       "info",
       "OPTIONS",
       "SDK retry sends Access-Control-Expose-Headers",
-      "@x402/fetch and @x402/axios 2.28.0 send Access-Control-Expose-Headers on the paid retry (fix pending in x402-foundation/x402#3478), so an allow list naming only the protocol headers refuses that retry.",
+      "@x402/fetch and @x402/axios 2.29.0 send Access-Control-Expose-Headers on the paid retry (fix pending in x402-foundation/x402#3478), so an allow list naming only the protocol headers refuses that retry.",
       "Until the fix ships, add Access-Control-Expose-Headers to Access-Control-Allow-Headers.",
     );
   }

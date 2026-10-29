@@ -189,3 +189,10 @@ test("officialClientRead passes a body error through cleanReason before reading"
   const out = officialClientRead({ headers: { "payment-required": b64(v2) }, body: undefined, bodyError: "terminated\u0000." });
   assert.deepEqual(out, { readable: false, reason: "terminated" });
 });
+
+test("header that decodes to null is the challenge, as in the official client; the body is ignored", () => {
+  const e = extract(pr("GET", 402, { "payment-required": b64(null) }, v1));
+  assert.equal(e.challenge, null);
+  assert.equal(e.version, undefined);
+  assert.equal(e.official.readable, false);
+});
