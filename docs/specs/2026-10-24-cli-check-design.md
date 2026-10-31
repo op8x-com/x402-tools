@@ -6,6 +6,7 @@ Status: approved design, 2026-10-24; first release 0.0.1. Updated 2026-10-29 to 
 - `2026-10-27-cli-v2-header-only-design.md`: `v2-header-only` hint
 - `2026-10-27-cli-mcp-endpoint-design.md`: `mcp-endpoint` hint
 - `../designs/2026-10-28-cli-official-client-design.md`: `official-client` from the official client, `header-empty`, `x402Core` in the report
+- `../designs/2026-10-30-cli-spend-controls-design.md`: `default-asset`, `default-cap` and `eurc-same-amount` (spend controls of default clients)
 
 ## Goal
 
