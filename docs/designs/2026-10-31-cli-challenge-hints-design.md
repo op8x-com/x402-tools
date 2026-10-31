@@ -108,7 +108,7 @@ cli.ts: parse args (+ --payer) -> probe GET/POST -> extract -> runRules(results,
                          merge() joins GET+POST twins  -> report.ts (text/JSON, + notChecked)
 ```
 
-`hintRules` checks its own gate and returns `[]` unless `e.status === 402`, `e.version` is 1 or 2, and `e.challenge` is an object, the same gate as `spendRules` (clients pay only on 402, so the 412 `permit2_allowance_required` answer that `is402` also accepts is left out). It runs inside its own `try`/`catch`, like `spendRules`: on an exception the hints are skipped, never the report. A readable challenge for these rules has `accepts` as a non-empty array; entries that are not objects, or whose `network` or `payTo` is not a string, are skipped.
+`hintRules` checks its own gate and returns `[]` unless `e.status === 402`, `e.version` is 1 or 2, and `e.challenge` is an object, the same gate as `spendRules` (clients pay only on 402, so the 412 `permit2_allowance_required` answer that `is402` also accepts is left out). Each of the four rules runs in its own `try`/`catch` inside `hintRules`, so an exception skips only that rule; `runRules` wraps the call once more (gate and entry reading), like `spendRules`: hints may be skipped, never the report. A readable challenge for these rules has `accepts` as a non-empty array; entries that are not objects, or whose `network` or `payTo` is not a string, are skipped.
 
 ### Where each rule gets its data
 
@@ -194,7 +194,7 @@ One new string option that takes one address (more than one can be added later a
 *   **Staging copies.** A staging, localhost or tunnel deployment whose `resource` is set to the production URL raises `resource-url-mismatch`. Mitigation: the rule is `info`, and the detail says this is expected when checking a staging copy.
 *   **Endpoints that are meant for testnet.** `testnet-only` warns on every run, including op8x's own demo API. Mitigation: the detail says to ignore it if the endpoint is for testing; an opt-out flag is a future improvement (Alternative F).
 *   **False alarms from `post-needs-body`.** A 400 on `{}` can also come from a missing API key, an unsupported content type or an unpaid POST handler. Mitigation: the rule is `info`, stays silent when GET has the same status or the body is a JSON-RPC error, and names the body as the likely cause only.
-*   **Hostile challenges.** Rules read untrusted server input. Mitigation: they run only on 402 responses with a valid version, inside their own `try`/`catch`, and print server text only escaped and capped (`printFull`).
+*   **Hostile challenges.** Rules read untrusted server input. Mitigation: they run only on 402 responses with a valid version, each rule inside its own `try`/`catch`, and print server text only escaped and capped (`printFull`; `resource.url` through `printEscaped`, which escapes instead of removing characters).
 *   **Unrecognised test networks.** See "Known gap" above.
 *   **Drift.** Facts were checked against `@x402/core`, `@x402/hono` and `@x402/evm` 2.29.0 and the CDP documentation on 2026-10-31. Mitigation: recheck the SDK facts on the next `@x402/core` upgrade (the pinned `TEST_NETWORKS` test fails when `V1_NETWORKS` changes) and the CDP endpoint in the "not checked" list before each CLI release.
 
@@ -248,7 +248,7 @@ One new string option that takes one address (more than one can be added later a
 
 ## Non-Functional Requirements
 
-*   **Security & Privacy**: No new requests, no secrets. `--payer` is a public address, never a key. An EVM private key (64 hex digits) fails validation; any value that does not match a `payTo` is never printed, so a pasted Solana seed is not echoed either.
+*   **Security & Privacy**: No new requests, no secrets. `--payer` is a public address, never a key. An EVM private key (64 hex digits) fails validation, and the `--payer` value is never printed, so a pasted Solana seed is not echoed either.
 *   **Compatibility**: New finding ids and the new JSON field `notChecked` are additive. Exit codes do not change: all new findings are `warn` or `info`. The text footer changes (see "Not checked" list).
 *   **Rollout**: Ships with the next CLI release; the CLI is not published on npm yet (checked 2026-10-31), so there are no existing users to migrate.
 
@@ -268,12 +268,12 @@ All paths are relative to `packages/cli/` unless they start with `../../`. The p
 #### 2. `src/extract.ts`, `src/payto.ts` (Modify)
 
 *   **Type / Scope**: TypeScript modules (helpers).
-*   **Proposed Changes**: Export the existing `isObject` so `hints.ts` can use it without importing `rules.ts` (avoids a `rules.ts` ↔ `hints.ts` import cycle). Move `escapeChar` and `full` from `payto.ts` to `extract.ts` and export them (as `escapeChar` and `printFull`); `payto.ts` imports them instead of defining them. No behaviour change in `payto.ts`.
+*   **Proposed Changes**: Export the existing `isObject` so `hints.ts` can use it without importing `rules.ts` (avoids a `rules.ts` ↔ `hints.ts` import cycle). Move `escapeChar` and `full` from `payto.ts` to `extract.ts` and export them (as `escapeChar` and `printFull`); `payto.ts` imports them instead of defining them. Add `printEscaped` (escapes every character outside printable ASCII without removing or trimming any) and an internal (not exported) `escapeCapped` that both `printFull` and `printEscaped` use for the 100-character cap. No behaviour change in `payto.ts`.
 
 #### 3. `src/hints.ts` (Create)
 
 *   **Type / Scope**: TypeScript module (rules).
-*   **Proposed Changes**: `export function hintRules(e: Extracted, url: string, payer?: string): Finding[]` with `testnet-only`, `extensions-placement`, `resource-url-mismatch` and `self-payment`; `export function isJsonRpcError(body: unknown): boolean` (the body check moved out of `isMcpSignal`); `export function postNeedsBody(post: Extracted, get: Extracted | undefined): Finding | undefined`. `hintRules` checks the gate itself and returns `[]` outside it. Title, detail and fix texts exactly as in "Finding texts". Server text through `printFull`; `resource.url` through `printEscaped` in `extract.ts`, which escapes instead of removing characters, so it cannot print exactly like the URL checked. Helper `sameUrl(a: URL, b: URL): ("scheme" | "host" | "path")[]` compares protocol, host (with port), and pathname without one trailing slash. Uses `isObject`, `printFull` and `escapeChar` from `extract.ts`, `sameAddress`, `caip2` and `isTestNetwork` from `assets.ts`, and `e.version`.
+*   **Proposed Changes**: `export function hintRules(e: Extracted, url: string, payer?: string): Finding[]` with `testnet-only`, `extensions-placement`, `resource-url-mismatch` and `self-payment`; `export function isJsonRpcError(body: unknown): boolean` (the body check moved out of `isMcpSignal`); `export function postNeedsBody(post: Extracted, get: Extracted | undefined): Finding | undefined`. `hintRules` checks the gate itself and returns `[]` outside it. Title, detail and fix texts exactly as in "Finding texts". Server text through `printFull`; `resource.url` through `printEscaped` in `extract.ts`, which escapes instead of removing characters, so it cannot print exactly like the URL checked. Helper `sameUrl(a: URL, b: URL): ("scheme" | "host" | "path")[]` compares protocol, host (with port), and pathname without one trailing slash. Each rule runs through a small `attempt()` wrapper (own `try`/`catch`). Uses `isObject`, `printFull` and `printEscaped` from `extract.ts`, `sameAddress`, `caip2` and `isTestNetwork` from `assets.ts`, and `e.version`.
 
 #### 4. `src/rules.ts` (Modify)
 
