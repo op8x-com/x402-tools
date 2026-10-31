@@ -29,10 +29,10 @@ npm install --install-links <path-to>/x402-tools/packages/analytics
 
 ## Quick start
 
-The snippet also uses these packages (the 2.28 line is what the example is tested with):
+The snippet also uses these packages (the 2.29 line is what the example is tested with, with `hono` 4.13 and `wrangler` 4.156):
 
 ```
-npm install hono @x402/hono@~2.28.0 @x402/core@~2.28.0 @x402/evm@~2.28.0
+npm install hono @x402/hono@~2.29.0 @x402/core@~2.29.0 @x402/evm@~2.29.0
 ```
 
 ```ts
@@ -91,7 +91,7 @@ Build `analytics()` once per isolate (at module scope, as above, or lazily once)
 
 A complete, runnable app with a local fake facilitator (no money, no network) is in [`examples/workers`](examples/workers); it uses the same payment setup, with bindings and error logging.
 
-The middleware works at the transport level: it reads request headers, the response status and headers, and, for 402 responses only, a copy of the response body. It does not depend on `@x402/hono` or `@x402/core`, so it also records hand-written 402 responses.
+The middleware works at the transport level: it reads request headers, the response status and headers, and, for 402 responses only, a copy of the response body. It does not depend on `@x402/hono` or `@x402/core`, so it also records hand-written 402 responses. Extensions in the challenge, such as Bazaar discovery from `@x402/extensions`, pass through unchanged.
 
 ## Options
 
@@ -160,7 +160,7 @@ The payer address behind `payment.payer` is taken from the receipt's `payer`, fa
 ## Workers notes
 
 - **Compatibility date.** With `compatibility_date = "2026-10-01"` or later, `@x402/hono` runs without the `nodejs_compat` flag. With `2024-09-01` the build fails because `@x402/extensions` imports `url`; older projects need `nodejs_compat` or a newer date.
-- **Global scope.** Do not call `paymentMiddleware(...)` at module top level: it contacts the facilitator, which Workers forbid in global scope. Requests to routes protected by the payment middleware then return 500 ("Disallowed operation called within global scope"); unprotected routes keep working. Set it up on the paid route only, as in the quick start: a lazy setup on the first request of any route leaves `/paid` hanging when that first request was a free route.
+- **Global scope.** Do not call `paymentMiddleware(...)` at module top level: it contacts the facilitator, which Workers forbid in global scope. With `@x402/hono` 2.29 the first request to a protected route then returns 500 ("Disallowed operation called within global scope"); the middleware retries its setup on the next request, which then gets the 402. Unprotected routes keep working. Set it up on the paid route only, as in the quick start: a lazy setup on the first request of any route leaves `/paid` hanging when that first request was a free route.
 - **Body challenges over 64 KB.** Only the first 64 KB of a 402 body are read, and only within `timeoutMs`. A longer or slower body challenge is truncated, does not parse, and is recorded as `location: "none"` (or `"header"` when a header challenge is present).
 - **`ms` on Workers.** Workers advance the clock only across I/O, so `ms` covers time spent waiting on I/O downstream (fetches, KV, the facilitator); CPU time in your handlers does not advance it.
 
