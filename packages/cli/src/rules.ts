@@ -1,6 +1,7 @@
 import { PaymentRequiredV1Schema, PaymentRequiredV2Schema } from "@x402/core/schemas";
 import { legacyToCaip2 } from "./assets.ts";
 import { headerDecoded } from "./extract.ts";
+import { hintRules, isJsonRpcError, postNeedsBody } from "./hints.ts";
 import { paytoRule } from "./payto.ts";
 import { quote } from "./report.ts";
 import { spendRules } from "./spend.ts";
@@ -478,10 +479,20 @@ function corsRules(results: Extracted[], pre: PreflightResult | undefined): Find
 // MCP Streamable HTTP rejects a request that accepts only application/json with 406
 // and a JSON-RPC error. Only this answer counts; the JSON-RPC message is never read.
 function isMcpSignal(e: Extracted): boolean {
-  if (e.status !== 406 || e.headerRaw !== undefined || !isObj(e.body)) return false;
-  const b = e.body;
-  return b.jsonrpc === "2.0" && isObj(b.error) && Number.isInteger(b.error.code) && !("result" in b);
+  return e.status === 406 && e.headerRaw === undefined && isJsonRpcError(e.body);
 }
+
+// hintRules skips a single rule that throws; this catches the rest (the gate, reading accepts), so the
+// hints are skipped, never the report.
+function safeHints(e: Extracted, url: string, payer: string | undefined): Finding[] {
+  try {
+    return hintRules(e, url, payer);
+  } catch {
+    return [];
+  }
+}
+
+const SEE_BODY = "See post-needs-body: the POST answer looks like body validation before payment.";
 
 function mcpFinding(ok: Extracted[], url: string): Finding | undefined {
   if (!ok.every((e) => e.status !== undefined && e.status >= 400 && e.status < 500)) return undefined;
@@ -503,12 +514,21 @@ function mcpFinding(ok: Extracted[], url: string): Finding | undefined {
 }
 
 // The "<url>" default is a placeholder for callers without a URL (tests); cli.ts always passes the real URL.
-export function runRules(results: Extracted[], preflight?: PreflightResult, url = "<url>", x402Core = "unknown"): Finding[] {
+export function runRules(
+  results: Extracted[],
+  preflight?: PreflightResult,
+  url = "<url>",
+  x402Core = "unknown",
+  opts: { payer?: string } = {},
+): Finding[] {
   // A bare flatMap(methodRules) would pass the array index as the version.
-  const all = results.flatMap((e) => methodRules(e, x402Core));
+  const all = results.flatMap((e) => [...methodRules(e, x402Core), ...safeHints(e, url, opts.payer)]);
   const ok = results.filter((e) => !e.error);
 
   const mcp = ok.length > 0 && !ok.some(is402) ? mcpFinding(ok, url) : undefined;
+  const post = ok.find((e) => e.method === "POST");
+  const body = !mcp && post ? postNeedsBody(post, results.find((e) => e.method === "GET")) : undefined;
+  const see = body ? ` ${SEE_BODY}` : "";
   if (mcp) {
     all.unshift(mcp);
   } else if (ok.length > 0 && !ok.some(is402)) {
@@ -518,7 +538,7 @@ export function runRules(results: Extracted[], preflight?: PreflightResult, url 
       method: ok.length === 2 ? "both" : ok[0].method,
       title: "No 402 challenge",
       detail: ok.map((e) => `${e.method} → ${e.status}`).join(", "),
-      fix: statusHint(ok[0].status),
+      fix: statusHint(ok[0].status) + see,
     });
   }
   if (ok.length === 2 && ok.filter(is402).length === 1) {
@@ -530,9 +550,10 @@ export function runRules(results: Extracted[], preflight?: PreflightResult, url 
       method: "both",
       title: `${no.method} does not return 402`,
       detail: `${yes.method} → ${yes.status}, ${no.method} → ${no.status}`,
-      fix: `Clients often probe with GET first. Issue the challenge on ${no.method} too, or document the supported method.`,
+      fix: `Clients often probe with GET first. Issue the challenge on ${no.method} too, or document the supported method.${see}`,
     });
   }
+  if (body) all.push(body);
   all.push(...corsRules(results, preflight));
   return merge(all);
 }

@@ -37,6 +37,13 @@ export const v1 = {
   ],
 };
 
+// The same challenges on Base mainnet with Base USDC, so the testnet and spend findings stay silent.
+const BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+
+export const v2main = { ...v2, accepts: [{ ...v2.accepts[0], network: "eip155:8453", asset: BASE_USDC }] };
+
+export const v1main = { ...v1, accepts: [{ ...v1.accepts[0], network: "base", asset: BASE_USDC }] };
+
 export function b64(value: unknown): string {
   return Buffer.from(JSON.stringify(value), "utf8").toString("base64");
 }

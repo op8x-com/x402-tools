@@ -64,7 +64,7 @@ In the MCP case the finding `no-402` is replaced, in the same position (first), 
 
 - `detail`: `GET → 405, POST → 406. The POST answer is a JSON-RPC error from an MCP server. x402 over MCP returns the payment requirement inside the tools/call result with HTTP 200, so this HTTP check does not apply. If this URL is meant to be paid per HTTP request, it returned no 402.` The status list is built as in `no-402`; the sentence names the method(s) with the signal.
 - `fix`: `Check a paid tool over MCP: npx x402-listing-check@latest '<url>' --mcp-tool YOUR_TOOL (replace YOUR_TOOL with the name of a paid tool).`
-- The footer line `Listing and Bazaar checks: …` becomes `MCP payment check: npx x402-listing-check@latest '<url>' --mcp-tool YOUR_TOOL` in the MCP case only.
+- The footer line `Listing and Bazaar checks: …` is replaced by the block "Not checked by op8x check" (`notChecked` in the report). In the MCP case its first entry is `MCP payments: npx x402-listing-check@latest '<url>' --mcp-tool YOUR_TOOL` and the Bazaar entry is left out.
 
 The URL is single-quoted as in the `Reproduce` lines. `YOUR_TOOL` is used instead of `<name>`, because `<` is a redirect in every common shell. `@latest` makes npx fetch the current version instead of reusing a cached one that may predate `--mcp-tool` (added in 0.3.0).
 

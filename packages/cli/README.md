@@ -23,6 +23,11 @@ Or install it once and use the short command: `npm install -g @op8x/cli`, then `
 - offers that default clients refuse to pay (warnings, never errors): since `@x402/core` 2.23.0, clients without `spendControls` pay only in USD stablecoins such as USDC on the networks their SDK lists (`default-asset`) and at most 1 USD per payment (`default-cap`). The check asks the installed `@x402/core` client itself.
 - `payTo` that changes between requests (a warning, `payto-rotates`): the plain request and the browser-like repeat get different recipient addresses for the same kind of payment option. A client signs its payment to the address it read, so a server that builds `payTo` again for the paid request may reject it, and buyer-side tools that approve recipients per host may hold or refuse every payment
 - the same amount in USDC and EURC (a hint, `eurc-same-amount`): EURC tracks the euro and USDC the US dollar, so the same number means a different price
+- only test networks offered (a warning, `testnet-only`): every payment option is on a test network such as Base Sepolia, so buyers that pay on mainnet find nothing they can use
+- `extensions` inside an `accepts[]` entry instead of at the top level of a v2 challenge (a warning, `extensions-placement`): the Bazaar does not read it there
+- `resource.url` that differs from the URL checked (a hint, `resource-url-mismatch`): for example `http://` behind a proxy that ends TLS
+- your own wallet is the `payTo` (a warning, `self-payment`, only with `--payer`): some facilitators reject a payment from an address to itself
+- a POST that answers 400, 409 or 422 to the empty JSON body before it asks for payment (a hint, `post-needs-body`): buyers that send no body or an empty one likely never see the price
 
 The plain requests carry no `Origin`, so a server that refuses browsers is still checked correctly; the repeat and the preflight send `Origin: https://op8x.com`. It never pays, needs no wallet and sends no telemetry. It only talks to the URL you give it.
 
@@ -32,7 +37,10 @@ The plain requests carry no `Origin`, so a server that refuses browsers is still
 --method <GET|POST>    probe only this method (default: both)
 --json                 print a JSON report (for agents and CI)
 --timeout <seconds>    per-request timeout (default: 10)
+--payer <address>      your own paying wallet; warns if it is a payTo
 ```
+
+`--payer` takes one wallet address (`0x` plus 40 hex digits, or a Solana address) and compares it with every `payTo` as text. It never signs and never sends the address anywhere; the address is never printed. Anything that is not an address, such as a private key, exits with code 2 and is not repeated.
 
 Exit codes: `0` no errors, `1` errors found, `2` usage error or the URL was unreachable.
 
@@ -64,7 +72,14 @@ Reproduce:
   curl -i -X POST -H 'Origin: https://op8x.com' -H 'Content-Type: application/json' -d '{}' 'https://api.example.com/weather'
 
 Summary: 2 errors, 0 warnings
-Listing and Bazaar checks: npx x402-listing-check https://api.example.com/weather
+Not checked by op8x check:
+  - Bazaar indexing and metadata:
+      curl -X POST https://api.cdp.coinbase.com/platform/v2/x402/validate -H 'Content-Type: application/json' -d '{"resource":"https://api.example.com/weather","method":"GET"}'
+      curl -X POST https://api.cdp.coinbase.com/platform/v2/x402/validate -H 'Content-Type: application/json' -d '{"resource":"https://api.example.com/weather","method":"POST"}'
+      npx x402-listing-check 'https://api.example.com/weather'
+      Indexing also needs one settled payment through the CDP facilitator.
+  - Delivery after a real payment: a tool that pays the endpoint once and checks the response.
+  - Facilitator limits such as minimum prices: your facilitator's documentation.
 op8x · https://op8x.com
 ```
 
@@ -92,8 +107,25 @@ Not detected: MCP servers that answer before the transport check (for example a 
 
 `mcp-endpoint` is a stable id. A CI job that must not pass on an unchecked MCP endpoint can test `findings[].id` in the `--json` report. See the [x402 MCP transport](https://github.com/x402-foundation/x402/blob/main/specs/transports-v2/mcp.md).
 
+## What the hints mean
+
+- `testnet-only` (warning): every payment option is on a test network. The report names up to three, then "and N more", for example `eip155:84532, eip155:11155111, eip155:43113 and 2 more`. Ignore it if the endpoint is meant for testing. Otherwise add a mainnet option next to the test one, for example `eip155:8453` (v1: `base`) with USDC. Only networks with a v1 name are recognised; others stay silent.
+- `extensions-placement` (warning): in x402 v2, `extensions` such as `bazaar` belong at the top level of the challenge, next to `accepts`. The `@x402/core` schema drops them inside an offer, so the Bazaar does not see them. Move them to the top level.
+- `resource-url-mismatch` (hint): `resource.url` differs from the URL checked in scheme, host or path. A typical cause is a proxy that ends TLS, so the server sees `http://`. Set the route's `resource` to the public URL, or let the server trust the forwarded scheme and host. Expected when you check a staging copy, and for a route that serves many paths on purpose.
+- `self-payment` (warning): the address given with `--payer` is a `payTo` of the challenge. Test with a second wallet.
+- `post-needs-body` (hint): the POST probe sends the body `{}` and got 400, 409 or 422 instead of 402. The likely cause is that the endpoint checks the body before asking for payment. Run the payment middleware before body validation, and if the route needs a body, declare an example `input`. It stays silent when GET answers the same, and for MCP servers. When it fires, the fix of `no-402` or `verb-mismatch` points to it.
+
+## What op8x check does not check
+
+The text report ends with the block "Not checked by op8x check"; the JSON report has the same entries in `notChecked` (`topic`, and `where` when there is a pointer).
+
+- Bazaar indexing and metadata: CDP's validation endpoint needs no key. The report prints one command per method that answered 402 (all probed methods if none did), then `npx x402-listing-check '<url>'`. Indexing also needs one settled payment through the CDP facilitator. Left out for MCP endpoints.
+- Delivery after a real payment: use a tool that pays the endpoint once and checks the response.
+- Facilitator limits such as minimum prices: see your facilitator's documentation.
+- MCP payments (only for MCP endpoints, listed first): `npx x402-listing-check@latest '<url>' --mcp-tool YOUR_TOOL`.
+
 ## Related
 
-For listing checks (Bazaar metadata, `/.well-known/x402`, OpenAPI), run [`x402-listing-check`](https://www.npmjs.com/package/x402-listing-check).
+For listing checks (Bazaar metadata, `/.well-known/x402`, OpenAPI), run [`x402-listing-check`](https://www.npmjs.com/package/x402-listing-check). What `op8x check` leaves out is listed under "What op8x check does not check" above.
 
 MIT · [op8x.com](https://op8x.com)

@@ -21,7 +21,7 @@ export function decodeHeader(raw: string): { value?: unknown; error?: "not-base6
   }
 }
 
-function isObject(v: unknown): v is Record<string, unknown> {
+export function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
@@ -104,6 +104,53 @@ const UNSAFE = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/gu;
 /** Report-safe text: no control, format or line-separator characters, at most `max` code points. */
 export function cleanText(text: string, max: number): string {
   return Array.from(text.replace(UNSAFE, "").trim()).slice(0, max).join("");
+}
+
+const MAX_PRINTED = 100;
+
+/** One code point as printed: printable ASCII except the backslash as is, everything else as \u{XXXX}. */
+export function escapeChar(c: string): string {
+  const cp = c.codePointAt(0) ?? 0;
+  return cp >= 0x20 && cp <= 0x7e && cp !== 0x5c ? c : `\\u{${cp.toString(16).toUpperCase().padStart(4, "0")}}`;
+}
+
+/**
+ * A server value printed in full for comparison (see docs/solutions/2026-10-31-printed-server-values-look-alike.md):
+ * cleaned, escaped with escapeChar, at most 100 printed characters, a cut marked with an ellipsis.
+ */
+export function printFull(value: string): string {
+  const chars = Array.from(cleanText(value, 100));
+  if (chars.length === 0) return "(empty)";
+  // cleanText stops at 100 characters; asking for 101 shows whether it cut anything.
+  return escapeCapped(chars, Array.from(cleanText(value, 101)).length > MAX_PRINTED);
+}
+
+/**
+ * A server value printed next to a value the CLI prints itself: like printFull, but nothing is removed or
+ * trimmed, so characters that cleanText drops (U+00A0, U+200B, U+2060) show as \u{XXXX} and the two cannot
+ * look the same. A non-empty value never prints as "(empty)".
+ */
+export function printEscaped(value: string): string {
+  const chars = Array.from(value);
+  return escapeCapped(chars.slice(0, MAX_PRINTED), chars.length > MAX_PRINTED);
+}
+
+// Escapes chars with escapeChar up to 100 printed characters; a cut is marked with an ellipsis.
+function escapeCapped(chars: string[], cutBefore: boolean): string {
+  let cut = cutBefore;
+  let text = "";
+  let used = 0;
+  for (const c of chars) {
+    const e = escapeChar(c);
+    const n = Array.from(e).length;
+    if (used + n > MAX_PRINTED) {
+      cut = true;
+      break;
+    }
+    text += e;
+    used += n;
+  }
+  return cut ? `${text}\u2026` : text;
 }
 
 /** Report-safe text of a thrown value, at most 200 characters. */

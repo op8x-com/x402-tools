@@ -8,16 +8,17 @@ Status: approved design, 2026-10-24; first release 0.0.1. Updated 2026-10-29 to 
 - `../designs/2026-10-28-cli-official-client-design.md`: `official-client` from the official client, `header-empty`, `x402Core` in the report
 - `../designs/2026-10-30-cli-spend-controls-design.md`: `default-asset`, `default-cap` and `eurc-same-amount` (spend controls of default clients)
 - `../designs/2026-10-31-cli-payto-rotation-design.md`: `payto-rotates` (`payTo` that differs between the plain request and the browser-like repeat)
+- `../designs/2026-10-31-cli-challenge-hints-design.md`: `testnet-only`, `extensions-placement`, `resource-url-mismatch`, `self-payment`, `post-needs-body`, the option `--payer` and the `notChecked` list
 
 ## Goal
 
 A seller runs one command and learns, from the outside, whether their x402 endpoint issues a challenge that real clients can read, and if not, why and how to fix it.
 
 ```
-npx @op8x/cli check <url> [--method GET|POST] [--json] [--timeout <seconds>]
+npx @op8x/cli check <url> [--method GET|POST] [--json] [--timeout <seconds>] [--payer <address>]
 ```
 
-Focus is **dialect diagnosis**: where the challenge lives (header, body, both), whether the official client can read it, whether header and body agree, whether v1/v2 conventions are mixed, and whether GET and POST behave alike. Directory and listing concerns (Bazaar, `/.well-known/x402`, OpenAPI) are out of scope; the report points to `npx x402-listing-check <url>` for those. CORS for browser clients was out of scope in 0.0.1 and is now covered by `2026-10-25-cli-cors-payment-flow-design.md`.
+Focus is **dialect diagnosis**: where the challenge lives (header, body, both), whether the official client can read it, whether header and body agree, whether v1/v2 conventions are mixed, and whether GET and POST behave alike. Directory and listing concerns (Bazaar, `/.well-known/x402`, OpenAPI) are out of scope apart from two listing rules that read the unpaid response (`extensions-placement`, `resource-url-mismatch`); for everything else the report's `notChecked` list points to CDP's validation endpoint and `npx x402-listing-check <url>`. CORS for browser clients was out of scope in 0.0.1 and is now covered by `2026-10-25-cli-cors-payment-flow-design.md`.
 
 ## Non-goals
 
@@ -77,7 +78,7 @@ interface Finding {
 }
 ```
 
-`runRules(results, preflight?, url?, x402Core?)` takes the extracted results, the optional preflight result, the checked URL (used in the `mcp-endpoint` fix command) and the installed `@x402/core` version (used in the `official-client` detail, default `"unknown"`).
+`runRules(results, preflight?, url?, x402Core?, opts?)` takes the extracted results, the optional preflight result, the checked URL (used in the `mcp-endpoint` fix command), the installed `@x402/core` version (used in the `official-client` detail, default `"unknown"`) and `opts: { payer?: string }` (the value of `--payer`, used by `self-payment`).
 
 ## Rules
 
@@ -86,9 +87,9 @@ Each rule has a stable id. Levels: `error` breaks real clients, `warn` is risky 
 | id | Level | Condition | Fix hint |
 | --- | --- | --- | --- |
 | `request-failed` | error | The request failed at network level, or the timeout fired before the body was read | Check that the URL is reachable from the public internet |
-| `no-402` | error | Neither method returns 402 (or 412 with `permit2_allowance_required`) and `mcp-endpoint` does not apply | Hint by the status of the first method probed (GET when both are probed): 200 = not paywalled, 401/403 = auth or WAF, 404 = wrong path, 5xx = server failed; otherwise "return 402 with a challenge" |
+| `no-402` | error | Neither method returns 402 (or 412 with `permit2_allowance_required`) and `mcp-endpoint` does not apply | Hint by the status of the first method probed (GET when both are probed): 200 = not paywalled, 401/403 = auth or WAF, 404 = wrong path, 5xx = server failed; otherwise "return 402 with a challenge". When `post-needs-body` fires, the fix adds one sentence that points to it |
 | `redirect` | warn | 3xx response | Serve the 402 at the final URL; many clients do not follow redirects before paying |
-| `verb-mismatch` | warn | One method returns 402, the other does not (e.g. GET 405) | Clients probe with GET; issue the challenge on GET too, or document the method |
+| `verb-mismatch` | warn | One method returns 402, the other does not (e.g. GET 405) | Clients probe with GET; issue the challenge on GET too, or document the method. When `post-needs-body` fires, the fix adds one sentence that points to it |
 | `header-empty` | warn | 402 with an empty `PAYMENT-REQUIRED` header | Remove the empty header, or put the base64 challenge in it |
 | `header-not-base64` | error (warn when the official client of the installed `@x402/core` reads the header) | `PAYMENT-REQUIRED` present but not standard base64 (base64url, whitespace, padding) | Encode with standard base64 (`+` `/` `=`), no line breaks |
 | `header-not-json` | error (warn when the official client of the installed `@x402/core` reads the header) | Header decodes but is not JSON | Header must be base64 of the JSON challenge |
@@ -124,13 +125,13 @@ Legacy-to-CAIP-2 hint map (EVM only): `base` â†’ `eip155:8453`, `base-sepolia` â
 
 ## Command line
 
-- `op8x check <url>` with `--method <GET|POST>` (case-insensitive), `--json`, `--timeout <seconds>` (positive number).
+- `op8x check <url>` with `--method <GET|POST>` (case-insensitive), `--json`, `--timeout <seconds>` (positive number), `--payer <address>` (one `0x` plus 40 hex digits or 32 to 44 base58 characters; compared with every `payTo`, never printed).
 - `-h`/`--help` prints usage, `-v`/`--version` prints the version; both exit 0.
-- Unknown options, a missing or extra positional argument, a URL that does not parse or is not http/https, and invalid `--method` or `--timeout` values are usage errors (exit 2).
+- Unknown options, a missing or extra positional argument, a URL that does not parse or is not http/https, and invalid `--method`, `--timeout` or `--payer` values are usage errors (exit 2).
 
 ## Output
 
-Human report (default): URL, one status line per request (browser-like repeats marked `(with Origin)`), findings grouped by level with title, detail and fix, a `curl -i` command per request to reproduce, a one-line summary, and a pointer to `npx x402-listing-check <url>` for listing checks (for `mcp-endpoint`, a pointer to the MCP tool check instead). Colours only when stdout is a TTY and `NO_COLOR` is unset.
+Human report (default): URL, one status line per request (browser-like repeats marked `(with Origin)`), findings grouped by level with title, detail and fix, a `curl -i` command per request to reproduce, a one-line summary, and the block "Not checked by op8x check" (`notChecked`: Bazaar indexing with CDP's validation command per method and `npx x402-listing-check <url>`, delivery after a real payment, facilitator limits; for `mcp-endpoint` the first entry is the MCP tool check and the Bazaar entry is left out). Colours only when stdout is a TTY and `NO_COLOR` is unset.
 
 JSON (`--json`):
 
@@ -143,7 +144,8 @@ JSON (`--json`):
   "checkedAt": "2026-10-24T18:00:00.000Z",
   "requests": [{ "method": "GET", "status": 402, "ms": 120 }],
   "findings": [{ "id": "v2-body-only", "level": "error", "method": "GET", "title": "...", "detail": "...", "fix": "..." }],
-  "summary": { "errors": 1, "warnings": 0 }
+  "summary": { "errors": 1, "warnings": 0 },
+  "notChecked": [{ "topic": "Bazaar indexing and metadata", "where": "curl -X POST ... (one line per command, joined with a line break)" }]
 }
 ```
 
@@ -153,8 +155,8 @@ Exit codes: `0` no errors, `1` at least one `error` finding, `2` usage error or 
 
 ## Testing
 
-- Unit tests (Node's built-in `node:test`, run on TypeScript sources via Node's type stripping; no test framework dependency) for `extract`, `probe`, `report` and every rule. `test/fixtures.ts` holds a valid v2 and a valid v1 challenge and base64 builders; the variants (v2 body-only, drift, base64url header, string version, legacy network in v2, mixed dialect and others) are built from them inside the rule tests.
-- Integration test: a local `node:http` server (`test/server.ts`) with routes for valid v2 and v1, v2 body-only, drift, empty headers, a 405 on GET, no paywall, a redirect, CORS, MCP, `/payto-rotates` and body limits; run the CLI pipeline against it and assert findings and exit codes. The other rule variants are covered by the rule tests only.
+- Unit tests (Node's built-in `node:test`, run on TypeScript sources via Node's type stripping; no test framework dependency) for `extract`, `probe`, `report` and every rule. `test/fixtures.ts` holds a valid v2 and a valid v1 challenge (Base Sepolia) and base64 builders, plus `v2main` and `v1main` (the same challenges on Base mainnet, used by the test server); the variants (v2 body-only, drift, base64url header, string version, legacy network in v2, mixed dialect and others) are built from them inside the rule tests.
+- Integration test: a local `node:http` server (`test/server.ts`; every route answers with `v2main`/`v1main` and sets the v2 `resource.url` per request from the Host header, so the routes raise neither `testnet-only` nor `resource-url-mismatch`) with routes for valid v2 and v1, v2 body-only, drift, empty headers, a 405 on GET, no paywall, a redirect, CORS, MCP, `/payto-rotates` and body limits; run the CLI pipeline against it and assert findings and exit codes. The other rule variants are covered by the rule tests only.
 - Smoke tests: the fixtures pass the official schemas, and `VERSION` matches `package.json`.
 - No tests against third-party live endpoints in CI.
 

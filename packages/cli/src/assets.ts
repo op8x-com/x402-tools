@@ -180,10 +180,26 @@ export function caip2(network: string, version: 1 | 2): string {
   return version === 1 ? (legacyToCaip2(network) ?? network) : network;
 }
 
-// EVM addresses compare case-insensitively, Solana mints exactly, as the SDKs do.
+// @x402/evm and @x402/svm have no flag for test networks: every CAIP-2 value whose v1 name marks it as one.
+const TEST_NAME = /sepolia|testnet|devnet|fuji|amoy/;
+
+/** Test networks by CAIP-2, derived from the v1 names (test/assets.test.ts pins the list). */
+export const TEST_NETWORKS: ReadonlySet<string> = new Set(
+  Object.entries(V1_NETWORKS)
+    .filter(([name]) => TEST_NAME.test(name))
+    .map(([, id]) => id),
+);
+
+/** Whether a network, as a client of the given version resolves it, is a known test network. */
+export const isTestNetwork = (network: string, version: 1 | 2): boolean => TEST_NETWORKS.has(caip2(network, version));
+
+/** EVM addresses compare case-insensitively, everything else (Solana) exactly, as the SDKs do. */
+export function sameAddress(a: string, b: string, network: string): boolean {
+  return network.startsWith("eip155:") ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
 function lookup(table: Record<string, AssetInfo[]>, network: string, asset: string): AssetInfo | undefined {
-  const evm = network.startsWith("eip155:");
-  return own(table, network)?.find((row) => (evm ? row.asset.toLowerCase() === asset.toLowerCase() : row.asset === asset));
+  return own(table, network)?.find((row) => sameAddress(row.asset, asset, network));
 }
 
 /** The default asset for a CAIP-2 network, as findDefaultAsset of @x402/evm and @x402/svm returns it. */
