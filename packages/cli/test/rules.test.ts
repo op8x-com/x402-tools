@@ -521,7 +521,7 @@ const find = (fs: Finding[], id: string) => fs.find((f) => f.id === id);
 
 test("empty header with v1 body: header-empty warn, official pass, no errors", () => {
   const fs = runRules([extract(pr("GET", 402, { ...NS, "payment-required": "" }, v1))], undefined, "<url>", "9.9.9");
-  assert.deepEqual(nonCors(fs), ["header-empty", "official-client", "v1-legacy"]);
+  assert.deepEqual(nonCors(fs), ["header-empty", "official-client", "testnet-only", "v1-legacy"]);
   assert.equal(find(fs, "header-empty")?.level, "warn");
   assert.equal(find(fs, "official-client")?.level, "pass");
   assert.equal(find(fs, "official-client")?.detail, "@x402/core 9.9.9 reads the challenge where the official client looks for it.");
@@ -642,4 +642,80 @@ test("spend findings survive when paytoRule throws on a hostile repeat challenge
   const fs = runRules([{ ...e, originStatus: 402, originChallenge: hostile, originVersion: 2 as const }]);
   assert.ok(ids(fs).includes("default-cap"));
   assert.equal(ids(fs).includes("payto-rotates"), false);
+});
+
+// Challenge hints: runRules wiring
+const SEE_BODY = "See post-needs-body: the POST answer looks like body validation before payment.";
+const post422 = () => extract(pr("POST", 422, {}, { error: "query is required" }));
+
+test("post-needs-body: GET 405 + POST 422 adds the hint and points the no-402 fix to it", () => {
+  const fs = runRules([extract(pr("GET", 405)), post422()]);
+  assert.equal(find(fs, "post-needs-body")?.level, "info");
+  assert.equal(find(fs, "post-needs-body")?.method, "POST");
+  assert.equal(find(fs, "no-402")?.fix, `Return 402 with a challenge for unpaid requests. ${SEE_BODY}`);
+});
+
+test("post-needs-body: GET 402 + POST 422 points the verb-mismatch fix to it", () => {
+  const fs = runRules([v2ok("GET"), post422()]);
+  assert.ok(ids(fs).includes("post-needs-body"));
+  assert.equal(
+    find(fs, "verb-mismatch")?.fix,
+    `Clients often probe with GET first. Issue the challenge on POST too, or document the supported method. ${SEE_BODY}`,
+  );
+});
+
+test("post-needs-body: no pointer in no-402 or verb-mismatch when it does not fire", () => {
+  const same = runRules([extract(pr("GET", 422, {}, { error: "x" })), post422()]);
+  assert.equal(ids(same).includes("post-needs-body"), false);
+  assert.equal(find(same, "no-402")?.fix?.includes(SEE_BODY), false);
+  const mismatch = runRules([v2ok("GET"), extract(pr("POST", 405))]);
+  assert.equal(ids(mismatch).includes("post-needs-body"), false);
+  assert.equal(find(mismatch, "verb-mismatch")?.fix?.includes(SEE_BODY), false);
+});
+
+test("post-needs-body: GET 405 + POST 400 JSON-RPC error stays no-402 without the hint", () => {
+  const fs = runRules([get405(), extract(pr("POST", 400, {}, rpcError()))]);
+  assert.ok(ids(fs).includes("no-402"));
+  assert.equal(ids(fs).includes("post-needs-body"), false);
+  assert.equal(find(fs, "no-402")?.fix?.includes(SEE_BODY), false);
+});
+
+test("post-needs-body: GET 406 JSON-RPC + POST 422 is an MCP endpoint, not post-needs-body", () => {
+  const fs = runRules([extract(pr("GET", 406, {}, rpcError())), post422()]);
+  assert.equal(fs[0].id, "mcp-endpoint");
+  assert.equal(ids(fs).includes("post-needs-body"), false);
+});
+
+test("hint findings on GET and POST merge into one with method both", () => {
+  const fs = runRules([v2ok("GET"), v2ok("POST")]).filter((f) => f.id === "testnet-only");
+  assert.equal(fs.length, 1);
+  assert.equal(fs[0].method, "both");
+});
+
+test("runRules passes the payer to the hints", () => {
+  const payTo = v2.accepts[0].payTo;
+  assert.equal(find(runRules([v2ok("GET")], undefined, "<url>", "unknown", { payer: payTo }), "self-payment")?.level, "warn");
+  assert.equal(find(runRules([v2ok("GET")]), "self-payment"), undefined);
+});
+
+test("runRules passes the checked URL to the hints", () => {
+  const fs = runRules([v2ok("GET")], undefined, "https://api.example.com/other");
+  assert.match(find(fs, "resource-url-mismatch")?.detail ?? "", /Differs in: path\./);
+});
+
+test("other findings survive when hintRules throws on a hostile challenge", () => {
+  const c = { ...v2, accepts: [{ ...v2.accepts[0], extensions: {} }] };
+  const e = extract(pr("GET", 402, { ...NS, "payment-required": b64(c) }, {}));
+  // Only the top-level extensions check asks for this property descriptor.
+  const hostile = new Proxy(e.challenge as object, {
+    getOwnPropertyDescriptor(target, key) {
+      if (key === "extensions") throw new Error("boom");
+      return Reflect.getOwnPropertyDescriptor(target, key);
+    },
+  });
+  const fs = runRules([{ ...e, challenge: hostile }]);
+  assert.equal(find(fs, "official-client")?.level, "pass");
+  assert.ok(ids(fs).includes("v2-header-only"));
+  assert.equal(ids(fs).includes("testnet-only"), false);
+  assert.equal(ids(fs).includes("extensions-placement"), false);
 });
