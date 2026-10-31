@@ -644,6 +644,57 @@ test("spend findings survive when paytoRule throws on a hostile repeat challenge
   assert.equal(ids(fs).includes("payto-rotates"), false);
 });
 
+// amount-changes: runRules wiring
+const ampEx = (method: "GET" | "POST", amount: string, originAmount: string) => ({
+  ...extract(pr(method, 402, { ...NS, "payment-required": b64({ ...v2, accepts: [{ ...v2.accepts[0], amount }] }) }, {})),
+  originStatus: 402,
+  originChallenge: { ...v2, accepts: [{ ...v2.accepts[0], amount: originAmount }] },
+  originVersion: 2 as const,
+});
+
+test("runRules returns amount-changes for a changing pair", () => {
+  const f = runRules([ampEx("GET", "1000", "1200")]).filter((x) => x.id === "amount-changes");
+  assert.equal(f.length, 1);
+  assert.equal(f[0].level, "warn");
+  assert.equal(f[0].method, "GET");
+  assert.equal(ids(runRules([ampEx("GET", "1000", "1000")])).includes("amount-changes"), false);
+});
+
+test("amount-changes on GET and POST gives two findings, not both", () => {
+  const f = runRules([ampEx("GET", "1000", "1200"), ampEx("POST", "1000", "1200")]).filter((x) => x.id === "amount-changes");
+  assert.deepEqual(f.map((x) => x.method).sort(), ["GET", "POST"]);
+});
+
+test("payto-rotates and spend findings survive when amountRule throws on a hostile repeat entry", () => {
+  const big = { ...v2, accepts: [{ ...v2.accepts[0], network: "eip155:8453", asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", amount: "2000000" }] };
+  const e = extract(pr("GET", 402, { ...NS, "payment-required": b64(big) }, {}));
+  const hostile = { ...big.accepts[0], payTo: PB };
+  Object.defineProperty(hostile, "amount", {
+    get() {
+      throw new Error("boom");
+    },
+    enumerable: true,
+  });
+  const fs = runRules([{ ...e, originStatus: 402, originChallenge: { ...big, accepts: [hostile] }, originVersion: 2 as const }]);
+  assert.ok(ids(fs).includes("default-cap"));
+  assert.ok(ids(fs).includes("payto-rotates"));
+  assert.equal(ids(fs).includes("amount-changes"), false);
+});
+
+test("amount-changes survives when paytoRule throws on a hostile repeat entry", () => {
+  const hostile = { ...v2.accepts[0], amount: "1200" };
+  Object.defineProperty(hostile, "payTo", {
+    get() {
+      throw new Error("boom");
+    },
+    enumerable: true,
+  });
+  const e = ampEx("GET", "1000", "1200");
+  const fs = runRules([{ ...e, originChallenge: { ...v2, accepts: [hostile] } }]);
+  assert.ok(ids(fs).includes("amount-changes"));
+  assert.equal(ids(fs).includes("payto-rotates"), false);
+});
+
 // Challenge hints: runRules wiring
 const SEE_BODY = "See post-needs-body: the POST answer looks like body validation before payment.";
 const post422 = () => extract(pr("POST", 422, {}, { error: "query is required" }));

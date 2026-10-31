@@ -176,6 +176,16 @@ test("endpoint whose payTo changes on every request gets one payto-rotates findi
   assert.deepEqual(rotates.map((f: { method: string }) => f.method).sort(), ["GET", "POST"]);
 });
 
+test("endpoint whose price changes on every request gets one amount-changes finding per method", async () => {
+  const io = capture();
+  assert.equal(await run(["check", `${server.url}/amount-changes`, "--json"], io), 0);
+  const report = JSON.parse(io.stdout());
+  const changes = report.findings.filter((f: JsonFinding) => f.id === "amount-changes");
+  assert.deepEqual(changes.map((f: { method: string }) => f.method).sort(), ["GET", "POST"]);
+  const warns = report.findings.filter((f: JsonFinding) => f.level === "warn").map((f: JsonFinding) => f.id);
+  assert.deepEqual(warns, ["amount-changes", "amount-changes"]);
+});
+
 test("server that refuses browser origins is still diagnosed from the plain probes", async () => {
   const io = capture();
   assert.equal(await run(["check", `${server.url}/refuses-browsers`, "--json"], io), 0);
