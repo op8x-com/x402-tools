@@ -41,7 +41,10 @@
     "@x402/core": "~2.29.0"
   },
   "devDependencies": {
+    "@solana/kit": "~8.6.0",
     "@types/node": "^24",
+    "@x402/evm": "~2.29.0",
+    "@x402/svm": "~2.29.0",
     "typescript": "5.9.3"
   }
 }

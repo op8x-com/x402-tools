@@ -20,6 +20,8 @@ Or install it once and use the short command: `npm install -g @op8x/cli`, then `
 - `extra.paymentFlow` that clients do not recognize (not `authorization`, `upfront` or `escrow`), or missing where the scheme default is not `authorization` (`auth-capture`, `upto` on Solana, `exact` on Lightning)
 - CORS for browser clients (never errors): `PAYMENT-REQUIRED`/`PAYMENT-RESPONSE` not in `Access-Control-Expose-Headers`, `PAYMENT-SIGNATURE`/`Content-Type` not in `Access-Control-Allow-Headers`, missing v1 spellings (`X-PAYMENT`, `X-PAYMENT-RESPONSE`) on dual-version endpoints, a preflight that requires payment. A `*` does not count on credentialed requests. An endpoint without `Access-Control-Allow-Origin`, or one that refuses browser origins, only gets a hint: servers and agents need no CORS.
 - v2 challenge only in the header (a hint, never an error): v1 clients such as `x402-fetch` and `x402-axios` read the challenge from the body only and fail before they see the terms
+- offers that default clients refuse to pay (warnings, never errors): since `@x402/core` 2.23.0, clients without `spendControls` pay only in USD stablecoins such as USDC on the networks their SDK lists (`default-asset`) and at most 1 USD per payment (`default-cap`). The check asks the installed `@x402/core` client itself.
+- the same amount in USDC and EURC (a hint, `eurc-same-amount`): EURC tracks the euro and USDC the US dollar, so the same number means a different price
 
 The plain requests carry no `Origin`, so a server that refuses browsers is still checked correctly; the repeat and the preflight send `Origin: https://op8x.com`. It never pays, needs no wallet and sends no telemetry. It only talks to the URL you give it.
 
@@ -64,6 +66,16 @@ Summary: 2 errors, 0 warnings
 Listing and Bazaar checks: npx x402-listing-check https://api.example.com/weather
 op8x · https://op8x.com
 ```
+
+## Spend controls and EURC
+
+Default x402 clients refuse EURC and every price above 1 USD; the seller never sees a failed payment. `op8x check` reports `default-asset` or `default-cap` when no entry of the challenge passes these defaults:
+
+```sh
+npx @op8x/cli check 'https://api.example.com/weather' --json
+```
+
+Buyers lift the limits in their client: `spendControls: false`, a higher `maxAmountPerPayment`, or `allowedAssets` for other tokens. EURC: add it to `spendControls.allowedAssets` with its own `maxAmountPerPayment` (network and EURC token address; the cap in atomic units, for example `"1000000"` for 1 EURC). Clients that opted into EURC pay the first entry they may pay among entries with the same payment flow, so list EURC first if EURC buyers should pay in EURC.
 
 ## MCP endpoints
 

@@ -1,6 +1,7 @@
 import { PaymentRequiredV1Schema, PaymentRequiredV2Schema } from "@x402/core/schemas";
 import { headerDecoded } from "./extract.ts";
 import { quote } from "./report.ts";
+import { spendRules } from "./spend.ts";
 import type { Extracted, Finding, Level, Method, PreflightResult } from "./types.ts";
 
 // Hint map for v2 endpoints still using v1 network names (EVM networks only).
@@ -255,6 +256,17 @@ function methodRules(e: Extracted, x402Core: string): Finding[] {
           "v1 works with v1 clients. v2 is the current standard.",
           "Consider serving v2 (PAYMENT-REQUIRED header) for current clients.",
         );
+      }
+      // @x402/fetch pays only on 402, so a 412 permit2 answer is out of scope. The challenge is server
+      // input: if a spend rule throws on it anyway, these hints are skipped, never the report.
+      if (e.status === 402) {
+        let spend: ReturnType<typeof spendRules> = [];
+        try {
+          spend = spendRules(c, v);
+        } catch {
+          spend = [];
+        }
+        for (const f of spend) add(f.id, f.level, f.title, f.detail, f.fix);
       }
     }
   }

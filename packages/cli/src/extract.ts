@@ -98,11 +98,15 @@ export function withBrowserView(e: Extracted, browser: ProbeResult): Extracted {
 
 const UNSAFE = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/gu;
 
-/** Report-safe text of a thrown value: no control, format or line-separator characters, at most 200 characters. */
+/** Report-safe text: no control, format or line-separator characters, at most `max` code points. */
+export function cleanText(text: string, max: number): string {
+  return Array.from(text.replace(UNSAFE, "").trim()).slice(0, max).join("");
+}
+
+/** Report-safe text of a thrown value, at most 200 characters. */
 export function cleanReason(thrown: unknown): string {
   const message = thrown instanceof Error ? thrown.message : "";
-  const clean = Array.from(message.replace(UNSAFE, "").trim().replace(/\.$/, "")).slice(0, 200).join("");
-  return clean || "unknown error";
+  return cleanText(message.replace(UNSAFE, "").trim().replace(/\.$/, ""), 200) || "unknown error";
 }
 
 // Created on first use, inside the try below, so a changed constructor cannot crash the CLI at load time.
