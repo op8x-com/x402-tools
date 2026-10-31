@@ -40,7 +40,7 @@ The plain requests carry no `Origin`, so a server that refuses browsers is still
 --payer <address>      your own paying wallet; warns if it is a payTo
 ```
 
-`--payer` takes one wallet address (`0x` plus 40 hex digits, or a Solana address) and compares it with every `payTo` as text. It never signs and never sends the address anywhere; the address is printed only when it matches. Anything that is not an address, such as a private key, exits with code 2 and is not repeated.
+`--payer` takes one wallet address (`0x` plus 40 hex digits, or a Solana address) and compares it with every `payTo` as text. It never signs and never sends the address anywhere; the address is never printed. Anything that is not an address, such as a private key, exits with code 2 and is not repeated.
 
 Exit codes: `0` no errors, `1` errors found, `2` usage error or the URL was unreachable.
 
@@ -109,7 +109,7 @@ Not detected: MCP servers that answer before the transport check (for example a 
 
 ## What the hints mean
 
-- `testnet-only` (warning): every payment option is on a test network. The report names up to three, then "and N more", for example `eip155:84532, eip155:11155111 and 2 more`. Ignore it if the endpoint is meant for testing. Otherwise add a mainnet option next to the test one, for example `eip155:8453` (v1: `base`) with USDC. Only networks with a v1 name are recognised; others stay silent.
+- `testnet-only` (warning): every payment option is on a test network. The report names up to three, then "and N more", for example `eip155:84532, eip155:11155111, eip155:43113 and 2 more`. Ignore it if the endpoint is meant for testing. Otherwise add a mainnet option next to the test one, for example `eip155:8453` (v1: `base`) with USDC. Only networks with a v1 name are recognised; others stay silent.
 - `extensions-placement` (warning): in x402 v2, `extensions` such as `bazaar` belong at the top level of the challenge, next to `accepts`. The `@x402/core` schema drops them inside an offer, so the Bazaar does not see them. Move them to the top level.
 - `resource-url-mismatch` (hint): `resource.url` differs from the URL checked in scheme, host or path. A typical cause is a proxy that ends TLS, so the server sees `http://`. Set the route's `resource` to the public URL, or let the server trust the forwarded scheme and host. Expected when you check a staging copy, and for a route that serves many paths on purpose.
 - `self-payment` (warning): the address given with `--payer` is a `payTo` of the challenge. Test with a second wallet.

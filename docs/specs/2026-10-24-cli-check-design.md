@@ -125,7 +125,7 @@ Legacy-to-CAIP-2 hint map (EVM only): `base` â†’ `eip155:8453`, `base-sepolia` â
 
 ## Command line
 
-- `op8x check <url>` with `--method <GET|POST>` (case-insensitive), `--json`, `--timeout <seconds>` (positive number), `--payer <address>` (one `0x` plus 40 hex digits or 32 to 44 base58 characters; compared with every `payTo`, never printed unless it matches).
+- `op8x check <url>` with `--method <GET|POST>` (case-insensitive), `--json`, `--timeout <seconds>` (positive number), `--payer <address>` (one `0x` plus 40 hex digits or 32 to 44 base58 characters; compared with every `payTo`, never printed).
 - `-h`/`--help` prints usage, `-v`/`--version` prints the version; both exit 0.
 - Unknown options, a missing or extra positional argument, a URL that does not parse or is not http/https, and invalid `--method`, `--timeout` or `--payer` values are usage errors (exit 2).
 
