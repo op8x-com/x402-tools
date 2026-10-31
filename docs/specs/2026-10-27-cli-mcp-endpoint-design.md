@@ -63,7 +63,7 @@ In the MCP case the finding `no-402` is replaced, in the same position (first), 
 | `mcp-endpoint` | info | `both`, or the one method that showed the signal | MCP endpoint: x402 over MCP does not use HTTP 402 |
 
 - `detail`: `GET → 405, POST → 406. The POST answer is a JSON-RPC error from an MCP server. x402 over MCP returns the payment requirement inside the tools/call result with HTTP 200, so this HTTP check does not apply. If this URL is meant to be paid per HTTP request, it returned no 402.` The status list is built as in `no-402`; the sentence names the method(s) with the signal.
-- `fix`: `Check a paid tool over MCP: npx x402-listing-check@latest '<url>' --mcp-tool YOUR_TOOL (replace YOUR_TOOL with the name of a paid tool).`
+- `fix`: `Check a paid tool over MCP, with the name of a paid tool for YOUR_TOOL: npx x402-listing-check@latest '<url>' --mcp-tool YOUR_TOOL`
 - The footer line `Listing and Bazaar checks: …` is replaced by the block "Not checked by op8x check" (`notChecked` in the report). In the MCP case its first entry is `MCP payments: npx x402-listing-check@latest '<url>' --mcp-tool YOUR_TOOL` and the Bazaar entry is left out.
 
 The URL is single-quoted as in the `Reproduce` lines. `YOUR_TOOL` is used instead of `<name>`, because `<` is a redirect in every common shell. `@latest` makes npx fetch the current version instead of reusing a cached one that may predate `--mcp-tool` (added in 0.3.0).
@@ -87,6 +87,6 @@ These stay as today (`no-402` or `request-failed`) and are out of scope:
   - A 402 on either method keeps today's findings.
   - One probe failed + POST 406 JSON-RPC → `request-failed` and `mcp-endpoint`, exit code 1.
   - The JSON-RPC message never appears in any finding field.
-  - A URL containing `'` is quoted as in `Reproduce`.
+  - URLs containing `'` are refused at input (see `../designs/2026-10-31-cli-copyable-commands-design.md`).
 - Integration test in `cli.test.ts` against a new fixture route `/mcp` (GET 405, POST 406 JSON-RPC error): exit code 0, title, command and new footer in text, `mcp-endpoint` in JSON, only the GET and POST requests sent.
 - Regression: before the change, text and `--json` output and exit code are recorded for every other fixture route; after the change they must match exactly. Normalised before comparing: the fixture server port, `checkedAt`, and request timings (`<n> ms` in text, `"ms": <n>` in JSON).

@@ -43,14 +43,18 @@ The plain requests carry no `Origin`, so a server that refuses browsers is still
 
 `--payer` takes one wallet address (`0x` plus 40 hex digits, or a Solana address) and compares it with every `payTo` as text. It never signs and never sends the address anywhere; the address is never printed. Anything that is not an address, such as a private key, exits with code 2 and is not repeated.
 
-Exit codes: `0` no errors, `1` errors found, `2` usage error or the URL was unreachable.
+Exit codes: `0` no errors, `1` errors found, `2` usage error, a URL with a user name, a password, `'` or `"`, or the URL was unreachable.
+
+## Copyable commands
+
+The lines under "Reproduce:" and "Not checked by op8x check" are for bash, zsh and PowerShell. Other shells such as fish or tcsh are not tested. On Windows, "Reproduce:" uses `curl.exe`, because `curl` in Windows PowerShell 5.1 is a different command. cmd.exe is not supported, and neither are `.cmd` files such as `npx.cmd` or `op8x.cmd`, because they run through cmd.exe: there `&` in a URL starts a second command. On Windows, run `npx` and `op8x` from PowerShell with scripts allowed (`npx.ps1`) or from Git Bash. The CDP validation line needs bash, zsh or PowerShell 7.3 or later; Windows PowerShell 5.1 removes the double quotes from its JSON body. `op8x check` refuses URLs with a user name, a password, `'` or `"` (exit code 2) and never prints them.
 
 The JSON report names the `@x402/core` version that read the challenge (`x402Core`).
 
 ## Example
 
 ```
-op8x check https://api.example.com/weather
+op8x check 'https://api.example.com/weather'
 
   GET  402  38 ms
   POST 402  5 ms
@@ -67,10 +71,10 @@ i info  [both] 402 without Access-Control-Allow-Origin
         Fix: If browser apps should pay this endpoint, send Access-Control-Allow-Origin on the 402 and on the preflight.
 
 Reproduce:
-  curl -i -X GET 'https://api.example.com/weather'
-  curl -i -X POST -H 'Content-Type: application/json' -d '{}' 'https://api.example.com/weather'
-  curl -i -X GET -H 'Origin: https://op8x.com' 'https://api.example.com/weather'
-  curl -i -X POST -H 'Origin: https://op8x.com' -H 'Content-Type: application/json' -d '{}' 'https://api.example.com/weather'
+  curl -g -i -X GET 'https://api.example.com/weather'
+  curl -g -i -X POST -H 'Content-Type: application/json' -d '{}' 'https://api.example.com/weather'
+  curl -g -i -X GET -H 'Origin: https://op8x.com' 'https://api.example.com/weather'
+  curl -g -i -X POST -H 'Origin: https://op8x.com' -H 'Content-Type: application/json' -d '{}' 'https://api.example.com/weather'
 
 Summary: 2 errors, 0 warnings
 Not checked by op8x check:

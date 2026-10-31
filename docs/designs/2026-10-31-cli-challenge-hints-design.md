@@ -170,7 +170,7 @@ Entries:
 | Facilitator limits such as minimum prices | By kind: `your facilitator's documentation.` |
 | MCP payments (only when `mcp-endpoint` was found, listed first) | `npx x402-listing-check@latest <url> --mcp-tool YOUR_TOOL` |
 
-URLs in commands are built with `quote()` from `src/report.ts`. The commands leave out the user name and password of the checked URL (the rest of the URL stays), and the Bazaar entry is left out when every probe failed at network level with no response at all. `buildReport` takes no new parameter: it reads the methods from `probes` (entries without `origin` and with `status === 402`) and the MCP case from `findings`. In JSON, `where` holds the lines joined with `\n` and is omitted when empty. Rendered text, normal case:
+URLs in commands are built with `quote()` from `src/report.ts`. The CLI refuses URLs with a user name or password before any request (see `./2026-10-31-cli-copyable-commands-design.md`). The Bazaar entry is left out when every probe failed at network level with no response at all. `buildReport` takes no new parameter: it reads the methods from `probes` (entries without `origin` and with `status === 402`) and the MCP case from `findings`. In JSON, `where` holds the lines joined with `\n` and is omitted when empty. Rendered text, normal case:
 
 ```text
 Not checked by op8x check:

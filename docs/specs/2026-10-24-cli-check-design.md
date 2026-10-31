@@ -10,6 +10,7 @@ Status: approved design, 2026-10-24; first release 0.0.1. Updated 2026-10-29 to 
 - `../designs/2026-10-31-cli-payto-rotation-design.md`: `payto-rotates` (`payTo` that differs between the plain request and the browser-like repeat)
 - `../designs/2026-10-31-cli-amount-change-design.md`: `amount-changes` (`amount` that differs between the plain request and the browser-like repeat)
 - `../designs/2026-10-31-cli-challenge-hints-design.md`: `testnet-only`, `extensions-placement`, `resource-url-mismatch`, `self-payment`, `post-needs-body`, the option `--payer` and the `notChecked` list
+- `../designs/2026-10-31-cli-copyable-commands-design.md`: URLs with a user name, a password, `'` or `"` refused; quoted header line; `curl -g` and `curl.exe` in "Reproduce:"
 
 ## Goal
 
@@ -128,11 +129,11 @@ Legacy-to-CAIP-2 hint map (EVM only): `base` â†’ `eip155:8453`, `base-sepolia` â
 
 - `op8x check <url>` with `--method <GET|POST>` (case-insensitive), `--json`, `--timeout <seconds>` (positive number), `--payer <address>` (one `0x` plus 40 hex digits or 32 to 44 base58 characters; compared with every `payTo`, never printed).
 - `-h`/`--help` prints usage, `-v`/`--version` prints the version; both exit 0.
-- Unknown options, a missing or extra positional argument, a URL that does not parse or is not http/https, and invalid `--method`, `--timeout` or `--payer` values are usage errors (exit 2).
+- Unknown options, a missing or extra positional argument, a URL that does not parse or is not http/https, a URL with a user name, a password, `'` or `"`, and invalid `--method`, `--timeout` or `--payer` values are usage errors (exit 2).
 
 ## Output
 
-Human report (default): URL, one status line per request (browser-like repeats marked `(with Origin)`), findings grouped by level with title, detail and fix, a `curl -i` command per request to reproduce, a one-line summary, and the block "Not checked by op8x check" (`notChecked`: Bazaar indexing with CDP's validation command per method and `npx x402-listing-check <url>`, delivery after a real payment, facilitator limits; for `mcp-endpoint` the first entry is the MCP tool check and the Bazaar entry is left out). Colours only when stdout is a TTY and `NO_COLOR` is unset.
+Human report (default): the command `op8x check '<url>'`, one status line per request (browser-like repeats marked `(with Origin)`), findings grouped by level with title, detail and fix, a `curl -g -i` command per request to reproduce (`curl.exe -g -i` on Windows), a one-line summary, and the block "Not checked by op8x check" (`notChecked`: Bazaar indexing with CDP's validation command per method and `npx x402-listing-check <url>`, delivery after a real payment, facilitator limits; for `mcp-endpoint` the first entry is the MCP tool check and the Bazaar entry is left out). Colours only when stdout is a TTY and `NO_COLOR` is unset.
 
 JSON (`--json`):
 
@@ -152,7 +153,7 @@ JSON (`--json`):
 
 `requests[]` entries add `error` for failed requests; the browser-like repeats and the preflight add the fields described in the CORS document.
 
-Exit codes: `0` no errors, `1` at least one `error` finding, `2` usage error or every plain probe failed at network level.
+Exit codes: `0` no errors, `1` at least one `error` finding, `2` usage error, a refused URL, or every plain probe failed at network level.
 
 ## Testing
 

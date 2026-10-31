@@ -67,7 +67,7 @@ Details:
 - `PreflightResult` (`types.ts`): `method: "OPTIONS"`, `url`, `requestMethod`, `requestHeaders`, `status?`, lower-cased `headers`, `ms`, `error?`.
 - `ProbeResult.origin` is set on the browser-like repeat.
 - JSON report `requests[]` lists plain probes, then browser-like repeats, then the preflight. Entries add `error` when the request failed, `origin` for repeats and the preflight, and `requestHeaders` (`access-control-request-method`, `access-control-request-headers`) for the preflight.
-- Text report: repeats are marked `(with Origin)`; the reproduce block has a `curl -i` line per request, with `-H 'Origin: …'` for repeats and an `OPTIONS` line with `Origin` and both `Access-Control-Request-*` headers for the preflight.
+- Text report: repeats are marked `(with Origin)`; the reproduce block has a `curl -g -i` line per request (`curl.exe -g -i` on Windows; see `../designs/2026-10-31-cli-copyable-commands-design.md`), with `-H 'Origin: …'` for repeats and an `OPTIONS` line with `Origin` and both `Access-Control-Request-*` headers for the preflight.
 - Exit code 2 ("every request failed") is computed over the plain probes only; a failed repeat or preflight does not change it.
 
 ## Alternatives considered
