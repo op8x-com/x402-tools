@@ -346,7 +346,7 @@ test("MCP: GET 405 + POST 406 JSON-RPC error is an info finding, not no-402", ()
   );
   assert.equal(
     fs[0].fix,
-    "Check a paid tool over MCP: npx x402-listing-check@latest '<url>' --mcp-tool YOUR_TOOL (replace YOUR_TOOL with the name of a paid tool).",
+    "Check a paid tool over MCP, with the name of a paid tool for YOUR_TOOL: npx x402-listing-check@latest '<url>' --mcp-tool YOUR_TOOL",
   );
   assert.deepEqual(errors(fs), []);
 });
@@ -387,11 +387,21 @@ test("MCP: the JSON-RPC message never appears in a finding", () => {
   assert.equal(JSON.stringify(fs).includes(msg), false);
 });
 
-test("MCP: url is single-quoted like Reproduce, with a quote escaped", () => {
-  const fs = runRules([get405(), post406()], undefined, "https://x.example/it's");
-  assert.match(fs[0].fix ?? "", /x402-listing-check@latest 'https:\/\/x\.example\/it'\\''s' --mcp-tool YOUR_TOOL/);
+test("MCP: url is single-quoted like Reproduce; a quote is refused", () => {
+  assert.throws(() => runRules([get405(), post406()], undefined, "https://x.example/it's"), /text contains '/);
   const plain = runRules([get405(), post406()], undefined, "https://x.example/mcp");
   assert.match(plain[0].fix ?? "", /@latest 'https:\/\/x\.example\/mcp' --mcp-tool/);
+});
+
+test("MCP: the fix prose has no shell metacharacters", () => {
+  const fs = runRules([get405(), post406()], undefined, "https://x.example/mcp");
+  const fix = fs.find((f) => f.id === "mcp-endpoint")?.fix ?? "";
+  assert.ok(fix.length > 0);
+  assert.doesNotMatch(fix, /[();&|$`]/);
+  // The prose before the command must stay inert when the whole sentence is pasted (quotes and redirects too).
+  const prose = fix.slice(0, fix.indexOf("npx "));
+  assert.ok(prose.length > 0);
+  assert.doesNotMatch(prose, /[<>'"]/);
 });
 
 test("MCP: one failed probe + POST 406 gives request-failed and mcp-endpoint", () => {

@@ -518,7 +518,7 @@ function mcpFinding(ok: Extracted[], url: string): Finding | undefined {
     method: signals.length === 2 ? "both" : signals[0].method,
     title: "MCP endpoint: x402 over MCP does not use HTTP 402",
     detail: `${ok.map((e) => `${e.method} → ${e.status}`).join(", ")}. ${sentence} x402 over MCP returns the payment requirement inside the tools/call result with HTTP 200, so this HTTP check does not apply. If this URL is meant to be paid per HTTP request, it returned no 402.`,
-    fix: `Check a paid tool over MCP: npx x402-listing-check@latest ${quote(url)} --mcp-tool YOUR_TOOL (replace YOUR_TOOL with the name of a paid tool).`,
+    fix: `Check a paid tool over MCP, with the name of a paid tool for YOUR_TOOL: npx x402-listing-check@latest ${quote(url)} --mcp-tool YOUR_TOOL`,
   };
 }
 

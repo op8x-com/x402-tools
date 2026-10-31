@@ -265,3 +265,111 @@ test("/empty-header-no-body: an empty header without a body challenge exits 1", 
   assert.equal(level("no-challenge"), "error");
   assert.equal(level("official-client"), "error");
 });
+
+function spy(): { io: Io & { stdout: () => string; stderr: () => string }; calls: () => number } {
+  let calls = 0;
+  const io = capture();
+  io.fetchImpl = (async () => {
+    calls++;
+    throw new Error("no request expected");
+  }) as typeof fetch;
+  return { io, calls: () => calls };
+}
+
+const NO_SECRETS = (io: { stdout: () => string; stderr: () => string }) => {
+  const all = io.stdout() + io.stderr();
+  assert.equal(all.includes("alice"), false);
+  assert.equal(all.includes("s3cr3t"), false);
+};
+
+test("URL with a user name and password is refused before any request, without echoing it", async () => {
+  const { io, calls } = spy();
+  const url = server.url.replace("http://", "http://alice:s3cr3t@") + "/v2-good";
+  assert.equal(await run(["check", url], io), 2);
+  assert.match(io.stderr(), /URLs with a user name or password are not supported\. Remove them and run again\./);
+  NO_SECRETS(io);
+  assert.equal(calls(), 0);
+});
+
+test("a password is never echoed for other schemes, missing schemes or unparsable URLs", async () => {
+  const ftp = spy();
+  assert.equal(await run(["check", "ftp://alice:s3cr3t@host/"], ftp.io), 2);
+  assert.match(ftp.io.stderr(), /user name or password/);
+  NO_SECRETS(ftp.io);
+
+  const noScheme = spy();
+  assert.equal(await run(["check", "alice:s3cr3t@api.example.com/paid"], noScheme.io), 2);
+  assert.match(noScheme.io.stderr(), /Only http and https URLs are supported\./);
+  NO_SECRETS(noScheme.io);
+
+  const bad = spy();
+  assert.equal(await run(["check", "http://alice:s3cr3t@"], bad.io), 2);
+  assert.match(bad.io.stderr(), /Not a valid URL\./);
+  NO_SECRETS(bad.io);
+
+  for (const s of [ftp, noScheme, bad]) assert.equal(s.calls(), 0);
+});
+
+test("URLs with ' in the host, path or fragment, or \" in the host, are refused before any request", async () => {
+  for (const url of [`${server.url}/a'b`, `${server.url}/x#a'b`, "http://a'b/", 'http://a"b/']) {
+    const { io, calls } = spy();
+    assert.equal(await run(["check", url], io), 2, url);
+    assert.match(io.stderr(), /URLs that contain ' or " are not supported: /);
+    assert.equal(io.stderr().includes(url), false, url);
+    assert.equal(io.stdout(), "");
+    assert.equal(calls(), 0, url);
+  }
+});
+
+test("a ' in the query is encoded by the URL parser and checked normally", async () => {
+  const base = capture();
+  const baseCode = await run(["check", `${server.url}/v2-good`], base);
+  const io = capture();
+  assert.equal(await run(["check", `${server.url}/v2-good?q='x`], io), baseCode);
+  const lines = io.stdout().split("\n").filter((l) => l.includes(server.url));
+  assert.ok(lines.length > 0);
+  for (const line of lines) {
+    assert.ok(line.includes(`${server.url}/v2-good?q=%27x`), line);
+    // No raw quote inside the URL: the quotes on the line stay balanced and the URL sits in one segment.
+    const segments = [...line.matchAll(/'([^']*)'/g)].map((m) => m[1]);
+    assert.equal((line.match(/'/g) ?? []).length, segments.length * 2, line);
+    assert.ok(segments.some((seg) => seg.includes(`${server.url}/v2-good?q=%27x`)), line);
+  }
+});
+
+test("brackets in the URL: every Reproduce line starts with curl -g -i", async () => {
+  const io = capture();
+  await run(["check", `${server.url}/v2-good?filter[status]=1`], io);
+  const lines = io.stdout().split("\n");
+  const at = lines.indexOf("Reproduce:");
+  assert.ok(at >= 0);
+  const repro = lines.slice(at + 1, lines.findIndex((l) => l.startsWith("Summary:"))).map((l) => l.trim()).filter((l) => l !== "");
+  assert.ok(repro.length > 0);
+  for (const l of repro) assert.ok(l.startsWith("curl -g -i"), l);
+});
+
+test("io.curl = curl.exe: Reproduce lines use it, validate line keeps curl, JSON is unchanged", async () => {
+  const io = { ...capture(), curl: "curl.exe" };
+  await run(["check", `${server.url}/v2-good`], io);
+  const lines = io.stdout().split("\n").map((l) => l.trim());
+  const at = lines.indexOf("Reproduce:");
+  assert.ok(at >= 0);
+  const repro = lines.slice(at + 1, lines.findIndex((l) => l.startsWith("Summary:"))).filter((l) => l !== "");
+  assert.ok(repro.length > 0);
+  for (const l of repro) assert.ok(l.startsWith("curl.exe -g -i"), l);
+  const validate = lines.filter((l) => l.includes("/v2/x402/validate"));
+  assert.ok(validate.length > 0);
+  for (const l of validate) assert.ok(l.startsWith("curl -X POST"), l);
+
+  const strip = (s: string) => {
+    const j = JSON.parse(s);
+    delete j.checkedAt;
+    for (const r of j.requests) delete r.ms;
+    return j;
+  };
+  const a = capture();
+  const b = { ...capture(), curl: "curl.exe" };
+  await run(["check", `${server.url}/v2-good`, "--json"], a);
+  await run(["check", `${server.url}/v2-good`, "--json"], b);
+  assert.deepEqual(strip(a.stdout()), strip(b.stdout()));
+});

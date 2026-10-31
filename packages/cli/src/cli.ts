@@ -11,6 +11,8 @@ export interface Io {
   out: (s: string) => void;
   err: (s: string) => void;
   color: boolean;
+  /** Program name for the Reproduce lines; default "curl". */
+  curl?: string;
   fetchImpl?: typeof fetch;
 }
 
@@ -70,11 +72,24 @@ export async function run(argv: string[], io: Io): Promise<number> {
   try {
     url = new URL(positionals[1]);
   } catch {
-    io.err(`Not a valid URL: ${positionals[1]}\n`);
+    io.err("Not a valid URL.\n");
+    return 2;
+  }
+  // None of these messages repeats the input or url.href: the input may hold a password
+  // that the parser does not recognize as one (alice:s3cr3t@host parses with scheme "alice:").
+  if (url.username !== "" || url.password !== "") {
+    io.err("URLs with a user name or password are not supported. Remove them and run again.\n");
+    return 2;
+  }
+  // The printed commands single-quote the URL; ' and " cannot be quoted for both POSIX shells and PowerShell.
+  if (url.href.includes("'") || url.href.includes('"')) {
+    io.err(
+      "URLs that contain ' or \" are not supported: op8x check prints shell commands with this URL, and these characters cannot be quoted safely for both POSIX shells and PowerShell.\n",
+    );
     return 2;
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    io.err(`Only http and https URLs are supported: ${url.href}\n`);
+    io.err("Only http and https URLs are supported.\n");
     return 2;
   }
 
@@ -120,7 +135,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   const findings = runRules(extracted, pre, url.href, X402_CORE_VERSION, { payer });
   const sent = [...probes, ...browserProbes, ...(pre ? [pre] : [])];
   const report = buildReport(url.href, VERSION, X402_CORE_VERSION, sent, findings);
-  io.out(values.json ? renderJson(report) : renderText(report, io.color));
+  io.out(values.json ? renderJson(report) : renderText(report, io.color, io.curl ?? "curl"));
 
   if (probes.every((p) => p.error)) return 2;
   return report.summary.errors > 0 ? 1 : 0;
