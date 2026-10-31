@@ -1,6 +1,6 @@
 # op8x CLI: CORS, preflight and payment flow checks
 
-Status: implemented, 2026-10-25 (after the 0.0.3 release; not yet published, and the package version stays 0.0.3 until the next release). Extends `2026-10-24-cli-check-design.md`, which listed CORS as out of scope in 0.0.1 and now points here.
+Status: implemented, 2026-10-25 (after the 0.0.3 release; not yet published, and the package version stays 0.0.3 until the next release). Extends `2026-10-24-cli-check-design.md`, which listed CORS as out of scope in 0.0.1 and now points here. Updated 2026-10-31 to match `@x402/core` 2.29: an unknown flow is also reported in v1, and `paymentFlow: null` counts as omitted.
 
 ## Problem
 
@@ -14,13 +14,13 @@ Two classes of failure were invisible to `op8x check`:
 Goals:
 
 - Report CORS gaps that break payments from web apps, without failing endpoints that agents and servers can pay.
-- Report a v2 `extra.paymentFlow` that clients must skip, or that is missing where the spec requires it.
+- Report an `extra.paymentFlow` that clients must skip (v1 and v2), or a v2 entry where it is missing although the spec requires it.
 
 Non-goals:
 
 - `Access-Control-Allow-Methods` and `Access-Control-Max-Age` are not checked. GET and POST are CORS-safelisted methods.
 - No configurable origin (see "Alternatives considered").
-- `extra.paymentFlow` is not checked in v1 challenges, and an explicit valid value is not compared with the scheme default.
+- A missing `extra.paymentFlow` is not reported in v1 challenges (the requirement is part of spec v2), and an explicit valid value is not compared with the scheme default.
 
 ## Probe sequence
 
@@ -49,7 +49,7 @@ CORS findings are `warn` or `info`, never `error`: they affect browser clients o
 | `cors-preflight` | warn | OPTIONS | 2xx preflight without `Access-Control-Allow-Origin` | Send `Access-Control-Allow-Origin` on the preflight too |
 | `cors-allow-headers` | warn | OPTIONS | 2xx preflight with `Access-Control-Allow-Origin` whose `Access-Control-Allow-Headers` lacks a requested header | Add the missing names |
 | `cors-client-retry` | info | OPTIONS | 2xx preflight with `Access-Control-Allow-Origin` whose `Access-Control-Allow-Headers` lacks `Access-Control-Expose-Headers` (sent on the paid retry by `@x402/fetch` and `@x402/axios` 2.28.0 and 2.29.0; x402-foundation/x402#3478 still open on 2026-10-29) | Until the fix ships, add `Access-Control-Expose-Headers` to `Access-Control-Allow-Headers` |
-| `payment-flow` | error | GET/POST | v2 entry with `extra.paymentFlow` not in `authorization`, `upfront`, `escrow` | Use one of the three, or omit it for the scheme default |
+| `payment-flow` | error | GET/POST | v1 or v2 entry with `extra.paymentFlow` not in `authorization`, `upfront`, `escrow` (`null` counts as omitted, as in the official client) | Use one of the three, or omit it for the scheme default |
 | `payment-flow` | warn | GET/POST | v2 entry without `extra.paymentFlow` whose scheme default is not `authorization` | Set `extra.paymentFlow` to the default |
 
 Details:
@@ -58,7 +58,7 @@ Details:
 - Header lists are compared case-insensitively after splitting on commas. `*` counts as a wildcard only when `Access-Control-Allow-Credentials` is not `true` (case-insensitive, read from the same response); on credentialed responses it is a literal name, and the details of `cors-expose-headers` and `cors-allow-headers` say so.
 - Without any CORS-ready 402, only `cors-origin-refused` and `cors-allow-origin` can appear; nothing else in CORS has an effect without `Access-Control-Allow-Origin`.
 - Versions come from both header and body challenges: for the preflight plan, of the CORS-ready 402s only; for `cors-expose-headers`, of all 402s.
-- Scheme defaults for `payment-flow` (from the scheme specs in the x402 repository at commit `4241d56`): `auth-capture` → `escrow`; `upto` on a network in the `solana` namespace → `escrow`; `exact` on a network in the `lnbtc` namespace → `upfront`; everything else → `authorization`. v1 challenges are not checked. The rule reads the header challenge if it decodes, otherwise the body challenge.
+- Scheme defaults for `payment-flow` (from the scheme specs in the x402 repository at commit `4241d56`): `auth-capture` → `escrow`; `upto` on a network in the `solana` namespace → `escrow`; `exact` on a network in the `lnbtc` namespace → `upfront`; everything else → `authorization`. The missing-flow warning applies to v2 only; `@x402/core` 2.29 drops an unknown flow in v1 too, so the error covers both versions. The rule reads the header challenge if it decodes, otherwise the body challenge.
 - The CORS rules run once over all results (`corsRules(results, preflight)`), after the per-method rules and before identical GET and POST findings are merged into `both`.
 
 ## Types and report

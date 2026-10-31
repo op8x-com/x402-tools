@@ -1,18 +1,9 @@
 import { PaymentRequiredV1Schema, PaymentRequiredV2Schema } from "@x402/core/schemas";
+import { legacyToCaip2 } from "./assets.ts";
 import { headerDecoded } from "./extract.ts";
 import { quote } from "./report.ts";
 import { spendRules } from "./spend.ts";
 import type { Extracted, Finding, Level, Method, PreflightResult } from "./types.ts";
-
-// Hint map for v2 endpoints still using v1 network names (EVM networks only).
-const LEGACY_TO_CAIP2: Record<string, string> = {
-  base: "eip155:8453",
-  "base-sepolia": "eip155:84532",
-  polygon: "eip155:137",
-  "polygon-amoy": "eip155:80002",
-  avalanche: "eip155:43114",
-  "avalanche-fuji": "eip155:43113",
-};
 
 // Flows defined in core spec v2, section 6.1. Clients must skip any other value.
 const PAYMENT_FLOWS: unknown[] = ["authorization", "upfront", "escrow"];
@@ -179,7 +170,7 @@ function methodRules(e: Extracted, x402Core: string): Finding[] {
         const net = a.network;
         if (v === 2 && typeof net === "string" && !net.includes(":")) {
           covered.add(`accepts.${i}.network`);
-          const hint = LEGACY_TO_CAIP2[net];
+          const hint = legacyToCaip2(net);
           add(
             "v2-legacy-network",
             "error",
@@ -207,8 +198,9 @@ function methodRules(e: Extracted, x402Core: string): Finding[] {
             'In v2, the price field is "amount" and "resource" is a top-level object.',
           );
         }
-        const flow = isObj(a.extra) ? a.extra.paymentFlow : undefined;
-        if (v === 2 && flow !== undefined && !PAYMENT_FLOWS.includes(flow)) {
+        // The official client treats null like an omitted flow and drops unknown flows in v1 and v2.
+        const flow = isObj(a.extra) ? (a.extra.paymentFlow ?? undefined) : undefined;
+        if (flow !== undefined && !PAYMENT_FLOWS.includes(flow)) {
           add(
             "payment-flow",
             "error",

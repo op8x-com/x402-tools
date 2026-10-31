@@ -98,10 +98,10 @@ Each rule has a stable id. Levels: `error` breaks real clients, `warn` is risky 
 | `header-body-drift` | error | Header and body both carry a challenge and differ; detail lists up to 10 differing field paths | Generate both from one object, or drop the body copy |
 | `version-missing` | error | `x402Version` absent or not the number 1 or 2 (e.g. string `"2"`) | Set `x402Version` to the number 1 or 2 |
 | `schema` | error | Official schema (`PaymentRequiredV1Schema` / `PaymentRequiredV2Schema`) rejects the challenge; one finding per issue path | Shown per field from the schema message |
-| `v2-legacy-network` | error | v2 `network` without `:` (e.g. `base`) | Use CAIP-2, e.g. `eip155:8453`; known EVM names are mapped in the hint |
+| `v2-legacy-network` | error | v2 `network` without `:` (e.g. `base`) | Use CAIP-2, e.g. `eip155:8453`; v1 names that default clients know (EVM and Solana, `V1_NETWORKS` in `assets.ts`) are mapped in the hint |
 | `v1-caip2-network` | warn | v1 `network` contains `:` | v1 clients expect legacy names like `base-sepolia` |
 | `mixed-dialect` | error | v2 entry uses v1 fields (`maxAmountRequired`, string `resource`) or v1 entry has `amount` but no `maxAmountRequired` | Use one dialect consistently |
-| `payment-flow` | error/warn | Unknown or missing `extra.paymentFlow` in v2 | See `2026-10-25-cli-cors-payment-flow-design.md` |
+| `payment-flow` | error/warn | Unknown `extra.paymentFlow` (v1 and v2) or missing one (v2) | See `2026-10-25-cli-cors-payment-flow-design.md` |
 | `v1-legacy` | info | Valid v1 challenge | v1 works with v1 clients; v2 is the current standard |
 | `cache-control` | warn | 402 without `no-store` in `Cache-Control` | Send `Cache-Control: no-store` so proxies do not cache challenges |
 | `official-client` | pass/error | Whether the official client of the installed `@x402/core` reads the challenge | No `fix` field; the error detail names what the official client rejects and points to the other findings (the two decoders can disagree) |

@@ -115,7 +115,7 @@ A new module `src/assets.ts`. The header names the source versions.
 - `EURC_ASSETS`: EURC rows (6 decimals) on Base, Base Sepolia, Ethereum, Sepolia, Avalanche, Avalanche Fuji, Solana and Solana Devnet. Source: [Circle EURC contract addresses](https://developers.circle.com/stablecoins/eurc-contract-addresses) (read 2026-10-30). These are not default assets.
 - `V1_NETWORKS`: v1 name to CAIP-2. It is built from `EVM_NETWORK_CHAIN_ID_MAP` of `@x402/evm/v1` (numeric chain ids, written as `eip155:<id>`) and `V1_TO_V2_NETWORK_MAP` of `@x402/svm`.
 
-The existing `LEGACY_TO_CAIP2` in `rules.ts` stays the hint map for `v2-legacy-network`. Deriving those hints from `V1_NETWORKS` is a separate follow-up, so hint quality does not change here.
+The existing `LEGACY_TO_CAIP2` in `rules.ts` stays the hint map for `v2-legacy-network`. Deriving those hints from `V1_NETWORKS` is a separate follow-up, so hint quality does not change here. (Done on 2026-10-31: `v2-legacy-network` now takes its hint from `V1_NETWORKS` via `legacyToCaip2`.)
 
 ### Texts
 
@@ -203,7 +203,7 @@ Amounts are shown in human units. Asset and network strings from the challenge a
   - an unknown `solana:*` entry that core would drop before spend controls (wrong scheme or flow), next to entries it refuses;
   - other namespaces;
   - buyers who registered other schemes or networks than the stock helpers;
-  - v1 entries with an unknown flow, which the client drops and which `payment-flow` (v2 only) does not report.
+  - v1 entries with an unknown flow, which the client drops and which `payment-flow` (v2 only) does not report. (Closed on 2026-10-31: `payment-flow` now reports them.)
 
   Mitigation: all of these are listed here, and staying silent is preferred over guessing. The v1 flow gap is a follow-up for `payment-flow`.
 - **Buyers with their own spend controls.** For such buyers a warning is wrong.
