@@ -27,7 +27,7 @@ Non-goals:
 `cli.ts` runs the requests one after another:
 
 1. Plain probes (GET and POST, or the one `--method` names) as in the base design, **without** `Origin`. A server may refuse browser origins on a paid route; the plain probes must still diagnose the challenge.
-2. For each plain probe that returned a 402 (or 412 with `permit2_allowance_required`): one repeat of the same request with `Origin: https://op8x.com` (`probe(url, method, opts, true)`). Its status, error and CORS headers are merged into the extracted result (`withBrowserView`, fields `originStatus`, `originError`, `allowOrigin`, `exposeHeaders`, `allowCredentials`).
+2. For each plain probe that returned a 402 (or 412 with `permit2_allowance_required`): one repeat of the same request with `Origin: https://op8x.com` (`probe(url, method, opts, true)`). Its status, error and CORS headers are merged into the extracted result (`withBrowserView`, fields `originStatus`, `originError`, `originChallenge`, `originVersion`, `allowOrigin`, `exposeHeaders`, `allowCredentials`).
 3. At most one `OPTIONS` preflight, planned by `preflightPlan(results)`, only when at least one 402 is CORS-ready: the browser-like repeat also got a 402 and carried `Access-Control-Allow-Origin` (any value). Headers sent: `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`.
 
 `preflightPlan` picks POST if any CORS-ready 402 came from POST, else GET. The requested headers (lower case, comma-separated) depend on the challenge versions seen: `payment-signature` for v2 (or when no version is known), `content-type` for POST, `x-payment` for v1.
@@ -80,7 +80,7 @@ Details:
 
 ## Known limits
 
-- Only the status and CORS headers of the browser-like repeat are used. Its challenge is not decoded or checked, so a server that sends browsers a different challenge than other clients is not detected.
+- Of the browser-like repeat, only the status, the CORS headers and (since `../designs/2026-10-31-cli-payto-rotation-design.md`) the `payTo` values of its challenge are used; nothing else of its challenge is checked, so a server that sends browsers a different challenge in other fields is not detected.
 - The origin is fixed (`https://op8x.com`). A server that allows only listed origins answers it differently from its real web app, so `cors-origin-refused` or `cors-allow-origin` can appear although the app works. Both are `info`, so they never change the exit code.
 - The value of `Access-Control-Allow-Origin` is not compared with the origin sent; any value, including `null`, another origin, or `*` together with `Access-Control-Allow-Credentials: true` (which browsers reject for credentialed requests), counts as CORS-ready.
 - The browser-like repeat must return 402. An endpoint that answers both requests with the permit2 412 gets `cors-origin-refused` and no further CORS checks.

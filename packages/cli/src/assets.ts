@@ -1,3 +1,5 @@
+import { cleanText } from "./extract.ts";
+
 // Asset data for the spend-control findings (see docs/designs/2026-10-30-cli-spend-controls-design.md).
 // DEFAULT_ASSETS and V1_NETWORKS are copies from @x402/evm 2.29.0 and @x402/svm 2.29.0;
 // test/assets.test.ts fails when they drift from the installed packages.
@@ -192,3 +194,9 @@ export const findEurc = (asset: string, network: string) => lookup(EURC_ASSETS, 
 
 /** A known asset (default or EURC) for labels. */
 export const findKnownAsset = (asset: string, network: string) => findDefaultAsset(asset, network) ?? findEurc(asset, network);
+
+/** Report text for an asset on a network: the known symbol, else the cleaned address; then the network as the server sent it. */
+export function assetWhere(asset: string, network: string, version: 1 | 2): string {
+  const label = findKnownAsset(asset, caip2(network, version))?.symbol ?? cleanText(asset, 48);
+  return `${label} on ${cleanText(network, 48)}`;
+}

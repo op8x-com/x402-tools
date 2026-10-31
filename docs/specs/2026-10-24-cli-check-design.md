@@ -7,6 +7,7 @@ Status: approved design, 2026-10-24; first release 0.0.1. Updated 2026-10-29 to 
 - `2026-10-27-cli-mcp-endpoint-design.md`: `mcp-endpoint` hint
 - `../designs/2026-10-28-cli-official-client-design.md`: `official-client` from the official client, `header-empty`, `x402Core` in the report
 - `../designs/2026-10-30-cli-spend-controls-design.md`: `default-asset`, `default-cap` and `eurc-same-amount` (spend controls of default clients)
+- `../designs/2026-10-31-cli-payto-rotation-design.md`: `payto-rotates` (`payTo` that differs between the plain request and the browser-like repeat)
 
 ## Goal
 
@@ -153,7 +154,7 @@ Exit codes: `0` no errors, `1` at least one `error` finding, `2` usage error or 
 ## Testing
 
 - Unit tests (Node's built-in `node:test`, run on TypeScript sources via Node's type stripping; no test framework dependency) for `extract`, `probe`, `report` and every rule. `test/fixtures.ts` holds a valid v2 and a valid v1 challenge and base64 builders; the variants (v2 body-only, drift, base64url header, string version, legacy network in v2, mixed dialect and others) are built from them inside the rule tests.
-- Integration test: a local `node:http` server (`test/server.ts`) with routes for valid v2 and v1, v2 body-only, drift, empty headers, a 405 on GET, no paywall, a redirect, CORS, MCP and body limits; run the CLI pipeline against it and assert findings and exit codes. The other rule variants are covered by the rule tests only.
+- Integration test: a local `node:http` server (`test/server.ts`) with routes for valid v2 and v1, v2 body-only, drift, empty headers, a 405 on GET, no paywall, a redirect, CORS, MCP, `/payto-rotates` and body limits; run the CLI pipeline against it and assert findings and exit codes. The other rule variants are covered by the rule tests only.
 - Smoke tests: the fixtures pass the official schemas, and `VERSION` matches `package.json`.
 - No tests against third-party live endpoints in CI.
 

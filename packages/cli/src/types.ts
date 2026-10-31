@@ -76,6 +76,9 @@ export interface Extracted {
   /** Status of the same request sent with an Origin header, when that probe ran. */
   originStatus?: number;
   originError?: string;
+  /** Challenge of the browser-like repeat, decoded as for the plain probe; unset when the repeat had none. */
+  originChallenge?: unknown;
+  originVersion?: 1 | 2;
   /** From the probe: the body could not be read in full, so the official client fails before it looks at the header. */
   bodyError?: string;
   /** What the official client of the installed @x402/core makes of this response. */

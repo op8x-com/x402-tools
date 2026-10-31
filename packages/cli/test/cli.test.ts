@@ -137,6 +137,14 @@ test("endpoint without CORS gets one hint and no preflight", async () => {
   assert.deepEqual(cors.map((f: JsonFinding) => [f.id, f.level]), [["cors-allow-origin", "info"]]);
 });
 
+test("endpoint whose payTo changes on every request gets one payto-rotates finding per method", async () => {
+  const io = capture();
+  assert.equal(await run(["check", `${server.url}/payto-rotates`, "--json"], io), 0);
+  const report = JSON.parse(io.stdout());
+  const rotates = report.findings.filter((f: JsonFinding) => f.id === "payto-rotates");
+  assert.deepEqual(rotates.map((f: { method: string }) => f.method).sort(), ["GET", "POST"]);
+});
+
 test("server that refuses browser origins is still diagnosed from the plain probes", async () => {
   const io = capture();
   assert.equal(await run(["check", `${server.url}/refuses-browsers`, "--json"], io), 0);

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cleanReason, decodeHeader, extract, officialClientRead } from "../src/extract.ts";
+import { cleanReason, decodeHeader, extract, officialClientRead, withBrowserView } from "../src/extract.ts";
 import { b64, pr, v1, v2 } from "./fixtures.ts";
 
 test("decodeHeader decodes standard base64 JSON", () => {
@@ -195,4 +195,18 @@ test("header that decodes to null is the challenge, as in the official client; t
   assert.equal(e.challenge, null);
   assert.equal(e.version, undefined);
   assert.equal(e.official.readable, false);
+});
+
+test("withBrowserView takes the challenge and version of the repeat", () => {
+  const plain = extract(pr("GET", 402, { "payment-required": b64(v2) }, {}));
+  const e = withBrowserView(plain, pr("GET", 402, {}, v1));
+  assert.deepEqual(e.originChallenge, v1);
+  assert.equal(e.originVersion, 1);
+});
+
+test("withBrowserView leaves both unset when the repeat has no challenge", () => {
+  const plain = extract(pr("GET", 402, { "payment-required": b64(v2) }, {}));
+  const e = withBrowserView(plain, pr("GET", 403, {}, { error: "no" }));
+  assert.equal("originChallenge" in e, false);
+  assert.equal("originVersion" in e, false);
 });

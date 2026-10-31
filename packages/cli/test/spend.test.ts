@@ -68,6 +68,11 @@ test("v1: maxAmountRequired above the cap on a legacy name", () => {
   assert.deepEqual(ids(check([e1({ network: "base", asset: BASE_USDC, maxAmountRequired: "2000000" })], 1)), ["default-cap"]);
 });
 
+test("v1: the offered text names the network as the server sent it", () => {
+  const fs = check([e1({ network: "base", asset: BASE_USDC, maxAmountRequired: "2000000" })], 1);
+  assert.match(fs[0].detail, /offered: 2 USDC on base\)/);
+});
+
 test("silent where default clients never reach spend controls", () => {
   const cases: [string, unknown[], 1 | 2][] = [
     ["v1 on a CAIP-2 network", [e1({ network: BASE, asset: BASE_USDC, maxAmountRequired: "2000000" })], 1],
