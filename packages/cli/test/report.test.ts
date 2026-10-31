@@ -145,6 +145,29 @@ test("renderText: MCP case lists MCP payments first and leaves out the Bazaar en
   assert.match(quoted, /@latest 'https:\/\/api\.example\.com\/it'\\''s' --mcp-tool YOUR_TOOL\n/);
 });
 
+test("notChecked: user name and password are left out of the copyable commands", () => {
+  const url = "http://user:pw@api.example.com:8080/x?q=1";
+  const r = buildReport(url, "0", "2", [{ method: "GET", url, status: 402, headers: {}, bodyText: "", ms: 1 }], []);
+  const where = r.notChecked[0].where ?? "";
+  assert.equal(/user|pw@/.test(where), false, where);
+  assert.ok(where.includes(JSON.stringify({ resource: "http://api.example.com:8080/x?q=1", method: "GET" })), where);
+  assert.ok(where.includes("npx x402-listing-check 'http://api.example.com:8080/x?q=1'"), where);
+  const mcp: Finding = { id: "mcp-endpoint", level: "info", method: "POST", title: "t", detail: "d" };
+  const m = buildReport(url, "0", "2", [{ method: "POST", url, status: 406, headers: {}, bodyText: "", ms: 1 }], [mcp]);
+  assert.equal(m.notChecked[0].where, "npx x402-listing-check@latest 'http://api.example.com:8080/x?q=1' --mcp-tool YOUR_TOOL");
+});
+
+test("notChecked: the Bazaar entry is left out when every probe failed at network level", () => {
+  const failed = (method: "GET" | "POST"): ProbeResult => ({
+    method, url: "https://a.example/x", headers: {}, bodyText: "", ms: 1, error: "fetch failed",
+  });
+  const r = buildReport("https://a.example/x", "0", "2", [failed("GET"), failed("POST")], []);
+  assert.deepEqual(r.notChecked.map((n) => n.topic), ["Delivery after a real payment", "Facilitator limits such as minimum prices"]);
+  const answered: ProbeResult = { method: "POST", url: "https://a.example/x", status: 405, headers: {}, bodyText: "", ms: 1 };
+  const one = buildReport("https://a.example/x", "0", "2", [failed("GET"), answered], []);
+  assert.equal(one.notChecked[0].topic, "Bazaar indexing and metadata");
+});
+
 test("notChecked: URL with quotes is shell-quoted in the validation payload", () => {
   const url = `https://api.example.com/a"b'c`;
   const r = buildReport(url, "0", "2", [{ method: "GET", url, status: 402, headers: {}, bodyText: "", ms: 1 }], []);

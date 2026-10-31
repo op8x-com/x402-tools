@@ -182,13 +182,31 @@ test("resource-url-mismatch: v1 stays silent", () => {
   assert.equal(find(hintRules(atBody(c), CALLED), "resource-url-mismatch"), undefined);
 });
 
-test("resource-url-mismatch: control characters are removed and a 10,000-character URL is capped", () => {
+test("resource-url-mismatch: control characters are escaped and a 10,000-character URL is capped", () => {
   const d = urlHint(`https://evil.example.com/\u001b[31m\u202e${"a".repeat(10000)}`)?.detail ?? "";
   assert.equal(/[\u0000-\u001f\u007f-\u009f\u202e]/.test(d), false);
   const printed = d.slice("resource.url is ".length, d.indexOf("; the URL checked"));
   assert.ok(printed.endsWith("\u2026"));
   assert.ok(Array.from(printed).length <= 101);
   assert.match(d, /Differs in: host, path\./);
+});
+
+test("resource-url-mismatch: a trailing no-break space is printed escaped, not trimmed", () => {
+  assert.equal(
+    urlHint(`${CALLED}\u00A0`)?.detail,
+    `resource.url is https://api.example.com/weather\\u{00A0}; the URL checked is https://api.example.com/weather. Differs in: path. If this route serves many paths on purpose, you can ignore this. ${STAGING}`,
+  );
+});
+
+test("resource-url-mismatch: a zero-width space in the path is printed escaped, not removed", () => {
+  assert.equal(
+    urlHint("https://api.example.com/wea\u200Bther")?.detail,
+    `resource.url is https://api.example.com/wea\\u{200B}ther; the URL checked is https://api.example.com/weather. Differs in: path. If this route serves many paths on purpose, you can ignore this. ${STAGING}`,
+  );
+});
+
+test("resource-url-mismatch: a resource.url of format characters only is printed escaped, not as (empty)", () => {
+  assert.equal(urlHint("\u200B\u2060")?.detail, `resource.url is not an absolute URL: \\u{200B}\\u{2060}. ${STAGING}`);
 });
 
 test("resource-url-mismatch: a Cyrillic look-alike host is printed escaped and named as host", () => {

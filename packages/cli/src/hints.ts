@@ -1,9 +1,10 @@
 import { caip2, isTestNetwork, sameAddress } from "./assets.ts";
-import { isObject, printFull } from "./extract.ts";
+import { isObject, printEscaped, printFull } from "./extract.ts";
 import type { Extracted, Finding } from "./types.ts";
 
 // Challenge hints (docs/designs/2026-10-31-cli-challenge-hints-design.md): mistakes that are visible in
-// the unpaid response but not in the seller's own logs. Server strings are printed only through printFull.
+// the unpaid response but not in the seller's own logs. Server strings are printed only through printFull, and
+// resource.url, which stands next to the URL checked, through printEscaped.
 
 interface Entry {
   index: number;
@@ -80,7 +81,8 @@ function resourceUrlMismatch(challenge: Record<string, unknown>, url: string): O
   // The "<url>" placeholder of unit tests does not parse: nothing to compare with.
   const called = parseUrl(url);
   if (!called) return undefined;
-  const shown = printFull(resource.url);
+  // Escaped, not cleaned: a cleaned value could print exactly like the URL checked.
+  const shown = printEscaped(resource.url);
   const parsed = parseUrl(resource.url);
   let detail: string;
   if (!parsed) {
@@ -126,11 +128,19 @@ export function hintRules(e: Extracted, url: string, payer?: string): Finding[] 
   if (!Array.isArray(c.accepts) || c.accepts.length === 0) return [];
   const version = e.version;
   const entries = entriesOf(c.accepts);
+  // The challenge is server input: a rule that throws on it anyway is skipped, the other rules still run.
+  const attempt = (rule: () => Omit<Finding, "method"> | undefined) => {
+    try {
+      return rule();
+    } catch {
+      return undefined;
+    }
+  };
   const found = [
-    testnetOnly(entries, version),
-    version === 2 ? extensionsPlacement(c, entries) : undefined,
-    version === 2 ? resourceUrlMismatch(c, url) : undefined,
-    payer ? selfPayment(entries, version, payer) : undefined,
+    attempt(() => testnetOnly(entries, version)),
+    version === 2 ? attempt(() => extensionsPlacement(c, entries)) : undefined,
+    version === 2 ? attempt(() => resourceUrlMismatch(c, url)) : undefined,
+    payer ? attempt(() => selfPayment(entries, version, payer)) : undefined,
   ];
   return found.filter((f) => f !== undefined).map((f) => ({ ...f, method: e.method }));
 }

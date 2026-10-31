@@ -122,7 +122,22 @@ export function printFull(value: string): string {
   const chars = Array.from(cleanText(value, 100));
   if (chars.length === 0) return "(empty)";
   // cleanText stops at 100 characters; asking for 101 shows whether it cut anything.
-  let cut = Array.from(cleanText(value, 101)).length > MAX_PRINTED;
+  return escapeCapped(chars, Array.from(cleanText(value, 101)).length > MAX_PRINTED);
+}
+
+/**
+ * A server value printed next to a value the CLI prints itself: like printFull, but nothing is removed or
+ * trimmed, so characters that cleanText drops (U+00A0, U+200B, U+2060) show as \u{XXXX} and the two cannot
+ * look the same. A non-empty value never prints as "(empty)".
+ */
+export function printEscaped(value: string): string {
+  const chars = Array.from(value);
+  return escapeCapped(chars.slice(0, MAX_PRINTED), chars.length > MAX_PRINTED);
+}
+
+// Escapes chars with escapeChar up to 100 printed characters; a cut is marked with an ellipsis.
+function escapeCapped(chars: string[], cutBefore: boolean): string {
+  let cut = cutBefore;
   let text = "";
   let used = 0;
   for (const c of chars) {

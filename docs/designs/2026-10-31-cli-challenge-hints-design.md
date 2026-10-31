@@ -170,7 +170,7 @@ Entries:
 | Facilitator limits such as minimum prices | By kind: `your facilitator's documentation.` |
 | MCP payments (only when `mcp-endpoint` was found, listed first) | `npx x402-listing-check@latest <url> --mcp-tool YOUR_TOOL` |
 
-URLs in commands are built with `quote()` from `src/report.ts`. `buildReport` takes no new parameter: it reads the methods from `probes` (entries without `origin` and with `status === 402`) and the MCP case from `findings`. In JSON, `where` holds the lines joined with `\n` and is omitted when empty. Rendered text, normal case:
+URLs in commands are built with `quote()` from `src/report.ts`. The commands leave out the user name and password of the checked URL (the rest of the URL stays), and the Bazaar entry is left out when every probe failed at network level with no response at all. `buildReport` takes no new parameter: it reads the methods from `probes` (entries without `origin` and with `status === 402`) and the MCP case from `findings`. In JSON, `where` holds the lines joined with `\n` and is omitted when empty. Rendered text, normal case:
 
 ```text
 Not checked by op8x check:
@@ -187,7 +187,7 @@ MCP case: the first entry is `- MCP payments:` with `npx x402-listing-check@late
 
 ### `--payer`
 
-One new string option that takes one address (more than one can be added later as a repeatable option without breaking this form). Input that is neither `0x` plus 40 hex digits nor 32 to 44 base58 characters exits with code 2 and a one-line error that does not repeat the value, like `--method` today. The value appears in the report only inside the `self-payment` detail, and only when it matched; it is the seller's own address.
+One new string option that takes one address (more than one can be added later as a repeatable option without breaking this form). Input that is neither `0x` plus 40 hex digits nor 32 to 44 base58 characters exits with code 2 and a one-line error that does not repeat the value, like `--method` today. The value never appears in the report; `self-payment` names only the matching `accepts[]` index and its network.
 
 ## Risks and Mitigations
 
@@ -256,7 +256,7 @@ One new string option that takes one address (more than one can be added later a
 
 ## Detailed Implementation Plan
 
-All paths are relative to `packages/cli/` unless they start with `../../`. The payTo-rotation change this builds on is merged (#19). References to test asserts name their content; line numbers are given only as of commit `1fe53c7`. The parallel amount-change design (`./2026-10-31-cli-amount-change-design.md`) shares `src/assets.ts`, `src/rules.ts`, `test/server.ts`, `test/assets.test.ts`, `test/rules.test.ts`, `test/cli.test.ts`, `README.md` and the check spec; whichever lands second rebases on `main`, and its new server routes use `v2main` with the per-request `resource.url` (item 8).
+All paths are relative to `packages/cli/` unless they start with `../../`. The payTo-rotation change this builds on is merged (#19). References to test asserts name their content; line numbers are given only as of commit `1fe53c7`. A parallel change that touches the same files shares `src/assets.ts`, `src/rules.ts`, `test/server.ts`, `test/assets.test.ts`, `test/rules.test.ts`, `test/cli.test.ts`, `README.md` and the check spec; whichever lands second rebases on `main`, and its new server routes use `v2main` with the per-request `resource.url` (item 8).
 
 ### Target Files to Create/Modify
 
@@ -273,7 +273,7 @@ All paths are relative to `packages/cli/` unless they start with `../../`. The p
 #### 3. `src/hints.ts` (Create)
 
 *   **Type / Scope**: TypeScript module (rules).
-*   **Proposed Changes**: `export function hintRules(e: Extracted, url: string, payer?: string): Finding[]` with `testnet-only`, `extensions-placement`, `resource-url-mismatch` and `self-payment`; `export function isJsonRpcError(body: unknown): boolean` (the body check moved out of `isMcpSignal`); `export function postNeedsBody(post: Extracted, get: Extracted | undefined): Finding | undefined`. `hintRules` checks the gate itself and returns `[]` outside it. Title, detail and fix texts exactly as in "Finding texts". Server text through `printFull`. Helper `sameUrl(a: URL, b: URL): ("scheme" | "host" | "path")[]` compares protocol, host (with port), and pathname without one trailing slash. Uses `isObject`, `printFull` and `escapeChar` from `extract.ts`, `sameAddress`, `caip2` and `isTestNetwork` from `assets.ts`, and `e.version`.
+*   **Proposed Changes**: `export function hintRules(e: Extracted, url: string, payer?: string): Finding[]` with `testnet-only`, `extensions-placement`, `resource-url-mismatch` and `self-payment`; `export function isJsonRpcError(body: unknown): boolean` (the body check moved out of `isMcpSignal`); `export function postNeedsBody(post: Extracted, get: Extracted | undefined): Finding | undefined`. `hintRules` checks the gate itself and returns `[]` outside it. Title, detail and fix texts exactly as in "Finding texts". Server text through `printFull`; `resource.url` through `printEscaped` in `extract.ts`, which escapes instead of removing characters, so it cannot print exactly like the URL checked. Helper `sameUrl(a: URL, b: URL): ("scheme" | "host" | "path")[]` compares protocol, host (with port), and pathname without one trailing slash. Uses `isObject`, `printFull` and `escapeChar` from `extract.ts`, `sameAddress`, `caip2` and `isTestNetwork` from `assets.ts`, and `e.version`.
 
 #### 4. `src/rules.ts` (Modify)
 

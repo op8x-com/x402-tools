@@ -703,7 +703,7 @@ test("runRules passes the checked URL to the hints", () => {
   assert.match(find(fs, "resource-url-mismatch")?.detail ?? "", /Differs in: path\./);
 });
 
-test("other findings survive when hintRules throws on a hostile challenge", () => {
+test("other findings and hints survive when one hint rule throws on a hostile challenge", () => {
   const c = { ...v2, accepts: [{ ...v2.accepts[0], extensions: {} }] };
   const e = extract(pr("GET", 402, { ...NS, "payment-required": b64(c) }, {}));
   // Only the top-level extensions check asks for this property descriptor.
@@ -716,6 +716,7 @@ test("other findings survive when hintRules throws on a hostile challenge", () =
   const fs = runRules([{ ...e, challenge: hostile }]);
   assert.equal(find(fs, "official-client")?.level, "pass");
   assert.ok(ids(fs).includes("v2-header-only"));
-  assert.equal(ids(fs).includes("testnet-only"), false);
+  // Only the rule that threw is skipped; the other hints still report.
+  assert.equal(ids(fs).includes("testnet-only"), true);
   assert.equal(ids(fs).includes("extensions-placement"), false);
 });

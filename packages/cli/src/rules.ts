@@ -482,7 +482,8 @@ function isMcpSignal(e: Extracted): boolean {
   return e.status === 406 && e.headerRaw === undefined && isJsonRpcError(e.body);
 }
 
-// The challenge is server input: if a hint rule throws on it anyway, the hints are skipped, never the report.
+// hintRules skips a single rule that throws; this catches the rest (the gate, reading accepts), so the
+// hints are skipped, never the report.
 function safeHints(e: Extracted, url: string, payer: string | undefined): Finding[] {
   try {
     return hintRules(e, url, payer);

@@ -28,19 +28,36 @@ export const quote = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
 
 const VALIDATE = "https://api.cdp.coinbase.com/platform/v2/x402/validate";
 
+// The URL for copyable commands: without user name and password, otherwise unchanged.
+function withoutUserinfo(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+  if (parsed.username === "" && parsed.password === "") return url;
+  parsed.username = "";
+  parsed.password = "";
+  return parsed.href;
+}
+
 function buildNotChecked(
-  url: string,
+  checkedUrl: string,
   probes: (ProbeResult | PreflightResult)[],
   findings: Finding[],
 ): Report["notChecked"] {
   const out: Report["notChecked"] = [];
+  const url = withoutUserinfo(checkedUrl);
+  const plain = probes.filter((p) => p.method !== "OPTIONS" && !p.origin);
+  // No response at all: there is nothing the Bazaar commands could check yet.
+  const unreachable = probes.every((p) => p.status === undefined);
   if (findings.some((f) => f.id === "mcp-endpoint")) {
     out.push({
       topic: "MCP payments",
       where: `npx x402-listing-check@latest ${quote(url)} --mcp-tool YOUR_TOOL`,
     });
-  } else {
-    const plain = probes.filter((p) => p.method !== "OPTIONS" && !p.origin);
+  } else if (!unreachable) {
     const paid = plain.filter((p) => p.status === 402);
     const methods = [...new Set((paid.length > 0 ? paid : plain).map((p) => p.method))];
     const lines = methods.map(
