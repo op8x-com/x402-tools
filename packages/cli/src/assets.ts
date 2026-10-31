@@ -216,3 +216,19 @@ export function assetWhere(asset: string, network: string, version: 1 | 2): stri
   const label = findKnownAsset(asset, caip2(network, version))?.symbol ?? cleanText(asset, 48);
   return `${label} on ${cleanText(network, 48)}`;
 }
+
+// An atomic amount as core compares it; 78 digits hold any uint256 and keep texts short.
+export const ATOMIC = /^\d{1,78}$/;
+
+export function human(atomic: string, decimals: number): string {
+  const n = BigInt(atomic);
+  const unit = 10n ** BigInt(decimals);
+  const frac = (n % unit).toString().padStart(decimals, "0").replace(/0+$/, "");
+  return frac ? `${n / unit}.${frac}` : String(n / unit);
+}
+
+/** The atomic price of an accepts entry exactly as sent (amount in v2, maxAmountRequired in v1), if it is a string of digits. */
+export function atomicAmount(entry: Record<string, unknown>, version: 1 | 2): string | undefined {
+  const raw = version === 1 ? entry.maxAmountRequired : entry.amount;
+  return typeof raw === "string" && ATOMIC.test(raw) ? raw : undefined;
+}

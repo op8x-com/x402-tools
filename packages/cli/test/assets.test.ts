@@ -10,6 +10,7 @@ import {
   TEST_NETWORKS,
   V1_NETWORKS,
   assetWhere,
+  atomicAmount,
   caip2,
   findDefaultAsset,
   findKnownAsset,
@@ -110,4 +111,20 @@ test("sameAddress: EVM ignores case, Solana does not", () => {
   assert.equal(sameAddress(mint, mint, SOLANA), true);
   assert.equal(sameAddress(mint, mint.toLowerCase(), SOLANA), false);
   assert.equal(sameAddress(BASE_USDC, BASE_USDC.toLowerCase(), "base"), false);
+});
+
+test("atomicAmount reads amount for v2 and maxAmountRequired for v1, as sent", () => {
+  assert.equal(atomicAmount({ amount: "1000" }, 2), "1000");
+  assert.equal(atomicAmount({ maxAmountRequired: "01000" }, 1), "01000");
+  assert.equal(atomicAmount({ amount: "9".repeat(78) }, 2), "9".repeat(78));
+});
+
+test("atomicAmount returns undefined for anything but a digit string", () => {
+  assert.equal(atomicAmount({}, 2), undefined);
+  assert.equal(atomicAmount({ amount: 1000 }, 2), undefined);
+  assert.equal(atomicAmount({ amount: "0.001" }, 2), undefined);
+  assert.equal(atomicAmount({ amount: "-5" }, 2), undefined);
+  assert.equal(atomicAmount({ amount: "9".repeat(79) }, 2), undefined);
+  assert.equal(atomicAmount({ maxAmountRequired: "1000" }, 2), undefined);
+  assert.equal(atomicAmount({ amount: "1000" }, 1), undefined);
 });

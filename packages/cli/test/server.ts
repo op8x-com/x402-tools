@@ -4,6 +4,7 @@ import { b64, v1main as v1, v2main } from "./fixtures.ts";
 
 export async function startServer(): Promise<{ url: string; close: () => Promise<void> }> {
   let rotations = 0;
+  let priced = 0;
   const server = createServer((req, res) => {
     const path = new URL(req.url ?? "/", "http://localhost").pathname;
     const json = (status: number, headers: Record<string, string>, body: unknown) => {
@@ -21,6 +22,12 @@ export async function startServer(): Promise<{ url: string; close: () => Promise
         const payTo = `0x${(++rotations).toString(16).padStart(40, "0")}`;
         const rotating = { ...v2, accepts: [{ ...v2.accepts[0], payTo }] };
         return json(402, { "payment-required": b64(rotating), "cache-control": "no-store" }, {});
+      }
+      case "/amount-changes": {
+        // A price one atomic unit higher on every request.
+        const amount = String(10000 + ++priced);
+        const repriced = { ...v2, accepts: [{ ...v2.accepts[0], amount }] };
+        return json(402, { "payment-required": b64(repriced), "cache-control": "no-store" }, {});
       }
       case "/v2-body-only":
         return json(402, { "cache-control": "no-store" }, v2);

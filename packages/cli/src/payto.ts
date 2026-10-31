@@ -1,76 +1,15 @@
 import { assetWhere } from "./assets.ts";
 import { cleanText, escapeChar, printFull } from "./extract.ts";
+import { changedGroups, type ChangedGroup, type ChangedPair } from "./pairs.ts";
 import type { Extracted, Finding } from "./types.ts";
 
 // payTo rotation (docs/designs/2026-10-31-cli-payto-rotation-design.md): the plain challenge and the
 // challenge of the browser-like repeat are compared per group of payment options. Server strings
 // are only compared and stored, never used as object keys.
 
-export interface RotatingGroup {
-  /** Index of the group's first option in the plain challenge's accepts[]. */
-  index: number;
-  scheme: string;
-  network: string;
-  asset: string;
-  /** payTo values (raw, first-seen order, deduplicated) only in the plain challenge. */
-  plainOnly: string[];
-  /** payTo values only in the repeat. */
-  repeatOnly: string[];
-}
-
-export interface Rotation {
-  method: Extracted["method"];
-  x402Version: 1 | 2;
-  /** All rotating groups, ordered by first option index in the plain challenge. */
-  groups: RotatingGroup[];
-}
-
-interface Group {
-  index: number;
-  scheme: string;
-  network: string;
-  asset: string;
-  payTo: Set<string>;
-}
-
-type Obj = Record<string, unknown>;
-const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
-
-function groupsOf(challenge: unknown): Map<string, Group> | undefined {
-  if (!isObj(challenge) || !Array.isArray(challenge.accepts) || challenge.accepts.length === 0) return undefined;
-  const groups = new Map<string, Group>();
-  challenge.accepts.forEach((a: unknown, index: number) => {
-    if (!isObj(a)) return;
-    const { scheme, network, asset, payTo } = a;
-    if (typeof scheme !== "string" || typeof network !== "string" || typeof asset !== "string" || typeof payTo !== "string") return;
-    const key = JSON.stringify([scheme, network, asset]);
-    const group = groups.get(key);
-    if (group) group.payTo.add(payTo);
-    else groups.set(key, { index, scheme, network, asset, payTo: new Set([payTo]) });
-  });
-  return groups;
-}
-
 /** The rotating groups of a method's plain challenge against its browser-like repeat, if any. */
-export function findRotation(e: Extracted): Rotation | undefined {
-  if (e.status !== 402 || e.originStatus !== 402) return undefined;
-  // Relies on extract.ts deriving version and originVersion from the same challenges compared below.
-  if (e.version === undefined || e.originVersion !== e.version) return undefined;
-  const plain = groupsOf(e.challenge);
-  const repeat = groupsOf(e.originChallenge);
-  if (!plain || !repeat) return undefined;
-  const groups: RotatingGroup[] = [];
-  for (const [key, p] of plain) {
-    const r = repeat.get(key);
-    if (!r) continue;
-    const plainOnly = [...p.payTo].filter((v) => !r.payTo.has(v));
-    const repeatOnly = [...r.payTo].filter((v) => !p.payTo.has(v));
-    if (plainOnly.length > 0 && repeatOnly.length > 0) {
-      groups.push({ index: p.index, scheme: p.scheme, network: p.network, asset: p.asset, plainOnly, repeatOnly });
-    }
-  }
-  if (groups.length === 0) return undefined;
-  return { method: e.method, x402Version: e.version, groups };
+export function findRotation(e: Extracted): ChangedPair | undefined {
+  return changedGroups(e, (entry) => (typeof entry.payTo === "string" ? entry.payTo : undefined));
 }
 
 const MAX_GROUPS = 3;
@@ -95,7 +34,7 @@ const hasDuplicate = (values: string[]) => new Set(values).size < values.length;
 
 const MAX_ADDRESSES = 3;
 
-function groupItem(g: RotatingGroup, version: 1 | 2): string {
+function groupItem(g: ChangedGroup, version: 1 | 2): string {
   // Only the printed (capped) addresses take part in the look-alike check.
   const shown = [g.plainOnly, g.repeatOnly].map((values) => values.slice(0, MAX_ADDRESSES));
   const raw = shown.flat();

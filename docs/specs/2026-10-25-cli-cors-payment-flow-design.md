@@ -80,7 +80,7 @@ Details:
 
 ## Known limits
 
-- Of the browser-like repeat, only the status, the CORS headers and (since `../designs/2026-10-31-cli-payto-rotation-design.md`) the `payTo` values of its challenge are used; nothing else of its challenge is checked, so a server that sends browsers a different challenge in other fields is not detected.
+- Of the browser-like repeat, only the status, the CORS headers and (since `../designs/2026-10-31-cli-payto-rotation-design.md`) the `payTo` values and (since `../designs/2026-10-31-cli-amount-change-design.md`) the amounts of its challenge are used; nothing else of its challenge is checked, so a server that sends browsers a different challenge in other fields is not detected.
 - The origin is fixed (`https://op8x.com`). A server that allows only listed origins answers it differently from its real web app, so `cors-origin-refused` or `cors-allow-origin` can appear although the app works. Both are `info`, so they never change the exit code.
 - The value of `Access-Control-Allow-Origin` is not compared with the origin sent; any value, including `null`, another origin, or `*` together with `Access-Control-Allow-Credentials: true` (which browsers reject for credentialed requests), counts as CORS-ready.
 - The browser-like repeat must return 402. An endpoint that answers both requests with the permit2 412 gets `cors-origin-refused` and no further CORS checks.

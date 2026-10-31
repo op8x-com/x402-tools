@@ -1,6 +1,6 @@
 import { DEFAULT_MAX_AMOUNT_PER_PAYMENT, x402Client } from "@x402/core/client";
 import type { PaymentRequired, SchemeNetworkClient } from "@x402/core/types";
-import { SOLANA_NETWORKS, V1_NETWORKS, assetWhere, caip2, findDefaultAsset, findEurc } from "./assets.ts";
+import { SOLANA_NETWORKS, V1_NETWORKS, assetWhere, atomicAmount, caip2, findDefaultAsset, findEurc, human } from "./assets.ts";
 import type { Level } from "./types.ts";
 
 // Spend-control findings (docs/designs/2026-10-30-cli-spend-controls-design.md): the installed
@@ -50,16 +50,6 @@ function survives(challenge: Obj, controls: Controls): boolean {
   return reached;
 }
 
-// An atomic amount as core compares it; 78 digits hold any uint256 and keep texts short.
-const ATOMIC = /^\d{1,78}$/;
-
-function human(atomic: string, decimals: number): string {
-  const n = BigInt(atomic);
-  const unit = 10n ** BigInt(decimals);
-  const frac = (n % unit).toString().padStart(decimals, "0").replace(/0+$/, "");
-  return frac ? `${n / unit}.${frac}` : String(n / unit);
-}
-
 interface Entry {
   index: number;
   asset: string;
@@ -74,9 +64,7 @@ interface Entry {
 function entries(accepts: unknown[], version: 1 | 2): (Entry | undefined)[] {
   return accepts.map((a, index) => {
     if (!isObj(a) || typeof a.scheme !== "string" || typeof a.network !== "string" || typeof a.asset !== "string") return undefined;
-    const raw = version === 1 ? a.maxAmountRequired : a.amount;
-    const amount = typeof raw === "string" && ATOMIC.test(raw) ? raw : undefined;
-    return { index, asset: a.asset, network: a.network, version, key: caip2(a.network, version), amount };
+    return { index, asset: a.asset, network: a.network, version, key: caip2(a.network, version), amount: atomicAmount(a, version) };
   });
 }
 

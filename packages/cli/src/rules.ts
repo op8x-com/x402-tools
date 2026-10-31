@@ -1,4 +1,5 @@
 import { PaymentRequiredV1Schema, PaymentRequiredV2Schema } from "@x402/core/schemas";
+import { amountRule } from "./amount.ts";
 import { legacyToCaip2 } from "./assets.ts";
 import { headerDecoded } from "./extract.ts";
 import { hintRules, isJsonRpcError, postNeedsBody } from "./hints.ts";
@@ -269,6 +270,14 @@ function methodRules(e: Extracted, x402Core: string): Finding[] {
           rotation = undefined;
         }
         if (rotation) out.push(rotation);
+        // And for the amount comparison, with its own guard so one rule cannot hide the other.
+        let change: ReturnType<typeof amountRule>;
+        try {
+          change = amountRule(e);
+        } catch {
+          change = undefined;
+        }
+        if (change) out.push(change);
       }
     }
   }

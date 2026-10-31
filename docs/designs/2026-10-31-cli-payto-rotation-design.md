@@ -34,7 +34,7 @@ The Python and Go SDKs are not covered; the texts name only `@x402/core`.
 
 - No check over time (hours or days). A `payTo` that changes rarely, for example after a wallet migration, is out of scope.
 - No comparison between GET and POST. A seller may route the two methods to different handlers on purpose.
-- No check of `amount`. A price that changes between requests breaks matching on a stock server in the same way. It needs its own wording and fix, because a price by time or load is legitimate if the server accepts the signed amount. This is a possible follow-up.
+- No check of `amount`; see `./2026-10-31-cli-amount-change-design.md`.
 - No finding when a group of options only gains, loses or repeats addresses between the two challenges.
 - No on-chain lookup and no judgement about whether the addresses belong to the same seller.
 
