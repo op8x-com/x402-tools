@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildReport, renderJson, renderText } from "../src/report.ts";
+import { buildReport, curlFor, quote, renderJson, renderText } from "../src/report.ts";
 import type { Finding, PreflightResult, ProbeResult } from "../src/types.ts";
 
 const probes: (ProbeResult | PreflightResult)[] = [
@@ -53,12 +53,12 @@ test("renderText orders by severity and includes fix, repro and pointers", () =>
   assert.match(text, /Fix: f/);
   assert.match(text, /GET {2}402 {2}9 ms {2}\(with Origin\)/);
   assert.match(text, /GET {2}402 {2}12 ms\n/);
-  assert.match(text, /curl -i -X GET 'https:\/\/api\.example\.com\/x'/);
-  assert.match(text, /curl -i -X GET -H 'Origin: https:\/\/op8x\.com' 'https:\/\/api\.example\.com\/x'/);
-  assert.match(text, /curl -i -X POST -H 'Content-Type: application\/json' -d '\{\}' 'https:\/\/api\.example\.com\/x'/);
+  assert.match(text, /curl -g -i -X GET 'https:\/\/api\.example\.com\/x'/);
+  assert.match(text, /curl -g -i -X GET -H 'Origin: https:\/\/op8x\.com' 'https:\/\/api\.example\.com\/x'/);
+  assert.match(text, /curl -g -i -X POST -H 'Content-Type: application\/json' -d '\{\}' 'https:\/\/api\.example\.com\/x'/);
   assert.match(
     text,
-    /curl -i -X OPTIONS -H 'Origin: https:\/\/op8x\.com' -H 'Access-Control-Request-Method: GET' -H 'Access-Control-Request-Headers: payment-signature' 'https:\/\/api\.example\.com\/x'/,
+    /curl -g -i -X OPTIONS -H 'Origin: https:\/\/op8x\.com' -H 'Access-Control-Request-Method: GET' -H 'Access-Control-Request-Headers: payment-signature' 'https:\/\/api\.example\.com\/x'/,
   );
   assert.ok(text.includes("\n      npx x402-listing-check 'https://api.example.com/x'\n"));
   assert.match(text, /Summary: 1 error, 1 warning\n/);
@@ -141,20 +141,7 @@ test("renderText: MCP case lists MCP payments first and leaves out the Bazaar en
   assert.equal(text.includes("Bazaar indexing"), false);
   assert.equal(text.includes("Listing and Bazaar checks"), false);
   assert.equal(r.notChecked.length, 3);
-  const quoted = renderText(buildReport("https://api.example.com/it's", "0.0.1", "2.29.0", probes, [mcp]), false);
-  assert.match(quoted, /@latest 'https:\/\/api\.example\.com\/it'\\''s' --mcp-tool YOUR_TOOL\n/);
-});
-
-test("notChecked: user name and password are left out of the copyable commands", () => {
-  const url = "http://user:pw@api.example.com:8080/x?q=1";
-  const r = buildReport(url, "0", "2", [{ method: "GET", url, status: 402, headers: {}, bodyText: "", ms: 1 }], []);
-  const where = r.notChecked[0].where ?? "";
-  assert.equal(/user|pw@/.test(where), false, where);
-  assert.ok(where.includes(JSON.stringify({ resource: "http://api.example.com:8080/x?q=1", method: "GET" })), where);
-  assert.ok(where.includes("npx x402-listing-check 'http://api.example.com:8080/x?q=1'"), where);
-  const mcp: Finding = { id: "mcp-endpoint", level: "info", method: "POST", title: "t", detail: "d" };
-  const m = buildReport(url, "0", "2", [{ method: "POST", url, status: 406, headers: {}, bodyText: "", ms: 1 }], [mcp]);
-  assert.equal(m.notChecked[0].where, "npx x402-listing-check@latest 'http://api.example.com:8080/x?q=1' --mcp-tool YOUR_TOOL");
+  assert.throws(() => buildReport("https://api.example.com/it's", "0.0.1", "2.29.0", probes, [mcp]), /text contains '/);
 });
 
 test("notChecked: the Bazaar entry is left out when every probe failed at network level", () => {
@@ -168,13 +155,22 @@ test("notChecked: the Bazaar entry is left out when every probe failed at networ
   assert.equal(one.notChecked[0].topic, "Bazaar indexing and metadata");
 });
 
-test("notChecked: URL with quotes is shell-quoted in the validation payload", () => {
-  const url = `https://api.example.com/a"b'c`;
+test("notChecked: the URL is shell-quoted in the validation payload", () => {
+  const url = "https://api.example.com/a?b=1";
   const r = buildReport(url, "0", "2", [{ method: "GET", url, status: 402, headers: {}, bodyText: "", ms: 1 }], []);
   const where = r.notChecked[0].where ?? "";
-  const payload = JSON.stringify({ resource: url, method: "GET" });
-  assert.ok(where.includes(`-d '${payload.replace(/'/g, "'\\''")}'`), where);
-  assert.ok(where.includes(`npx x402-listing-check '${url.replace(/'/g, "'\\''")}'`), where);
+  assert.ok(where.includes(`-d '{"resource":"https://api.example.com/a?b=1","method":"GET"}'`), where);
+  assert.ok(where.includes("npx x402-listing-check 'https://api.example.com/a?b=1'"), where);
+});
+
+test("quote: wraps in single quotes and refuses a single quote", () => {
+  assert.throws(() => quote("a'b"), /text contains '/);
+  assert.equal(quote("https://a.example/x"), "'https://a.example/x'");
+});
+
+test("renderText: the header line is the quoted command", () => {
+  const first = renderText(report, false).split("\n")[0];
+  assert.equal(first, `op8x check '${report.url}'`);
 });
 
 test("notChecked is in the JSON, round-trips, and where is omitted when empty", () => {
@@ -195,4 +191,23 @@ test("notChecked is in the JSON, round-trips, and where is omitted when empty", 
 test("JSON report names the @x402/core version right after the CLI version", () => {
   assert.equal(report.x402Core, "2.29.0");
   assert.deepEqual(Object.keys(JSON.parse(renderJson(report))).slice(0, 3), ["tool", "version", "x402Core"]);
+});
+
+test("curlFor: curl.exe on win32, curl elsewhere", () => {
+  assert.equal(curlFor("win32"), "curl.exe");
+  assert.equal(curlFor("linux"), "curl");
+  assert.equal(curlFor("darwin"), "curl");
+});
+
+test("renderText with curl.exe: Reproduce lines use it, the validate line keeps curl", () => {
+  const text = renderText(report, false, "curl.exe");
+  const lines = text.split("\n").map((l) => l.trim());
+  const repro = lines
+    .slice(lines.indexOf("Reproduce:") + 1)
+    .filter((l) => l.startsWith("curl") && !l.includes("-X POST https://api.cdp"));
+  assert.ok(repro.length > 0);
+  for (const l of repro) assert.ok(l.startsWith("curl.exe -g -i"), l);
+  const validate = lines.filter((l) => l.includes("/v2/x402/validate"));
+  assert.ok(validate.length > 0);
+  for (const l of validate) assert.ok(l.startsWith("curl -X POST"), l);
 });

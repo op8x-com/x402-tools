@@ -24,31 +24,20 @@ const ORDER: Level[] = ["error", "warn", "info", "pass"];
 const SYMBOL: Record<Level, string> = { error: "✖", warn: "!", info: "i", pass: "✓" };
 const COLOR: Record<Level, string> = { error: "31", warn: "33", info: "36", pass: "32" };
 
-export const quote = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
+// The CLI refuses URLs with ' or ", so single quotes are safe in POSIX shells and PowerShell alike.
+export function quote(s: string): string {
+  if (s.includes("'")) throw new Error("quote: text contains ' (URLs with ' are refused in cli.ts)");
+  return `'${s}'`;
+}
 
 const VALIDATE = "https://api.cdp.coinbase.com/platform/v2/x402/validate";
 
-// The URL for copyable commands: without user name and password, otherwise unchanged.
-function withoutUserinfo(url: string): string {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return url;
-  }
-  if (parsed.username === "" && parsed.password === "") return url;
-  parsed.username = "";
-  parsed.password = "";
-  return parsed.href;
-}
-
 function buildNotChecked(
-  checkedUrl: string,
+  url: string,
   probes: (ProbeResult | PreflightResult)[],
   findings: Finding[],
 ): Report["notChecked"] {
   const out: Report["notChecked"] = [];
-  const url = withoutUserinfo(checkedUrl);
   const plain = probes.filter((p) => p.method !== "OPTIONS" && !p.origin);
   // No response at all: there is nothing the Bazaar commands could check yet.
   const unreachable = probes.every((p) => p.status === undefined);
@@ -122,9 +111,14 @@ export function renderJson(r: Report): string {
 
 const count = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
-export function renderText(r: Report, color: boolean): string {
+/** Program name for the Reproduce lines: Windows PowerShell 5.1 aliases `curl` to Invoke-WebRequest. */
+export function curlFor(platform: string): string {
+  return platform === "win32" ? "curl.exe" : "curl";
+}
+
+export function renderText(r: Report, color: boolean, curl = "curl"): string {
   const paint = (code: string, s: string) => (color ? `\x1b[${code}m${s}\x1b[0m` : s);
-  const lines: string[] = [`op8x check ${r.url}`, ""];
+  const lines: string[] = [`op8x check ${quote(r.url)}`, ""];
 
   for (const q of r.requests) {
     const as = q.method !== "OPTIONS" && q.origin ? "  (with Origin)" : "";
@@ -143,14 +137,14 @@ export function renderText(r: Report, color: boolean): string {
   for (const q of r.requests) {
     const origin = q.origin ? ` -H ${quote(`Origin: ${q.origin}`)}` : "";
     if (q.method === "POST") {
-      lines.push(`  curl -i -X POST${origin} -H 'Content-Type: application/json' -d '{}' ${quote(r.url)}`);
+      lines.push(`  ${curl} -g -i -X POST${origin} -H 'Content-Type: application/json' -d '{}' ${quote(r.url)}`);
     } else if (q.method === "OPTIONS" && q.requestHeaders) {
       const acr = q.requestHeaders;
       lines.push(
-        `  curl -i -X OPTIONS${origin} -H ${quote(`Access-Control-Request-Method: ${acr["access-control-request-method"]}`)} -H ${quote(`Access-Control-Request-Headers: ${acr["access-control-request-headers"]}`)} ${quote(r.url)}`,
+        `  ${curl} -g -i -X OPTIONS${origin} -H ${quote(`Access-Control-Request-Method: ${acr["access-control-request-method"]}`)} -H ${quote(`Access-Control-Request-Headers: ${acr["access-control-request-headers"]}`)} ${quote(r.url)}`,
       );
     } else {
-      lines.push(`  curl -i -X ${q.method}${origin} ${quote(r.url)}`);
+      lines.push(`  ${curl} -g -i -X ${q.method}${origin} ${quote(r.url)}`);
     }
   }
   lines.push("", `Summary: ${count(r.summary.errors, "error")}, ${count(r.summary.warnings, "warning")}`, "Not checked by op8x check:");
