@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { b64, v1, v2 } from "./fixtures.ts";
+import { b64, v1main as v1, v2main } from "./fixtures.ts";
 
 export async function startServer(): Promise<{ url: string; close: () => Promise<void> }> {
   let rotations = 0;
@@ -10,6 +10,8 @@ export async function startServer(): Promise<{ url: string; close: () => Promise
       res.writeHead(status, { "content-type": "application/json", ...headers });
       res.end(JSON.stringify(body));
     };
+    // resource.url as a server sees the request, so end-to-end checks report no resource-url-mismatch.
+    const v2 = { ...v2main, resource: { ...v2main.resource, url: `http://${req.headers.host}${path}` } };
     const challenge = { "payment-required": b64(v2), "cache-control": "no-store" };
     switch (path) {
       case "/v2-good":

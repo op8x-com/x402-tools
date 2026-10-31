@@ -3,7 +3,19 @@ import assert from "node:assert/strict";
 import { DEFAULT_ASSETS as EVM_ASSETS } from "@x402/evm";
 import { EVM_NETWORK_CHAIN_ID_MAP } from "@x402/evm/v1";
 import { DEFAULT_ASSETS as SVM_ASSETS, V1_TO_V2_NETWORK_MAP } from "@x402/svm";
-import { DEFAULT_ASSETS, EURC_ASSETS, SOLANA_NETWORKS, V1_NETWORKS, assetWhere, caip2, findDefaultAsset, findKnownAsset } from "../src/assets.ts";
+import {
+  DEFAULT_ASSETS,
+  EURC_ASSETS,
+  SOLANA_NETWORKS,
+  TEST_NETWORKS,
+  V1_NETWORKS,
+  assetWhere,
+  caip2,
+  findDefaultAsset,
+  findKnownAsset,
+  isTestNetwork,
+  sameAddress,
+} from "../src/assets.ts";
 
 const BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const SOLANA = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
@@ -62,4 +74,40 @@ test("assetWhere: an unknown asset by its cleaned address", () => {
 test("assetWhere: a v1 network name resolves the label but prints the name as sent", () => {
   assert.equal(assetWhere(BASE_USDC, "base", 1), "USDC on base");
   assert.equal(assetWhere(BASE_USDC, "base", 2), `${BASE_USDC} on base`);
+});
+
+test("TEST_NETWORKS: the v1 test networks, pinned so a new SDK network forces a look", () => {
+  assert.deepEqual([...TEST_NETWORKS].sort(), [
+    "eip155:10143",
+    "eip155:11124",
+    "eip155:11155111",
+    "eip155:1328",
+    "eip155:2201",
+    "eip155:324705682",
+    "eip155:43113",
+    "eip155:80002",
+    "eip155:84532",
+    "solana:4uhcVJyU9pJkvQyS88uRDiswHXSCkY3z",
+    "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+  ]);
+});
+
+test("isTestNetwork maps v1 names only in v1", () => {
+  assert.equal(isTestNetwork("eip155:84532", 2), true);
+  assert.equal(isTestNetwork("base-sepolia", 1), true);
+  assert.equal(isTestNetwork("base-sepolia", 2), false);
+  assert.equal(isTestNetwork("eip155:8453", 2), false);
+  assert.equal(isTestNetwork("base", 1), false);
+  assert.equal(isTestNetwork("eip155:421614", 2), false);
+  assert.equal(isTestNetwork("__proto__", 1), false);
+});
+
+test("sameAddress: EVM ignores case, Solana does not", () => {
+  assert.equal(sameAddress(BASE_USDC, BASE_USDC.toLowerCase(), "eip155:8453"), true);
+  assert.equal(sameAddress(BASE_USDC, BASE_USDC.toUpperCase(), "eip155:1"), true);
+  assert.equal(sameAddress(BASE_USDC, "0x1111111111111111111111111111111111111111", "eip155:8453"), false);
+  const mint = DEFAULT_ASSETS[SOLANA][0].asset;
+  assert.equal(sameAddress(mint, mint, SOLANA), true);
+  assert.equal(sameAddress(mint, mint.toLowerCase(), SOLANA), false);
+  assert.equal(sameAddress(BASE_USDC, BASE_USDC.toLowerCase(), "base"), false);
 });
