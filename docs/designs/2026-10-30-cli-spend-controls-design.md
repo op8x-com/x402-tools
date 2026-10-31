@@ -192,7 +192,7 @@ Amounts are shown in human units. Asset and network strings from the challenge a
   - `DEFAULT_ASSETS` equals the exports of `@x402/evm` and `@x402/svm`;
   - `V1_NETWORKS` equals their v1 maps;
   - no `EURC_ASSETS` row appears in `DEFAULT_ASSETS`.
-- Existing fixtures (USDC on Base Sepolia, `10000`) report none of the new findings.
+- Existing fixtures (USDC on Base Sepolia, `10000`) report none of the new findings. The end-to-end tests now run against the test server with `v2main`/`v1main` (the same challenges on Base mainnet), see `2026-10-31-cli-challenge-hints-design.md`.
 
 ## Risks and limits
 
