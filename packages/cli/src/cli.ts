@@ -22,6 +22,7 @@ Options:
   --method <GET|POST>    probe only this method (default: both)
   --json                 print a JSON report
   --timeout <seconds>    per-request timeout (default: 10)
+  --payer <address>      your own paying wallet; warns if it is a payTo
   -v, --version          print the version
   -h, --help             print this help
 `;
@@ -35,6 +36,7 @@ function parse(argv: string[]) {
       method: { type: "string" },
       json: { type: "boolean" },
       timeout: { type: "string" },
+      payer: { type: "string" },
       help: { type: "boolean", short: "h" },
       version: { type: "boolean", short: "v" },
     },
@@ -89,6 +91,12 @@ export async function run(argv: string[], io: Io): Promise<number> {
     return 2;
   }
 
+  const payer = values.payer;
+  if (payer !== undefined && !/^(0x[0-9a-fA-F]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$/.test(payer)) {
+    io.err("--payer must be a wallet address\n");
+    return 2;
+  }
+
   const opts = { timeoutMs: timeout * 1000, version: VERSION, fetchImpl: io.fetchImpl };
   const probes: ProbeResult[] = [];
   for (const m of methods) {
@@ -109,7 +117,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   }
   const plan = preflightPlan(extracted);
   const pre = plan ? await preflight(url.href, plan.method, plan.headers, opts) : undefined;
-  const findings = runRules(extracted, pre, url.href, X402_CORE_VERSION);
+  const findings = runRules(extracted, pre, url.href, X402_CORE_VERSION, { payer });
   const sent = [...probes, ...browserProbes, ...(pre ? [pre] : [])];
   const report = buildReport(url.href, VERSION, X402_CORE_VERSION, sent, findings);
   io.out(values.json ? renderJson(report) : renderText(report, io.color));

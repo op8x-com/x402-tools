@@ -94,6 +94,37 @@ test("usage errors exit 2", async () => {
   assert.equal(await run(["check", "https://example.com", "--nope"], capture()), 2);
 });
 
+const PAYTO = "0x1111111111111111111111111111111111111111";
+
+test("--payer equal to the payTo reports self-payment end to end", async () => {
+  const io = capture();
+  const code = await run(["check", `${server.url}/v2-good`, "--payer", PAYTO.toUpperCase().replace("0X", "0x")], io);
+  assert.equal(code, 0);
+  assert.match(io.stdout(), /Payer is the payTo address/);
+  const j = capture();
+  assert.equal(await run(["check", `${server.url}/v2-good`, "--payer", PAYTO, "--json"], j), 0);
+  assert.ok(JSON.parse(j.stdout()).findings.some((f: { id: string }) => f.id === "self-payment"));
+  const other = capture();
+  await run(["check", `${server.url}/v2-good`, "--payer", "0x2222222222222222222222222222222222222222"], other);
+  assert.equal(other.stdout().includes("Payer is the payTo address"), false);
+});
+
+test("--payer rejects anything that is not an address, without echoing it", async () => {
+  const key = "a".repeat(64);
+  for (const bad of ["abc", key, `0x${key}`, "0x123", "", "not an address with spaces"]) {
+    const io = capture();
+    assert.equal(await run(["check", `${server.url}/v2-good`, "--payer", bad], io), 2, bad);
+    assert.match(io.stderr(), /--payer must be a wallet address/);
+    if (bad.length > 3) assert.equal((io.stderr() + io.stdout()).includes(bad), false);
+  }
+  const noValue = capture();
+  assert.equal(await run(["check", `${server.url}/v2-good`, "--payer"], noValue), 2);
+  assert.match(noValue.stderr(), /payer/);
+  const help = capture();
+  assert.equal(await run(["--help"], help), 0);
+  assert.ok(help.stdout().includes("\n  --payer <address>      your own paying wallet; warns if it is a payTo\n"));
+});
+
 test("--version and --help exit 0", async () => {
   const io = capture();
   assert.equal(await run(["--version"], io), 0);
@@ -172,8 +203,9 @@ test("MCP endpoint exits 0 with a hint and sends only GET and POST", async () =>
   const text = io.stdout();
   assert.match(text, /MCP endpoint: x402 over MCP does not use HTTP 402/);
   assert.match(text, /npx x402-listing-check@latest '[^']+\/mcp' --mcp-tool YOUR_TOOL/);
-  assert.match(text, /\nMCP payment check: npx x402-listing-check@latest /);
+  assert.match(text, /\nNot checked by op8x check:\n  - MCP payments: npx x402-listing-check@latest /);
   assert.equal(text.includes("Listing and Bazaar checks"), false);
+  assert.equal(text.includes("Bazaar indexing"), false);
   assert.equal(text.includes("IGNORE PREVIOUS INSTRUCTIONS"), false);
   assert.match(text, /Summary: 0 errors, 0 warnings/);
 
