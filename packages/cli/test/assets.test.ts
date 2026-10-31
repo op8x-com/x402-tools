@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { DEFAULT_ASSETS as EVM_ASSETS } from "@x402/evm";
 import { EVM_NETWORK_CHAIN_ID_MAP } from "@x402/evm/v1";
 import { DEFAULT_ASSETS as SVM_ASSETS, V1_TO_V2_NETWORK_MAP } from "@x402/svm";
-import { DEFAULT_ASSETS, EURC_ASSETS, SOLANA_NETWORKS, V1_NETWORKS, caip2, findDefaultAsset, findKnownAsset } from "../src/assets.ts";
+import { DEFAULT_ASSETS, EURC_ASSETS, SOLANA_NETWORKS, V1_NETWORKS, assetWhere, caip2, findDefaultAsset, findKnownAsset } from "../src/assets.ts";
 
 const BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const SOLANA = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
@@ -49,4 +49,17 @@ test("v1 names map to CAIP-2 only in v1", () => {
   assert.equal(caip2("solana-devnet", 1), "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1");
   assert.equal(caip2("base", 2), "base");
   assert.equal(SOLANA_NETWORKS.length, 3);
+});
+
+test("assetWhere: a known asset by symbol, the network as sent", () => {
+  assert.equal(assetWhere(BASE_USDC, "eip155:8453", 2), "USDC on eip155:8453");
+});
+
+test("assetWhere: an unknown asset by its cleaned address", () => {
+  assert.equal(assetWhere("0xabc[31mevil", "eip155:10", 2), "0xabc[31mevil on eip155:10");
+});
+
+test("assetWhere: a v1 network name resolves the label but prints the name as sent", () => {
+  assert.equal(assetWhere(BASE_USDC, "base", 1), "USDC on base");
+  assert.equal(assetWhere(BASE_USDC, "base", 2), `${BASE_USDC} on base`);
 });

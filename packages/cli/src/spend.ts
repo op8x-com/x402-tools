@@ -1,7 +1,6 @@
 import { DEFAULT_MAX_AMOUNT_PER_PAYMENT, x402Client } from "@x402/core/client";
 import type { PaymentRequired, SchemeNetworkClient } from "@x402/core/types";
-import { SOLANA_NETWORKS, V1_NETWORKS, caip2, findDefaultAsset, findEurc, findKnownAsset } from "./assets.ts";
-import { cleanText } from "./extract.ts";
+import { SOLANA_NETWORKS, V1_NETWORKS, assetWhere, caip2, findDefaultAsset, findEurc } from "./assets.ts";
 import type { Level } from "./types.ts";
 
 // Spend-control findings (docs/designs/2026-10-30-cli-spend-controls-design.md): the installed
@@ -65,6 +64,7 @@ interface Entry {
   index: number;
   asset: string;
   network: string;
+  version: 1 | 2;
   /** CAIP-2 network as the client resolves it. */
   key: string;
   /** Atomic price (amount in v2, maxAmountRequired in v1), if it is a string of digits. */
@@ -76,12 +76,11 @@ function entries(accepts: unknown[], version: 1 | 2): (Entry | undefined)[] {
     if (!isObj(a) || typeof a.scheme !== "string" || typeof a.network !== "string" || typeof a.asset !== "string") return undefined;
     const raw = version === 1 ? a.maxAmountRequired : a.amount;
     const amount = typeof raw === "string" && ATOMIC.test(raw) ? raw : undefined;
-    return { index, asset: a.asset, network: a.network, key: caip2(a.network, version), amount };
+    return { index, asset: a.asset, network: a.network, version, key: caip2(a.network, version), amount };
   });
 }
 
-const label = (e: Entry) => findKnownAsset(e.asset, e.key)?.symbol ?? cleanText(e.asset, 48);
-const where = (e: Entry) => `${label(e)} on ${cleanText(e.network, 48)}`;
+const where = (e: Entry) => assetWhere(e.asset, e.network, e.version);
 const isEurc = (e: Entry) => findEurc(e.asset, e.key) !== undefined;
 
 function capFindings(challenge: Obj, list: (Entry | undefined)[]): SpendFinding[] {

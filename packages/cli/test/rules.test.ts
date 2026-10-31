@@ -605,3 +605,41 @@ test("412 with a non-object header is not a 402: no header-not-object", () => {
   assert.equal(find(fs, "header-not-object"), undefined);
   assert.ok(ids(fs).includes("no-402"));
 });
+
+// payTo rotation: runRules wiring
+const PA = "0x1111111111111111111111111111111111111111";
+const PB = "0x2222222222222222222222222222222222222222";
+const rotEx = (method: "GET" | "POST", payTo: string, originPayTo: string) => ({
+  ...extract(pr(method, 402, { ...NS, "payment-required": b64({ ...v2, accepts: [{ ...v2.accepts[0], payTo }] }) }, {})),
+  originStatus: 402,
+  originChallenge: { ...v2, accepts: [{ ...v2.accepts[0], payTo: originPayTo }] },
+  originVersion: 2 as const,
+});
+
+test("runRules returns payto-rotates for a rotating pair", () => {
+  const f = runRules([rotEx("GET", PA, PB)]).filter((x) => x.id === "payto-rotates");
+  assert.equal(f.length, 1);
+  assert.equal(f[0].level, "warn");
+  assert.equal(f[0].method, "GET");
+  assert.equal(ids(runRules([rotEx("GET", PA, PA)])).includes("payto-rotates"), false);
+});
+
+test("payto-rotates on GET and POST gives two findings, not both", () => {
+  const f = runRules([rotEx("GET", PA, PB), rotEx("POST", PA, PB)]).filter((x) => x.id === "payto-rotates");
+  assert.deepEqual(f.map((x) => x.method).sort(), ["GET", "POST"]);
+});
+
+test("spend findings survive when paytoRule throws on a hostile repeat challenge", () => {
+  const big = { ...v2, accepts: [{ ...v2.accepts[0], network: "eip155:8453", asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", amount: "2000000" }] };
+  const e = extract(pr("GET", 402, { ...NS, "payment-required": b64(big) }, {}));
+  const hostile = { ...v2 };
+  Object.defineProperty(hostile, "accepts", {
+    get() {
+      throw new Error("boom");
+    },
+    enumerable: true,
+  });
+  const fs = runRules([{ ...e, originStatus: 402, originChallenge: hostile, originVersion: 2 as const }]);
+  assert.ok(ids(fs).includes("default-cap"));
+  assert.equal(ids(fs).includes("payto-rotates"), false);
+});

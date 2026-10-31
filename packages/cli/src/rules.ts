@@ -1,6 +1,7 @@
 import { PaymentRequiredV1Schema, PaymentRequiredV2Schema } from "@x402/core/schemas";
 import { legacyToCaip2 } from "./assets.ts";
 import { headerDecoded } from "./extract.ts";
+import { paytoRule } from "./payto.ts";
 import { quote } from "./report.ts";
 import { spendRules } from "./spend.ts";
 import type { Extracted, Finding, Level, Method, PreflightResult } from "./types.ts";
@@ -259,6 +260,14 @@ function methodRules(e: Extracted, x402Core: string): Finding[] {
           spend = [];
         }
         for (const f of spend) add(f.id, f.level, f.title, f.detail, f.fix);
+        // Same for the payTo comparison: the challenge of the repeat is server input too.
+        let rotation: ReturnType<typeof paytoRule>;
+        try {
+          rotation = paytoRule(e);
+        } catch {
+          rotation = undefined;
+        }
+        if (rotation) out.push(rotation);
       }
     }
   }

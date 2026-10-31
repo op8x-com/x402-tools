@@ -84,8 +84,9 @@ export function extract(p: ProbeResult): Extracted {
   return { ...out, official: officialClientRead(out) };
 }
 
-/** Takes the CORS headers from the browser-like probe of the same method. */
+/** Takes the CORS headers, the challenge and the version from the browser-like probe of the same method. */
 export function withBrowserView(e: Extracted, browser: ProbeResult): Extracted {
+  const repeat = extract(browser);
   return {
     ...e,
     allowOrigin: browser.headers["access-control-allow-origin"],
@@ -93,6 +94,8 @@ export function withBrowserView(e: Extracted, browser: ProbeResult): Extracted {
     allowCredentials: browser.headers["access-control-allow-credentials"],
     ...(browser.status !== undefined ? { originStatus: browser.status } : {}),
     ...(browser.error ? { originError: browser.error } : {}),
+    ...(repeat.challenge !== undefined ? { originChallenge: repeat.challenge } : {}),
+    ...(repeat.version !== undefined ? { originVersion: repeat.version } : {}),
   };
 }
 
