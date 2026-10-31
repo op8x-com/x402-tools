@@ -170,9 +170,12 @@ export const SOLANA_NETWORKS = Object.keys(DEFAULT_ASSETS).filter((n) => n.start
 // Network names come from the challenge: only own keys count, never "__proto__" or "constructor".
 const own = <T>(table: Record<string, T>, key: string): T | undefined => (Object.hasOwn(table, key) ? table[key] : undefined);
 
+/** CAIP-2 identifier for a v1 network name, if default clients know it. */
+export const legacyToCaip2 = (network: string): string | undefined => own(V1_NETWORKS, network);
+
 /** CAIP-2 form of a network as a client of the given version resolves it. */
 export function caip2(network: string, version: 1 | 2): string {
-  return version === 1 ? (own(V1_NETWORKS, network) ?? network) : network;
+  return version === 1 ? (legacyToCaip2(network) ?? network) : network;
 }
 
 // EVM addresses compare case-insensitively, Solana mints exactly, as the SDKs do.

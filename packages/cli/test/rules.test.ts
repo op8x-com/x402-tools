@@ -65,6 +65,23 @@ test("v2 with legacy network name gets a CAIP-2 hint and no duplicate schema fin
   assert.equal(fs.some((x) => x.id === "schema" && x.title.includes("accepts.0.network")), false);
 });
 
+test("v2 legacy network hint covers every v1 name default clients know", () => {
+  const hint = (network: string) => {
+    const bad = { ...v2, accepts: [{ ...v2.accepts[0], network }] };
+    return runRules([extract(pr("GET", 402, { ...NS, "payment-required": b64(bad) }, {}))]).find((x) => x.id === "v2-legacy-network")?.fix;
+  };
+  assert.equal(hint("solana"), 'Use "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp".');
+  assert.equal(hint("sei"), 'Use "eip155:1329".');
+});
+
+test("v2 legacy network hint ignores prototype keys", () => {
+  for (const network of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
+    const bad = { ...v2, accepts: [{ ...v2.accepts[0], network }] };
+    const f = runRules([extract(pr("GET", 402, { ...NS, "payment-required": b64(bad) }, {}))]).find((x) => x.id === "v2-legacy-network");
+    assert.equal(f?.fix, 'Use the CAIP-2 identifier, e.g. "eip155:8453" for Base.', network);
+  }
+});
+
 test("v2 using maxAmountRequired is mixed dialect, without duplicate schema finding", () => {
   const { amount: _amount, ...rest } = v2.accepts[0];
   const bad = { ...v2, accepts: [{ ...rest, maxAmountRequired: "10000" }] };
@@ -272,6 +289,24 @@ test("unknown payment flow is an error", () => {
   assert.equal(f?.level, "error");
   assert.match(f?.detail ?? "", /accepts\[0\]/);
   assert.match(f?.detail ?? "", /skip/);
+});
+
+test("unknown payment flow is an error in v1 too", () => {
+  const bad = { ...v1, accepts: [{ ...v1.accepts[0], extra: { paymentFlow: "deferred" } }] };
+  const f = runRules([extract(pr("GET", 402, NS, bad))]).find((x) => x.id === "payment-flow");
+  assert.equal(f?.level, "error");
+  assert.match(f?.detail ?? "", /accepts\[0\]/);
+});
+
+test("v1 without paymentFlow is not asked to declare one", () => {
+  const bad = { ...v1, accepts: [{ ...v1.accepts[0], scheme: "auth-capture" }] };
+  assert.equal(ids(runRules([extract(pr("GET", 402, NS, bad))])).includes("payment-flow"), false);
+});
+
+test("null payment flow counts as omitted, as in the official client", () => {
+  assert.equal(ids(runRules([withAccept({ extra: { paymentFlow: null } })])).includes("payment-flow"), false);
+  const f = runRules([withAccept({ scheme: "auth-capture", extra: { paymentFlow: null } })]).find((x) => x.id === "payment-flow");
+  assert.equal(f?.level, "warn");
 });
 
 test("scheme with a non-authorization default must declare paymentFlow", () => {
