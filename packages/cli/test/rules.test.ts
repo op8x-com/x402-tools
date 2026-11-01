@@ -70,15 +70,15 @@ test("v2 legacy network hint covers every v1 name default clients know", () => {
     const bad = { ...v2, accepts: [{ ...v2.accepts[0], network }] };
     return runRules([extract(pr("GET", 402, { ...NS, "payment-required": b64(bad) }, {}))]).find((x) => x.id === "v2-legacy-network")?.fix;
   };
-  assert.equal(hint("solana"), 'Use "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp".');
-  assert.equal(hint("sei"), 'Use "eip155:1329".');
+  assert.equal(hint("solana"), "Use 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp'.");
+  assert.equal(hint("sei"), "Use 'eip155:1329'.");
 });
 
 test("v2 legacy network hint ignores prototype keys", () => {
   for (const network of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
     const bad = { ...v2, accepts: [{ ...v2.accepts[0], network }] };
     const f = runRules([extract(pr("GET", 402, { ...NS, "payment-required": b64(bad) }, {}))]).find((x) => x.id === "v2-legacy-network");
-    assert.equal(f?.fix, 'Use the CAIP-2 identifier, e.g. "eip155:8453" for Base.', network);
+    assert.equal(f?.fix, "Use the CAIP-2 identifier, e.g. 'eip155:8453' for Base.", network);
   }
 });
 
@@ -319,7 +319,7 @@ test("scheme with a non-authorization default must declare paymentFlow", () => {
     const f = runRules([withAccept(c)]).find((x) => x.id === "payment-flow");
     assert.equal(f?.level, "warn", JSON.stringify(c));
   }
-  assert.match(runRules([withAccept(cases[0])]).find((x) => x.id === "payment-flow")?.fix ?? "", /"escrow"/);
+  assert.equal(runRules([withAccept(cases[0])]).find((x) => x.id === "payment-flow")?.fix, "Set extra.paymentFlow to 'escrow'.");
   assert.equal(ids(runRules([withAccept({ scheme: "upto" })])).includes("payment-flow"), false);
 });
 
@@ -780,4 +780,76 @@ test("other findings and hints survive when one hint rule throws on a hostile ch
   // Only the rule that threw is skipped; the other hints still report.
   assert.equal(ids(fs).includes("testnet-only"), true);
   assert.equal(ids(fs).includes("extensions-placement"), false);
+});
+
+// Server values in quotes and escaped, the CLI's own words in single quotes
+
+const v2With = (a: Record<string, unknown>, headers: Record<string, string> = NS) =>
+  runRules([extract(pr("GET", 402, { ...headers, "payment-required": b64({ ...v2, accepts: [{ ...v2.accepts[0], ...a }] }) }, {}))]);
+
+test("redirect quotes the Location header and marks a missing one", () => {
+  const to = find(runRules([extract(pr("GET", 302, { location: "https://elsewhere.example/\u00a0x" }))]), "redirect");
+  assert.equal(to?.detail, 'Location: "https://elsewhere.example/\\u{00A0}x"');
+  assert.equal(find(runRules([extract(pr("GET", 302))]), "redirect")?.detail, "Location: (none)");
+});
+
+test("header-not-base64 quotes the escaped start of the header, up to 100 characters", () => {
+  const f = find(runRules([extract(pr("GET", 402, { ...NS, "payment-required": "a-b_c\t\"" }, {}))]), "header-not-base64");
+  assert.match(f?.detail ?? "", /^Value starts with: "a-b_c\\u\{0009\}\\u\{0022\}"/);
+  const long = find(runRules([extract(pr("GET", 402, { ...NS, "payment-required": "-".repeat(150) }, {}))]), "header-not-base64");
+  assert.ok((long?.detail ?? "").startsWith('Value starts with: "' + "-".repeat(100) + '\u2026"'), long?.detail);
+});
+
+test("v2-legacy-network quotes the network and uses single quotes for its fix", () => {
+  const f = find(v2With({ network: "base" }), "v2-legacy-network");
+  assert.equal(f?.title, 'v2 uses legacy network name "base"');
+  assert.equal(f?.detail, 'accepts[0].network is "base"; v2 requires CAIP-2.');
+  assert.equal(f?.fix, "Use 'eip155:8453'.");
+  assert.equal(find(v2With({ network: 'ba"se' }), "v2-legacy-network")?.title, 'v2 uses legacy network name "ba\\u{0022}se"');
+});
+
+test("v1-caip2-network quotes the network and uses single quotes for its fix", () => {
+  const bad = { ...v1, accepts: [{ ...v1.accepts[0], network: "eip155:84532" }] };
+  const f = find(runRules([extract(pr("GET", 402, NS, bad))]), "v1-caip2-network");
+  assert.equal(f?.title, 'v1 uses CAIP-2 network "eip155:84532"');
+  assert.equal(f?.detail, 'accepts[0].network is "eip155:84532"; v1 clients expect legacy names.');
+  assert.equal(f?.fix, "Use a legacy name such as 'base-sepolia', or move to v2.");
+});
+
+test("mixed-dialect and payment-flow use single quotes for the CLI's own words", () => {
+  const { amount: _amount, ...rest } = v2.accepts[0];
+  const v2bad = { ...v2, accepts: [{ ...rest, maxAmountRequired: "10000" }] };
+  const v2mixed = find(runRules([extract(pr("GET", 402, { ...NS, "payment-required": b64(v2bad) }, {}))]), "mixed-dialect");
+  assert.equal(v2mixed?.fix, "In v2, the price field is 'amount' and 'resource' is a top-level object.");
+  const { maxAmountRequired: _max, ...v1rest } = v1.accepts[0];
+  const v1bad = { ...v1, accepts: [{ ...v1rest, amount: "10000" }] };
+  const v1mixed = find(runRules([extract(pr("GET", 402, NS, v1bad))]), "mixed-dialect");
+  assert.equal(v1mixed?.detail, "accepts[0] has 'amount' instead of 'maxAmountRequired'.");
+  assert.equal(v1mixed?.fix, "In v1, the price field is 'maxAmountRequired'.");
+  const unknown = find(v2With({ extra: { paymentFlow: "deferred" } }), "payment-flow");
+  assert.equal(unknown?.fix, "Use 'authorization', 'upfront' or 'escrow', or omit it for the scheme default.");
+  const undeclared = find(v2With({ scheme: "auth-capture" }), "payment-flow");
+  assert.match(undeclared?.detail ?? "", /defaults to the 'escrow' flow,/);
+  assert.match(undeclared?.detail ?? "", /whenever the flow is not 'authorization', so/);
+});
+
+test("cache-control: not set for a missing header, an empty one as \"\", the value quoted otherwise", () => {
+  const detail = (headers: Record<string, string>) => find(v2With({}, headers), "cache-control")?.detail;
+  assert.equal(detail({}), "Cache-Control is not set.");
+  assert.equal(detail({ "cache-control": "" }), 'Cache-Control is "".');
+  assert.equal(detail({ "cache-control": "no-\u200bstore" }), 'Cache-Control is "no-\\u{200B}store".');
+  assert.equal(find(v2With({}, {}), "cache-control")?.fix, "Send 'Cache-Control: no-store' with 402 responses.");
+});
+
+test("CORS header values: not set for a missing header, an empty one as \"\", own '*' in single quotes", () => {
+  const expose = (headers: Record<string, string>) =>
+    runRules([corsV2("GET", headers)], pf(204, PF_OK)).find((x) => x.id === "cors-expose-headers")?.detail ?? "";
+  assert.match(expose(ORIGIN_OK), /^Access-Control-Expose-Headers is not set; missing:/);
+  assert.match(expose({ ...ORIGIN_OK, "access-control-expose-headers": "" }), /^Access-Control-Expose-Headers is ""; missing:/);
+  const cred = expose({ ...ORIGIN_OK, "access-control-expose-headers": "*", "access-control-allow-credentials": "true" });
+  assert.match(cred, /^Access-Control-Expose-Headers is "\*"; missing: PAYMENT-REQUIRED, PAYMENT-RESPONSE\. '\*' does not cover credentialed requests\. The browser/);
+  const allow = (headers: Record<string, string>) =>
+    runRules([corsV2("POST")], pf(204, { ...ORIGIN_OK, ...headers })).find((x) => x.id === "cors-allow-headers")?.detail ?? "";
+  assert.match(allow({ "access-control-allow-headers": "authorization" }), /^Access-Control-Allow-Headers is "authorization"; missing:/);
+  assert.match(allow({ "access-control-allow-headers": "" }), /^Access-Control-Allow-Headers is ""; missing:/);
 });

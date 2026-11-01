@@ -1,7 +1,7 @@
 import { PaymentRequiredV1Schema, PaymentRequiredV2Schema } from "@x402/core/schemas";
 import { amountRule } from "./amount.ts";
 import { legacyToCaip2 } from "./assets.ts";
-import { headerDecoded } from "./extract.ts";
+import { headerDecoded, printEscaped } from "./extract.ts";
 import { hintRules, isJsonRpcError, postNeedsBody } from "./hints.ts";
 import { paytoRule } from "./payto.ts";
 import { quote } from "./report.ts";
@@ -60,7 +60,7 @@ function methodRules(e: Extracted, x402Core: string): Finding[] {
       "redirect",
       "warn",
       `Redirect (${e.status})`,
-      `Location: ${e.redirectTo ?? "(none)"}`,
+      `Location: ${e.redirectTo !== undefined ? printEscaped(e.redirectTo) : "(none)"}`,
       "Serve the 402 challenge at the final URL; many clients do not follow redirects before paying.",
     );
     return out;
@@ -86,7 +86,7 @@ function methodRules(e: Extracted, x402Core: string): Finding[] {
       "header-not-base64",
       decoderLevel,
       "PAYMENT-REQUIRED header is not standard base64",
-      `Value starts with: ${(e.headerRaw ?? "").slice(0, 40)}${officialReads}`,
+      `Value starts with: ${printEscaped(e.headerRaw ?? "")}${officialReads}`,
       "Encode the JSON challenge with standard base64 (A-Z a-z 0-9 + / =): no base64url, no whitespace.",
     );
   }
@@ -177,18 +177,18 @@ function methodRules(e: Extracted, x402Core: string): Finding[] {
           add(
             "v2-legacy-network",
             "error",
-            `v2 uses legacy network name "${net}"`,
-            `accepts[${i}].network is "${net}"; v2 requires CAIP-2.`,
-            hint ? `Use "${hint}".` : 'Use the CAIP-2 identifier, e.g. "eip155:8453" for Base.',
+            `v2 uses legacy network name ${printEscaped(net)}`,
+            `accepts[${i}].network is ${printEscaped(net)}; v2 requires CAIP-2.`,
+            hint ? `Use '${hint}'.` : "Use the CAIP-2 identifier, e.g. 'eip155:8453' for Base.",
           );
         }
         if (v === 1 && typeof net === "string" && net.includes(":")) {
           add(
             "v1-caip2-network",
             "warn",
-            `v1 uses CAIP-2 network "${net}"`,
-            `accepts[${i}].network is "${net}"; v1 clients expect legacy names.`,
-            'Use a legacy name such as "base-sepolia", or move to v2.',
+            `v1 uses CAIP-2 network ${printEscaped(net)}`,
+            `accepts[${i}].network is ${printEscaped(net)}; v1 clients expect legacy names.`,
+            "Use a legacy name such as 'base-sepolia', or move to v2.",
           );
         }
         if (v === 2 && ("maxAmountRequired" in a || typeof a.resource === "string")) {
@@ -198,7 +198,7 @@ function methodRules(e: Extracted, x402Core: string): Finding[] {
             "error",
             "v2 challenge uses v1 fields",
             `accepts[${i}] contains ${"maxAmountRequired" in a ? "maxAmountRequired" : "a string resource"}.`,
-            'In v2, the price field is "amount" and "resource" is a top-level object.',
+            "In v2, the price field is 'amount' and 'resource' is a top-level object.",
           );
         }
         // The official client treats null like an omitted flow and drops unknown flows in v1 and v2.
@@ -209,7 +209,7 @@ function methodRules(e: Extracted, x402Core: string): Finding[] {
             "error",
             `Unknown payment flow ${JSON.stringify(flow)}`,
             `accepts[${i}].extra.paymentFlow is ${JSON.stringify(flow)}. Clients must not pay for a flow they do not recognize and skip this entry.`,
-            'Use "authorization", "upfront" or "escrow", or omit it for the scheme default.',
+            "Use 'authorization', 'upfront' or 'escrow', or omit it for the scheme default.",
           );
         }
         const fallback = defaultFlow(a.scheme, net);
@@ -218,8 +218,8 @@ function methodRules(e: Extracted, x402Core: string): Finding[] {
             "payment-flow",
             "warn",
             "Payment flow not declared",
-            `accepts[${i}] (${String(a.scheme)} on ${String(net)}) defaults to the "${fallback}" flow, which settles before the resource runs. The spec requires extra.paymentFlow whenever the flow is not "authorization", so clients can tell without scheme-specific knowledge.`,
-            `Set extra.paymentFlow to "${fallback}".`,
+            `accepts[${i}] (${String(a.scheme)} on ${String(net)}) defaults to the '${fallback}' flow, which settles before the resource runs. The spec requires extra.paymentFlow whenever the flow is not 'authorization', so clients can tell without scheme-specific knowledge.`,
+            `Set extra.paymentFlow to '${fallback}'.`,
           );
         }
         if (v === 1 && "amount" in a && !("maxAmountRequired" in a)) {
@@ -228,8 +228,8 @@ function methodRules(e: Extracted, x402Core: string): Finding[] {
             "mixed-dialect",
             "error",
             "v1 challenge uses v2 fields",
-            `accepts[${i}] has "amount" instead of "maxAmountRequired".`,
-            'In v1, the price field is "maxAmountRequired".',
+            `accepts[${i}] has 'amount' instead of 'maxAmountRequired'.`,
+            "In v1, the price field is 'maxAmountRequired'.",
           );
         }
       });
@@ -287,8 +287,8 @@ function methodRules(e: Extracted, x402Core: string): Finding[] {
       "cache-control",
       "warn",
       "Challenge may be cached",
-      `Cache-Control is ${e.cacheControl ? `"${e.cacheControl}"` : "not set"}.`,
-      'Send "Cache-Control: no-store" with 402 responses.',
+      `Cache-Control is ${e.cacheControl !== undefined ? printEscaped(e.cacheControl) : "not set"}.`,
+      "Send 'Cache-Control: no-store' with 402 responses.",
     );
   }
   if (e.official.readable) {
@@ -341,8 +341,8 @@ function missingNames(list: string | undefined, required: string[], credentialed
 
 const isCredentialed = (v: string | undefined) => (v ?? "").trim().toLowerCase() === "true";
 const starNote = (list: string | undefined, credentialed: boolean) =>
-  credentialed && headerNames(list).includes("*") ? ' "*" does not cover credentialed requests.' : "";
-const shown = (v: string | undefined) => (v === undefined ? "not set" : `"${v}"`);
+  credentialed && headerNames(list).includes("*") ? " '*' does not cover credentialed requests." : "";
+const shown = (v: string | undefined) => (v === undefined ? "not set" : printEscaped(v));
 
 function versionsSeen(results: Extracted[]): Set<number> {
   const out = new Set<number>();

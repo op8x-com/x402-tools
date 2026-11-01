@@ -33,7 +33,7 @@ test("EURC only: default-asset with the EURC opt-in sentence", () => {
   assert.deepEqual(ids(fs), ["default-asset"]);
   assert.equal(fs[0].level, "warn");
   assert.match(fs[0].detail, /Offered: EURC on "eip155:8453"/);
-  assert.match(fs[0].fix ?? "", /spendControls\.allowedAssets .*"1000000" for 1 EURC/);
+  assert.match(fs[0].fix ?? "", /spendControls\.allowedAssets .*, for example '1000000' for 1 EURC\./);
 });
 
 test("USDC on a chain without a default asset: default-asset without the EURC sentence", () => {
