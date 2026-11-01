@@ -333,7 +333,10 @@ JSON output need no change: the summary is an ordinary finding.
     and Future Improvements).
 *   **GET and POST with different challenges.** Summaries with different `N`
     do not fold, so up to 22 findings per id and level remain after `merge`.
-    Mitigation: accepted; the difference is information for the seller.
+    A finding listed with method `GET` may also exist on `POST`, hidden behind
+    the `POST` summary, so the method label can look as if `POST` were clean
+    for that entry. Mitigation: accepted; the summary gives the exact count
+    per method, and real sellers return the same challenge on both methods.
 *   **Agents counting findings by id** count the summary as one more finding.
     Mitigation: the README documents the summary's fixed title pattern.
 *   **Timing tests on slow CI runners.** Mitigation: the 2 s ceiling is five
