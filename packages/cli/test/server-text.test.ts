@@ -67,13 +67,14 @@ const both = (status: number, headers: Record<string, string>, body?: unknown) =
   pr("POST", status, headers, body),
 ];
 
-// The nine hostile fixtures of the design.
+// The hostile fixtures of the designs.
 const DRIFT_KEY = `k${ESC}[1m\nnext line`;
 const FLOW = `flow${ESC}"'${SPACES}`.padEnd(5000, "z");
+const HOSTILE_LEGACY = `base${ESC}[31m"'`;
 const v2hostile = {
   ...v2,
   accepts: [
-    entry({ network: `base${ESC}[31m"'` }),
+    entry({ network: HOSTILE_LEGACY }),
     entry({ network: "eip155:8453", extra: { name: "USDC", version: "2", paymentFlow: FLOW } }),
     entry({ scheme: "upto", network: `solana:${ESC}[2J` }),
   ],
@@ -137,6 +138,9 @@ const HOSTILE_CASES: Record<string, Case> = {
       },
     ],
   },
+  "10 many hostile networks": {
+    probes: both(402, header({ ...v2, accepts: Array.from({ length: 15 }, () => entry({ network: HOSTILE_LEGACY })) }), {}),
+  },
 };
 
 const outcomes = Object.fromEntries(Object.entries(HOSTILE_CASES).map(([name, c]) => [name, runCase(c)]));
@@ -174,6 +178,13 @@ test("hostile fixtures fire every finding that prints a server value", () => {
   assert.ok(ids("8 auth-capture with an array network and without a network").includes("payment-flow"));
   const nine = ids("9 hostile asset and network, payTo rotation");
   assert.ok(nine.includes("default-asset") && nine.includes("payto-rotates"));
+});
+
+test("many hostile networks end in a summary finding without server text", () => {
+  const legacy = find(outcomes["10 many hostile networks"], "v2-legacy-network");
+  assert.equal(legacy.length, 11);
+  assert.equal(legacy[10].title, "5 more 'v2-legacy-network' errors not shown");
+  assert.equal(legacy[10].method, "both");
 });
 
 test("payment-flow covers both levels: an unknown flow and an undeclared one", () => {

@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { diffPaths, driftDetail, jsonKind, limitPerGroup, merge, preflightPlan, runRules } from "../src/rules.ts";
 import { extract } from "../src/extract.ts";
+import { buildReport } from "../src/report.ts";
 import { b64, b64raw, pf, pr, v1, v2 } from "./fixtures.ts";
 import type { Finding } from "../src/types.ts";
 
@@ -1096,4 +1097,102 @@ test("limitPerGroup leaves its input unchanged", () => {
   const before = structuredClone(input);
   limitPerGroup(input);
   assert.deepEqual(input, before);
+});
+
+// Challenges in the body of a GET and a POST 402 without headers, as a hostile server could send them.
+const CHECKED = "https://api.example.com/weather";
+const bodyOnly = (challenge: unknown) => [extract(pr("GET", 402, {}, challenge)), extract(pr("POST", 402, {}, challenge))];
+const timed = (challenge: unknown) => {
+  const probes = bodyOnly(challenge);
+  const start = performance.now();
+  const findings = runRules(probes, undefined, CHECKED);
+  return { findings, ms: performance.now() - start };
+};
+const counts = (fs: Finding[]) => {
+  const c: Record<string, number> = {};
+  for (const f of fs) c[`${f.id}/${f.level}/${f.method}`] = (c[`${f.id}/${f.level}/${f.method}`] ?? 0) + 1;
+  return c;
+};
+// The largest entry counts that keep the challenge under the 1 MiB read limit (1,048,576 bytes).
+const V2_WORST_ENTRIES = 15418;
+const V1_WORST_ENTRIES = 17771;
+
+test("65,000 entries: 10 findings plus a summary, the other findings, in under 2 s", () => {
+  const challenge = { ...v2, accepts: Array(65000).fill({ network: "a" }) };
+  const { findings, ms } = timed(challenge);
+  assert.ok(ms < 2000, `${Math.round(ms)} ms`);
+  assert.deepEqual(counts(findings), {
+    "v2-body-only/error/both": 1,
+    "v2-legacy-network/error/both": 11,
+    "schema/error/both": 1,
+    "cache-control/warn/both": 1,
+    "official-client/error/both": 1,
+    "cors-allow-origin/info/both": 1,
+  });
+  assert.ok(findings.some((f) => f.title === "64990 more 'v2-legacy-network' errors not shown"));
+  const report = buildReport(CHECKED, "0.0.0", "2.29.0", [], findings);
+  assert.equal(report.summary.errors, 14);
+  assert.equal(report.summary.warnings, 1);
+});
+
+test("worst case on v2: three rules per entry, each capped, summaries after the tenth entry", () => {
+  const entry = { network: "a", maxAmountRequired: "1", extra: { paymentFlow: "x" } };
+  const challenge = { ...v2, accepts: Array(V2_WORST_ENTRIES).fill(entry) };
+  assert.ok(JSON.stringify(challenge).length < 1048576);
+  const { findings, ms } = timed(challenge);
+  assert.ok(ms < 2000, `${Math.round(ms)} ms`);
+  const c = counts(findings);
+  for (const id of ["v2-legacy-network", "mixed-dialect", "payment-flow"]) assert.equal(c[`${id}/error/both`], 11, id);
+  assert.equal(findings[0].id, "v2-body-only");
+  assert.ok(findings.slice(1, 31).every((f) => !isSummary(f)));
+  assert.deepEqual(findings.slice(31, 34).map((f) => f.title), [
+    `${V2_WORST_ENTRIES - 10} more 'v2-legacy-network' errors not shown`,
+    `${V2_WORST_ENTRIES - 10} more 'mixed-dialect' errors not shown`,
+    `${V2_WORST_ENTRIES - 10} more 'payment-flow' errors not shown`,
+  ]);
+});
+
+test("worst case on v1: three rules per entry, each capped", () => {
+  const challenge = { ...v1, accepts: Array(V1_WORST_ENTRIES).fill({ network: "a:b", amount: "1", extra: { paymentFlow: "x" } }) };
+  assert.ok(JSON.stringify(challenge).length < 1048576);
+  const { findings, ms } = timed(challenge);
+  assert.ok(ms < 2000, `${Math.round(ms)} ms`);
+  const c = counts(findings);
+  assert.equal(c["v1-caip2-network/warn/both"], 11);
+  assert.equal(c["payment-flow/error/both"], 11);
+  assert.equal(c["mixed-dialect/error/both"], 11);
+});
+
+test("schema issues of many v1 entries are capped too", () => {
+  const { findings } = timed({ ...v1, accepts: Array(1000).fill({ network: "a" }) });
+  const schema = findings.filter((f) => f.id === "schema");
+  assert.equal(schema.length, 11);
+  assert.equal(schema[10].title, "6990 more 'schema' errors not shown");
+});
+
+test("an error and a warning of the same rule are capped apart", () => {
+  const accepts = [
+    ...Array(12).fill({ ...v2.accepts[0], extra: { paymentFlow: "x" } }),
+    ...Array(12).fill({ ...v2.accepts[0], scheme: "auth-capture" }),
+  ];
+  const flows = timed({ ...v2, accepts }).findings.filter((f) => f.id === "payment-flow");
+  assert.equal(flows.filter((f) => f.level === "error").length, 11);
+  assert.equal(flows.filter((f) => f.level === "warn").length, 11);
+  assert.deepEqual(flows.filter(isSummary).map((f) => f.title), [
+    "2 more 'payment-flow' errors not shown",
+    "2 more 'payment-flow' warnings not shown",
+  ]);
+});
+
+test("a seller with 12 schema issues sees 10 and a summary", () => {
+  const { scheme: _s, asset: _a, payTo: _p, ...broken } = v2.accepts[0];
+  const schema = timed({ ...v2, accepts: Array(4).fill(broken) }).findings.filter((f) => f.id === "schema");
+  assert.equal(schema.length, 11);
+  assert.equal(schema[10].title, "2 more 'schema' errors not shown");
+});
+
+test("a few entries print exactly as before, without a summary", () => {
+  const { findings } = timed({ ...v2, accepts: Array(3).fill({ ...v2.accepts[0], network: "base" }) });
+  assert.equal(findings.filter((f) => f.id === "v2-legacy-network").length, 3);
+  assert.equal(findings.some(isSummary), false);
 });

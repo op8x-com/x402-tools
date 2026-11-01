@@ -682,5 +682,6 @@ export function runRules(
   }
   if (body) all.push(body);
   all.push(...corsRules(results, preflight));
-  return merge(all);
+  // Limit before merge, so equal GET and POST summaries fold into one.
+  return merge(limitPerGroup(all));
 }
