@@ -78,11 +78,16 @@ test("assetWhere: a v1 network name resolves the label but prints the name as se
   assert.equal(assetWhere(BASE_USDC, "base", 2), `"${BASE_USDC}" on "base"`);
 });
 
-test("assetWhere: an unknown asset and the network are escaped and cut at 48 printed characters", () => {
-  const long = "0x" + "a".repeat(58);
-  assert.equal(assetWhere(long, "eip155:10", 2), `"0x${"a".repeat(46)}\u2026" on "eip155:10"`);
+test("assetWhere: a full address with a trailing invisible character shows the escape, no cut mark", () => {
+  const addr = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+  assert.equal(assetWhere(addr + "\u200b", "eip155:10", 2), `"${addr}\\u{200B}" on "eip155:10"`);
+});
+
+test("assetWhere: an unknown asset and the network are escaped and cut at 100 printed characters", () => {
+  const long = "0x" + "a".repeat(108);
+  assert.equal(assetWhere(long, "eip155:10", 2), `"0x${"a".repeat(98)}\u2026" on "eip155:10"`);
   assert.equal(assetWhere("x", "eip155:1 \u0027 x", 2), '"x" on "eip155:1 \\u{0027} x"');
-  assert.equal(assetWhere("a\u00e9", "n".repeat(60), 2), `"a\\u{00E9}" on "${"n".repeat(48)}\u2026"`);
+  assert.equal(assetWhere("a\u00e9", "n".repeat(110), 2), `"a\\u{00E9}" on "${"n".repeat(100)}\u2026"`);
 });
 
 test("TEST_NETWORKS: the v1 test networks, pinned so a new SDK network forces a look", () => {

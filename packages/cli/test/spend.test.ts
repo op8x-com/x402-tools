@@ -51,8 +51,8 @@ test("default-asset prints a refused asset exactly: invisible characters and spa
   const ZWSP = String.fromCodePoint(0x200b);
   assert.match(offered({ asset: ZWSP + BASE_USDC }), /^Offered: "\\u\{200B\}0x833589/);
   assert.match(offered({ asset: ` ${BASE_USDC}` }), new RegExp(`^Offered: " ${BASE_USDC}" on "eip155:8453"`));
-  // 42 characters plus an 8-character escape exceed the 48-character label: the cut mark shows the value goes on.
-  assert.match(offered({ asset: BASE_USDC + ZWSP }), new RegExp(`^Offered: "${BASE_USDC}${String.fromCodePoint(0x2026)}" on`));
+  // A full address plus a trailing invisible character: the escape stays visible, nothing is cut.
+  assert.match(offered({ asset: BASE_USDC + ZWSP }), new RegExp(`^Offered: "${BASE_USDC}\\\\u\\{200B\\}" on`));
   assert.match(offered({ network: BASE + ZWSP }), new RegExp(`^Offered: "${BASE_USDC}" on "eip155:8453\\\\u\\{200B\\}"`));
 });
 

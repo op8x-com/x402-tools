@@ -211,16 +211,14 @@ export const findEurc = (asset: string, network: string) => lookup(EURC_ASSETS, 
 /** A known asset (default or EURC) for labels. */
 export const findKnownAsset = (asset: string, network: string) => findDefaultAsset(asset, network) ?? findEurc(asset, network);
 
-const MAX_LABEL = 48;
-
 /**
  * Report text for an asset on a network: the known symbol (the CLI's own word, bare), else the address as the
- * server sent it; then the network as the server sent it. Server values go through printEscaped, at most 48
- * characters: an asset that a finding reports as refused shows every invisible character it holds.
+ * server sent it; then the network as the server sent it. Server values go through printEscaped, at most 100
+ * characters like every other server value: an asset that a finding reports as refused shows every invisible character it holds.
  */
 export function assetWhere(asset: string, network: string, version: 1 | 2): string {
-  const label = findKnownAsset(asset, caip2(network, version))?.symbol ?? printEscaped(asset, MAX_LABEL);
-  return `${label} on ${printEscaped(network, MAX_LABEL)}`;
+  const label = findKnownAsset(asset, caip2(network, version))?.symbol ?? printEscaped(asset);
+  return `${label} on ${printEscaped(network)}`;
 }
 
 // An atomic amount as core compares it; 78 digits hold any uint256 and keep texts short.

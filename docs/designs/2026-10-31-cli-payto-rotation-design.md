@@ -152,7 +152,7 @@ The JSON report gains no new field; the finding carries the information.
   - Accepted risk: the finding is a hint from two samples, not proof of stable addresses; a refused repeat is already reported by the CORS rules.
 - **Seller follows the fix unsafely.** Returning the signed address from the payment header without a check lets an attacker sign a payment to an address of their own and get the resource for free.
   - Mitigation: the fix text puts one stable address first, says to accept only addresses the seller issued and has not used, and says never to return the address unchecked.
-- **Look-alike asset or network names.** Resolved by `./2026-11-01-cli-server-text-design.md`: `<where>` prints an unknown asset and the network in double quotes, escaped and cut to 48 characters, the same as in the spend findings.
+- **Look-alike asset or network names.** Resolved by `./2026-11-01-cli-server-text-design.md`: `<where>` prints an unknown asset and the network in double quotes, escaped and cut to 100 characters, the same as in the spend findings.
 - **Rule throws on a hostile challenge.** Server input could trigger an unexpected exception in the new code.
   - Mitigation: `paytoRule` runs in its own `try`; on an exception it reports nothing, and the spend findings and the rest of the report are unaffected (tested for a throwing `paytoRule`). Groups live in a `Map`, so hostile names such as `__proto__` stay plain data. It only reads strings, never evaluates them, and prints them through `cleanText` with a length limit.
 - **`@x402/core` matching changes.** A later core version could match `payTo` differently and make the v2 sentence wrong.

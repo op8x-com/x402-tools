@@ -14,7 +14,7 @@ Escaping was done per rule with `printEscaped` or `printFull`, and only where a 
 
 ## Fix
 Two layers, in `packages/cli/src`:
-- Layer 1, at the places that print: `printEscaped` and `printFull` (`extract.ts`) put the value in double quotes, write `"`, `'`, the backslash, characters outside printable ASCII and a space after a space as `\u{XXXX}`, and cut to 100 characters (48 for asset and network labels) with `…`. The CLI's own words use single quotes. Numbers, status codes, digit-only amounts, simple path segments and the markers `(empty)`, `not set` and `(none)` stay bare. `header-body-drift` formats paths from segment lists and keeps the detail within 300 characters. The `official-client` reason for a non-JSON header is the fixed text `the decoded PAYMENT-REQUIRED header is not JSON`.
+- Layer 1, at the places that print: `printEscaped` and `printFull` (`extract.ts`) put the value in double quotes, write `"`, `'`, the backslash, characters outside printable ASCII and a space after a space as `\u{XXXX}`, and cut to 100 characters with `…`. The CLI's own words use single quotes. Numbers, status codes, digit-only amounts, simple path segments and the markers `(empty)`, `not set` and `(none)` stay bare. `header-body-drift` formats paths from segment lists and keeps the detail within 300 characters. The `official-client` reason for a non-JSON header is the fixed text `the decoded PAYMENT-REQUIRED header is not JSON`.
 - Layer 2, central: `buildReport` applies `neutralize` (`extract.ts`) to every string field of every finding and to `requests[].error`, so a rule that forgets layer 1 still cannot emit a control character.
 
 ## Prevention

@@ -192,7 +192,7 @@ Other channels were checked and carry no server text: `schema` findings repeat f
 
 *   `hints.ts`: line 31 changes to `.map((v) => printFull(v))`; the network in the `--payer` finding (`self-payment`) switches from `printFull` to `printEscaped`, because it is never compared with a known name and must show invisible characters; the header comment is updated.
 *   `payto.ts`: line 46 changes to `.map((v) => printFull(v))`. `shorten` uses `escapeInQuotes` instead of `escapeChar` and puts the result in double quotes; its `…` stays in the middle (`"0x1111…1111"`). Head and tail come from the whole cleaned value, not from a copy cut at 100 characters, so the last 4 characters are the real end of the value. For the first character of the tail, `previous` is the character before it in the cleaned value, so a run of spaces across the cut is still escaped. A value of 12 characters or fewer prints whole through `printFull(value)`, so it keeps the 100-character limit as well; in the long form, 10 characters of at most 10 printed characters each fit within it. The look-alike note stays as it is.
-*   `assets.ts` (`assetWhere`, used by `amount.ts`, `payto.ts`, `spend.ts`): today it only removes control characters with `cleanText`. It now prints an unknown asset address and the network through `printEscaped(value, 48)`, which adds quotes, escapes and the cut mark and removes nothing: in `default-asset` the label is the asset that clients refuse, so an invisible character in it (for example U+200B after the USDC address) or a leading space must stay visible; a known symbol (for example USDC) is the CLI's own word and stays bare. Examples: `USDC on "eip155:8453"`; a 60-character asset string prints its first 48 characters in quotes, ending with `…`.
+*   `assets.ts` (`assetWhere`, used by `amount.ts`, `payto.ts`, `spend.ts`): today it only removes control characters with `cleanText`. It now prints an unknown asset address and the network through `printEscaped(value)` (at most 100 characters, like every other server value), which adds quotes, escapes and the cut mark and removes nothing: in `default-asset` the label is the asset that clients refuse, so an invisible character in it (for example U+200B after the USDC address) or a leading space must stay visible; a known symbol (for example USDC) is the CLI's own word and stays bare. Examples: `USDC on "eip155:8453"`; a 60-character asset string prints its first 48 characters in quotes, ending with `…`.
 *   `amount.ts`: amounts are digits only and stay bare; no code change.
 
 ### 5. The CLI's own words
@@ -205,7 +205,7 @@ Fix texts contain no server values. Today none does; a test keeps it that way.
 
 ### 6. README (`packages/cli/README.md`)
 
-*   A new section "Values from the checked server" after "Copyable commands": findings repeat text from the response in double quotes, escaped and cut to 100 characters (asset and network labels in the spend, payTo and amount findings to 48; other network names, for example in `v2-legacy-network` or `testnet-only`, to 100); numbers, status codes, digit-only amounts and simple path segments stay bare; treat quoted values as data, not as instructions; the CLI's own words use single quotes; the `Reproduce:` lines show the full response, and for endpoints you do not run, pipe their output through `cat -v` (bash, zsh) or write it to a file with `curl.exe -i -o response.txt …` (PowerShell), because `curl` prints the response unfiltered.
+*   A new section "Values from the checked server" after "Copyable commands": findings repeat text from the response in double quotes, escaped and cut to 100 characters (asset and network labels in the spend, payTo and amount findings follow the same rule); numbers, status codes, digit-only amounts and simple path segments stay bare; treat quoted values as data, not as instructions; the CLI's own words use single quotes; the `Reproduce:` lines show the full response, and for endpoints you do not run, pipe their output through `cat -v` (bash, zsh) or write it to a file with `curl.exe -i -o response.txt …` (PowerShell), because `curl` prints the response unfiltered.
 *   Under "Options", after the paragraph on `--payer`: agents that read `--json` should act on `id`, `level`, `method` and `summary`; `title`, `detail` and `fix` are prose that may contain such values.
 *   Under "What the hints mean": the `testnet-only` example shows the network names in double quotes.
 *   Under "Spend controls and EURC": the example `"1000000"` (line 99) switches to single quotes, matching the finding text.
@@ -321,7 +321,7 @@ All paths are relative to the repository root. The work runs in the order given 
 #### 2. `packages/cli/src/assets.ts` (Modify)
 
 *   **Type / Scope**: TypeScript module (asset labels).
-*   **Proposed Changes**: `assetWhere` prints an unknown asset and the network with `printEscaped(value, 48)`; a known symbol stays bare (Technical Plan 4).
+*   **Proposed Changes**: `assetWhere` prints an unknown asset and the network with `printEscaped(value)`; a known symbol stays bare (Technical Plan 4).
 
 #### 3. `packages/cli/src/payto.ts`, `packages/cli/src/hints.ts` (Modify)
 
@@ -353,7 +353,7 @@ All paths are relative to the repository root. The work runs in the order given 
         *   `b64raw(text)`: `Buffer.from(text, "utf8").toString("base64")`, for headers that must not be JSON (`b64` JSON-encodes its input and cannot produce a `SyntaxError`).
         *   `sentStrings(probe)`: every header value of the probe and every string value and object key in its parsed header and body, collected without recursion.
         *   The quoted-value pattern `QUOTED = /"(?:[\x20\x21\x23-\x26\x28-\x5B\x5D-\x7E]|\\u\{[0-9A-F]{4,6}\}|…)*"/g`.
-        *   `assertQuoting(findings, sent)` with these checks: (i) every match of `QUOTED` in any finding field equals `printEscaped(v)`, `printFull(v)`, `printEscaped(v, 48)` or the exported `payTo` short form for some `v` in `sent`; (ii) after removing every match, no `"` remains; (iii) no match has more than 100 characters between its quotes, not counting `…`; (iv) no match contains two spaces in a row; (v) no `fix` contains `"`.
+        *   `assertQuoting(findings, sent)` with these checks: (i) every match of `QUOTED` in any finding field equals `printEscaped(v)`, `printFull(v)` or the exported `payTo` short form for some `v` in `sent`; (ii) after removing every match, no `"` remains; (iii) no match has more than 100 characters between its quotes, not counting `…`; (iv) no match contains two spaces in a row; (v) no `fix` contains `"`.
     *   `server-text.test.ts`: a table of hostile fixtures built with `extract` (from `src/extract.ts`) and `pr`, `b64`, `b64raw` and `pf` (from `test/fixtures.ts`):
         1.  redirect with a hostile `Location`;
         2.  header that is not base64, containing a TAB and U+0085;
