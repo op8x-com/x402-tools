@@ -22,19 +22,78 @@ function defaultFlow(scheme: unknown, network: unknown): string {
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
-const jsonKind = (v: unknown) => (v === null ? "null" : Array.isArray(v) ? "an array" : `a ${typeof v}`);
+export const jsonKind = (v: unknown) =>
+  v === null ? "null" : Array.isArray(v) ? "an array" : typeof v === "object" ? "an object" : `a ${typeof v}`;
+
+// Type rule for a server value of any JSON type: a string quoted and escaped,
+// a number or boolean followed by its type, anything else by its JSON kind.
+function typed(v: unknown): string {
+  if (typeof v === "string") return printEscaped(v);
+  if (typeof v === "number" || typeof v === "boolean") return `${String(v)} (${typeof v})`;
+  return jsonKind(v);
+}
 
 export function is402(e: Extracted): boolean {
   if (e.status === 402) return true;
   return e.status === 412 && isObj(e.challenge) && e.challenge.error === "permit2_allowance_required";
 }
 
-export function diffPaths(a: unknown, b: unknown, path = ""): string[] {
+// Below this depth, subtrees are compared once as JSON text, so a deeply nested challenge cannot exhaust the stack.
+const DIFF_MAX_DEPTH = 32;
+
+export function diffPaths(a: unknown, b: unknown, path: string[] = [], depth = 0): string[][] {
   if (Object.is(a, b)) return [];
+  if (depth >= DIFF_MAX_DEPTH) {
+    try {
+      return JSON.stringify(a) === JSON.stringify(b) ? [] : [path];
+    } catch {
+      // Cyclic or too deep to serialize: report the path reached as differing.
+      return [path];
+    }
+  }
   const container = (v: unknown): v is Obj => typeof v === "object" && v !== null;
-  if (!container(a) || !container(b) || Array.isArray(a) !== Array.isArray(b)) return [path || "(root)"];
+  if (!container(a) || !container(b) || Array.isArray(a) !== Array.isArray(b)) return [path];
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
-  return [...keys].flatMap((k) => diffPaths(a[k], b[k], path ? `${path}.${k}` : k));
+  return [...keys].flatMap((k) => diffPaths(a[k], b[k], [...path, k], depth + 1));
+}
+
+const DRIFT_PREFIX = "Differing fields: ";
+const DRIFT_MAX_LENGTH = 300;
+const DRIFT_MAX_SHOWN = 10;
+const BARE_SEGMENT = /^[A-Za-z0-9_-]{1,40}$/;
+
+const driftSegment = (s: string) => (BARE_SEGMENT.test(s) ? s : printEscaped(s));
+
+// The header-body-drift detail: at most 10 paths and 300 characters; the first path is always shown, cut if needed.
+export function driftDetail(paths: string[][]): string {
+  const more = (n: number) => (n > 0 ? ` and ${n} more` : "");
+  // Room kept for the summary while paths remain: the length of " and 999 more", or more for larger counts.
+  const reserve = (n: number) => (n > 0 ? Math.max(13, more(n).length) : 0);
+  let detail = DRIFT_PREFIX;
+  let shown = 0;
+  for (const path of paths) {
+    if (shown === DRIFT_MAX_SHOWN) break;
+    const separator = shown > 0 ? ", " : "";
+    const left = paths.length - shown - 1;
+    const text = path.length === 0 ? "(root)" : path.map(driftSegment).join(".");
+    if (detail.length + separator.length + text.length + reserve(left) <= DRIFT_MAX_LENGTH) {
+      detail += separator + text;
+      shown++;
+      continue;
+    }
+    if (shown === 0) {
+      let cut = "";
+      for (const segment of path.map(driftSegment)) {
+        const next = cut ? `${cut}.${segment}` : segment;
+        if (detail.length + next.length + 1 + reserve(left) > DRIFT_MAX_LENGTH) break;
+        cut = next;
+      }
+      detail += `${cut}\u2026`;
+      shown++;
+    }
+    break;
+  }
+  return detail + more(paths.length - shown);
 }
 
 function statusHint(status: number | undefined): string {
@@ -148,7 +207,7 @@ function methodRules(e: Extracted, x402Core: string): Finding[] {
         "header-body-drift",
         "error",
         "Header and body challenges differ",
-        `Differing fields: ${paths.slice(0, 10).join(", ")}`,
+        driftDetail(paths),
         "Generate header and body from the same object, or drop the body copy.",
       );
     }
@@ -162,7 +221,9 @@ function methodRules(e: Extracted, x402Core: string): Finding[] {
         "version-missing",
         "error",
         "x402Version missing or invalid",
-        v === undefined ? "x402Version is not set." : `x402Version is ${JSON.stringify(v)} (${typeof v}).`,
+        v === undefined
+          ? "x402Version is not set."
+          : `x402Version is ${typeof v === "string" ? `${printEscaped(v)} (string)` : typed(v)}.`,
         "Set x402Version to the number 1 or 2.",
       );
     } else {
@@ -207,18 +268,21 @@ function methodRules(e: Extracted, x402Core: string): Finding[] {
           add(
             "payment-flow",
             "error",
-            `Unknown payment flow ${JSON.stringify(flow)}`,
-            `accepts[${i}].extra.paymentFlow is ${JSON.stringify(flow)}. Clients must not pay for a flow they do not recognize and skip this entry.`,
+            `Unknown payment flow ${isObj(flow) || Array.isArray(flow) ? `(${typed(flow)})` : typed(flow)}`,
+            `accepts[${i}].extra.paymentFlow is ${typed(flow)}. Clients must not pay for a flow they do not recognize and skip this entry.`,
             "Use 'authorization', 'upfront' or 'escrow', or omit it for the scheme default.",
           );
         }
         const fallback = defaultFlow(a.scheme, net);
         if (v === 2 && flow === undefined && fallback !== "authorization") {
+          // defaultFlow returns a non-authorization flow only for known schemes, so the scheme is an own word.
+          const on =
+            net === undefined ? "a network that is not set" : typeof net === "string" ? printEscaped(net) : `a network that is ${typed(net)}`;
           add(
             "payment-flow",
             "warn",
             "Payment flow not declared",
-            `accepts[${i}] (${String(a.scheme)} on ${String(net)}) defaults to the '${fallback}' flow, which settles before the resource runs. The spec requires extra.paymentFlow whenever the flow is not 'authorization', so clients can tell without scheme-specific knowledge.`,
+            `accepts[${i}] ('${String(a.scheme)}' on ${on}) defaults to the '${fallback}' flow, which settles before the resource runs. The spec requires extra.paymentFlow whenever the flow is not 'authorization', so clients can tell without scheme-specific knowledge.`,
             `Set extra.paymentFlow to '${fallback}'.`,
           );
         }

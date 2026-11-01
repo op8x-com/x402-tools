@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { diffPaths, preflightPlan, runRules } from "../src/rules.ts";
+import { diffPaths, driftDetail, jsonKind, preflightPlan, runRules } from "../src/rules.ts";
 import { extract } from "../src/extract.ts";
 import { b64, pr, v1, v2 } from "./fixtures.ts";
 import type { Finding, PreflightResult } from "../src/types.ts";
@@ -144,9 +144,80 @@ test("412 with permit2_allowance_required counts as a challenge", () => {
 });
 
 test("diffPaths", () => {
-  assert.deepEqual(diffPaths({ a: 1, b: { c: 2 } }, { a: 1, b: { c: 3 } }), ["b.c"]);
+  assert.deepEqual(diffPaths({ a: 1, b: { c: 2 } }, { a: 1, b: { c: 3 } }), [["b", "c"]]);
   assert.deepEqual(diffPaths([1, 2], [1, 2]), []);
-  assert.deepEqual(diffPaths({ a: 1 }, { a: 1, x: 2 }), ["x"]);
+  assert.deepEqual(diffPaths({ a: 1 }, { a: 1, x: 2 }), [["x"]]);
+  assert.deepEqual(diffPaths({ "a.b": 1 }, { "a.b": 2 }), [["a.b"]]);
+  assert.deepEqual(diffPaths(1, 2), [[]]);
+});
+
+const nested = (depth: number, leaf: unknown, key = "k") => {
+  let v: unknown = leaf;
+  for (let i = 0; i < depth; i++) v = { [key]: v };
+  return v;
+};
+
+test("diffPaths stops at depth 32 and compares the rest as JSON text", () => {
+  assert.deepEqual(diffPaths(nested(40, 1), nested(40, 1)), []);
+  assert.deepEqual(diffPaths(nested(40, 1), nested(40, 2)), [Array(32).fill("k")]);
+  // Key order is not normalized below the limit.
+  assert.deepEqual(diffPaths(nested(40, { a: 1, b: 2 }), nested(40, { b: 2, a: 1 })), [Array(32).fill("k")]);
+  assert.deepEqual(diffPaths(nested(31, { a: 1, b: 2 }), nested(31, { b: 2, a: 1 })), []);
+  const cyclic = () => {
+    const o: Record<string, unknown> = {};
+    o.self = o;
+    return o;
+  };
+  assert.deepEqual(diffPaths(cyclic(), cyclic()), [Array(32).fill("self")]);
+});
+
+test("diffPaths survives challenges nested 10,000 levels deep", () => {
+  assert.doesNotThrow(() => diffPaths(nested(10_000, 1), nested(10_000, 1)));
+  assert.doesNotThrow(() => diffPaths(nested(10_000, 1), nested(10_000, 2)));
+  assert.equal(diffPaths(nested(10_000, 1), nested(10_000, 2)).length, 1);
+});
+
+test("driftDetail formats segments and keeps the design example", () => {
+  const key = "x\u001b[2J\n\u2714 pass  Official x402 client can read the challenge";
+  const long = "y".repeat(120);
+  const quotedLong = '"' + "y".repeat(100) + '\u2026"';
+  assert.equal(
+    driftDetail([["accepts", "0", "scheme"], ["extensions", key], ["extensions", long, long], ["z"]]),
+    'Differing fields: accepts.0.scheme, extensions."x\\u{001B}[2J\\u{000A}\\u{2714} pass \\u{0020}Official x402 client can read the challenge" and 2 more',
+  );
+  assert.ok(driftDetail([["extensions", long, long]]).includes(`extensions.${quotedLong}.${quotedLong}`));
+  assert.equal(driftDetail([["a.b", "x".repeat(41), "", "ok_-9"]]), `Differing fields: "a.b"."${"x".repeat(41)}"."".ok_-9`);
+  assert.equal(driftDetail([[]]), "Differing fields: (root)");
+});
+
+test("driftDetail cuts a first path that does not fit after its last whole segment", () => {
+  const s = "s".repeat(40);
+  const path = Array(10).fill(s);
+  const six = Array(6).fill(s).join(".");
+  assert.equal(driftDetail([path]), `Differing fields: ${six}\u2026`);
+  assert.equal(driftDetail([path, ["b"], ["c"]]), `Differing fields: ${six}\u2026 and 2 more`);
+});
+
+test("driftDetail shows at most 10 paths and summarizes the rest", () => {
+  const paths = Array.from({ length: 12 }, (_, i) => [`p${i}`]);
+  assert.equal(driftDetail(paths), "Differing fields: p0, p1, p2, p3, p4, p5, p6, p7, p8, p9 and 2 more");
+});
+
+test("driftDetail stays within 300 characters", () => {
+  const hostile = "\u001b".repeat(200);
+  const cases = [
+    Array.from({ length: 50 }, () => [hostile, hostile, hostile]),
+    Array.from({ length: 2000 }, (_, i) => ["a".repeat(40), String(i)]),
+    [Array(33).fill(hostile)],
+  ];
+  for (const c of cases) assert.ok(driftDetail(c).length <= 300, driftDetail(c));
+});
+
+test("jsonKind", () => {
+  assert.equal(jsonKind(null), "null");
+  assert.equal(jsonKind([]), "an array");
+  assert.equal(jsonKind({}), "an object");
+  assert.equal(jsonKind(1), "a number");
 });
 
 // CORS (x402 v2 HTTP transport, "Browser clients")
@@ -852,4 +923,65 @@ test("CORS header values: not set for a missing header, an empty one as \"\", ow
     runRules([corsV2("POST")], pf(204, { ...ORIGIN_OK, ...headers })).find((x) => x.id === "cors-allow-headers")?.detail ?? "";
   assert.match(allow({ "access-control-allow-headers": "authorization" }), /^Access-Control-Allow-Headers is "authorization"; missing:/);
   assert.match(allow({ "access-control-allow-headers": "" }), /^Access-Control-Allow-Headers is ""; missing:/);
+});
+
+// Type rule for x402Version, extra.paymentFlow and the network of an undeclared flow
+
+test("version-missing names the value by the type rule", () => {
+  const detail = (c: Record<string, unknown>) =>
+    find(runRules([extract(pr("GET", 402, { ...NS, "payment-required": b64(c) }, {}))]), "version-missing")?.detail;
+  const { x402Version: _version, ...rest } = v2;
+  const cases: [unknown, string][] = [
+    ["s", 'x402Version is "s" (string).'],
+    ['2"\u001b', 'x402Version is "2\\u{0022}\\u{001B}" (string).'],
+    [3, "x402Version is 3 (number)."],
+    [true, "x402Version is true (boolean)."],
+    [{ a: 1 }, "x402Version is an object."],
+    [[2], "x402Version is an array."],
+    [null, "x402Version is null."],
+  ];
+  for (const [v, expected] of cases) assert.equal(detail({ ...rest, x402Version: v }), expected, JSON.stringify(v));
+  assert.equal(detail(rest), "x402Version is not set.");
+});
+
+test("payment-flow error names an unknown flow by the type rule", () => {
+  const tail = ". Clients must not pay for a flow they do not recognize and skip this entry.";
+  const cases: [unknown, string, string][] = [
+    ["s", 'Unknown payment flow "s"', '"s"'],
+    [3, "Unknown payment flow 3 (number)", "3 (number)"],
+    [true, "Unknown payment flow true (boolean)", "true (boolean)"],
+    [{ a: 1 }, "Unknown payment flow (an object)", "an object"],
+    [["escrow"], "Unknown payment flow (an array)", "an array"],
+  ];
+  for (const [flow, title, value] of cases) {
+    const f = find(v2With({ extra: { paymentFlow: flow } }), "payment-flow");
+    assert.equal(f?.level, "error", JSON.stringify(flow));
+    assert.equal(f?.title, title);
+    assert.equal(f?.detail, `accepts[0].extra.paymentFlow is ${value}${tail}`);
+  }
+  const long = find(v2With({ extra: { paymentFlow: "d".repeat(5000) } }), "payment-flow");
+  assert.equal(long?.title, `Unknown payment flow "${"d".repeat(100)}\u2026"`);
+});
+
+test("payment-flow warning names the network by the type rule, the scheme as an own word", () => {
+  const rest = " defaults to the 'escrow' flow, which settles before the resource runs.";
+  const cases: [unknown, string][] = [
+    ["s", `('auth-capture' on "s")`],
+    ['ba"se\u001b', `('auth-capture' on "ba\\u{0022}se\\u{001B}")`],
+    [3, "('auth-capture' on a network that is 3 (number))"],
+    [true, "('auth-capture' on a network that is true (boolean))"],
+    [{ a: 1 }, "('auth-capture' on a network that is an object)"],
+    [["\u001b"], "('auth-capture' on a network that is an array)"],
+    [null, "('auth-capture' on a network that is null)"],
+  ];
+  for (const [network, part] of cases) {
+    const f = find(v2With({ scheme: "auth-capture", network }), "payment-flow");
+    assert.equal(f?.level, "warn", JSON.stringify(network));
+    assert.ok(f?.detail.startsWith(`accepts[0] ${part}${rest}`), f?.detail);
+  }
+  const { network: _network, ...noNetwork } = v2.accepts[0];
+  const missing = runRules([extract(pr("GET", 402, { ...NS, "payment-required": b64({ ...v2, accepts: [{ ...noNetwork, scheme: "auth-capture" }] }) }, {}))]);
+  assert.ok(find(missing, "payment-flow")?.detail.startsWith(`accepts[0] ('auth-capture' on a network that is not set)${rest}`));
+  const solana = find(v2With({ scheme: "upto", network: "solana:abc" }), "payment-flow");
+  assert.ok(solana?.detail.startsWith(`accepts[0] ('upto' on "solana:abc") defaults to the 'escrow' flow`), solana?.detail);
 });
