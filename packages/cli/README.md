@@ -45,6 +45,8 @@ The plain requests carry no `Origin`, so a server that refuses browsers is still
 
 Agents that read `--json` should act on `id`, `level`, `method` and `summary`. `title`, `detail` and `fix` are prose and may contain values from the checked server (see "Values from the checked server").
 
+At most 10 findings with the same `id`, `level` and `method` are listed. If there are more, a later finding with the same `id` and `level` says how many, with a title that matches `^\d+ more '[a-z0-9-]+' (errors?|warnings?|notes?|pass(es)?) not shown$`, for example `64990 more 'v2-legacy-network' errors not shown`. This title is fixed text of `op8x check`, never server text, so agents may read the number from it. Other findings may stand in between. `summary` counts the findings listed, this one included.
+
 Exit codes: `0` no errors, `1` errors found, `2` usage error, a URL with a user name, a password, `'` or `"`, or the URL was unreachable.
 
 ## Copyable commands

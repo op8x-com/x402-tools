@@ -12,6 +12,7 @@ Status: approved design, 2026-10-24; first release 0.0.1. Updated 2026-10-29 to 
 - `../designs/2026-10-31-cli-challenge-hints-design.md`: `testnet-only`, `extensions-placement`, `resource-url-mismatch`, `self-payment`, `post-needs-body`, the option `--payer` and the `notChecked` list
 - `../designs/2026-10-31-cli-copyable-commands-design.md`: URLs with a user name, a password, `'` or `"` refused; quoted header line; `curl -g` and `curl.exe` in "Reproduce:"
 - `../designs/2026-11-01-cli-server-text-design.md`: server values in findings quoted, escaped and cut; own words in single quotes; central check before output
+- `../designs/2026-11-01-cli-finding-cap-design.md`: at most 10 findings per id, level and method plus a summary finding; own-property drift comparison
 
 ## Goal
 
@@ -123,6 +124,7 @@ Order and scope of the per-method rules:
 - `cache-control` and `official-client` run for every 402, also without a readable challenge.
 - A header that decodes to JSON is the challenge, even when that JSON is not an object; as in the official client, a body challenge is then ignored. The version, schema, network and dialect rules run only on a challenge that is a JSON object. For any other decoded header, `header-not-object` names the JSON type, and `no-challenge` and `header-body-drift` do not apply.
 - Identical findings on GET and POST are merged into one with method `both`.
+- At most 10 findings per id, level and method are kept before merging; the rest become one summary finding, also for `schema`.
 
 Legacy-to-CAIP-2 hint map (EVM only): `base` → `eip155:8453`, `base-sepolia` → `eip155:84532`, `polygon` → `eip155:137`, `polygon-amoy` → `eip155:80002`, `avalanche` → `eip155:43114`, `avalanche-fuji` → `eip155:43113`.
 
@@ -159,7 +161,7 @@ Exit codes: `0` no errors, `1` at least one `error` finding, `2` usage error, a 
 ## Testing
 
 - Unit tests (Node's built-in `node:test`, run on TypeScript sources via Node's type stripping; no test framework dependency) for `extract`, `probe`, `report` and every rule. `test/fixtures.ts` holds a valid v2 and a valid v1 challenge (Base Sepolia) and base64 builders, the helpers `pf`, `b64raw`, `sentStrings`, `QUOTED` and `assertQuoting` (used by `test/server-text.test.ts`), plus `v2main` and `v1main` (the same challenges on Base mainnet, used by the test server); the variants (v2 body-only, drift, base64url header, string version, legacy network in v2, mixed dialect and others) are built from them inside the rule tests.
-- Integration test: a local `node:http` server (`test/server.ts`; every route answers with `v2main`/`v1main` and sets the v2 `resource.url` per request from the Host header, so the routes raise neither `testnet-only` nor `resource-url-mismatch`) with routes for valid v2 and v1, v2 body-only, drift, empty headers, a 405 on GET, no paywall, a redirect, CORS, MCP, `/payto-rotates`, `/amount-changes`, `/drift-hostile` and body limits; run the CLI pipeline against it and assert findings and exit codes. The other rule variants are covered by the rule tests only.
+- Integration test: a local `node:http` server (`test/server.ts`; every route answers with `v2main`/`v1main` and sets the v2 `resource.url` per request from the Host header, so the routes raise neither `testnet-only` nor `resource-url-mismatch`) with routes for valid v2 and v1, v2 body-only, drift, empty headers, a 405 on GET, no paywall, a redirect, CORS, MCP, `/payto-rotates`, `/amount-changes`, `/drift-hostile`, `/many-entries` and body limits; run the CLI pipeline against it and assert findings and exit codes. The other rule variants are covered by the rule tests only.
 - Smoke tests: the fixtures pass the official schemas, and `VERSION` matches `package.json`.
 - No tests against third-party live endpoints in CI.
 
