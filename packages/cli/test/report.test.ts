@@ -232,6 +232,12 @@ test("buildReport neutralizes control characters in every finding string and in 
   assert.equal(r.findings[0].id, "stub");
   assert.equal(r.summary.warnings, 1);
   assert.equal(hostile.title.includes("\x1b"), true, "input finding is not mutated");
-  const json = renderJson(r);
-  assert.equal(/[\x00-\x08\x0b-\x1f]/.test(json), false);
+  // JSON.stringify escapes C0 itself, so the check runs on the parsed strings.
+  const parsed = JSON.parse(renderJson(r)) as { findings: Record<string, unknown>[]; requests: Record<string, unknown>[] };
+  for (const item of [...parsed.findings, ...parsed.requests]) {
+    for (const [field, value] of Object.entries(item)) {
+      if (typeof value !== "string") continue;
+      assert.equal(/[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(value), false, `${field}: ${value}`);
+    }
+  }
 });

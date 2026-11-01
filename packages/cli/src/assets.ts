@@ -1,4 +1,4 @@
-import { printFull } from "./extract.ts";
+import { printEscaped } from "./extract.ts";
 
 // Asset data for the spend-control findings (see docs/designs/2026-10-30-cli-spend-controls-design.md).
 // DEFAULT_ASSETS and V1_NETWORKS are copies from @x402/evm 2.29.0 and @x402/svm 2.29.0;
@@ -215,11 +215,12 @@ const MAX_LABEL = 48;
 
 /**
  * Report text for an asset on a network: the known symbol (the CLI's own word, bare), else the address as the
- * server sent it; then the network as the server sent it. Server values go through printFull, at most 48 characters.
+ * server sent it; then the network as the server sent it. Server values go through printEscaped, at most 48
+ * characters: an asset that a finding reports as refused shows every invisible character it holds.
  */
 export function assetWhere(asset: string, network: string, version: 1 | 2): string {
-  const label = findKnownAsset(asset, caip2(network, version))?.symbol ?? printFull(asset, MAX_LABEL);
-  return `${label} on ${printFull(network, MAX_LABEL)}`;
+  const label = findKnownAsset(asset, caip2(network, version))?.symbol ?? printEscaped(asset, MAX_LABEL);
+  return `${label} on ${printEscaped(network, MAX_LABEL)}`;
 }
 
 // An atomic amount as core compares it; 78 digits hold any uint256 and keep texts short.

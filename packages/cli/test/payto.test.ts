@@ -258,10 +258,16 @@ test("16 (look-alikes): U+3164 and Cyrillic a are printed as escapes", () => {
   assert.doesNotMatch(d2, /look the same/);
 });
 
-test("16 (cut): values differing only after character 100", () => {
-  const d = detailOf(ch2(opt("0x" + "a".repeat(120) + "1")), ch2(opt("0x" + "a".repeat(120) + "2")));
+test("16 (cut): values differing only after character 100, with the same last 4 characters", () => {
+  const d = detailOf(ch2(opt("0x" + "a".repeat(120) + "1zzzz")), ch2(opt("0x" + "a".repeat(120) + "2zzzz")));
   assert.ok(d.includes(" (these look the same here but differ). A client"));
   assert.ok(d.includes(`"0x${"a".repeat(98)}\u2026"`));
+});
+
+test("16 (cut, tail): values differing in their last characters past character 100 show it in the short form", () => {
+  const d = detailOf(ch2(opt("0x" + "a".repeat(120) + "1")), ch2(opt("0x" + "a".repeat(120) + "2")));
+  assert.ok(d.includes(') "0xaaaa\u2026aaa1", then "0xaaaa\u2026aaa2". A client'));
+  assert.doesNotMatch(d, /look the same/);
 });
 
 test("16 (empty): a value empty after cleaning prints (empty)", () => {
@@ -271,7 +277,7 @@ test("16 (empty): a value empty after cleaning prints (empty)", () => {
 
 test("16 (limit): 100 non-ASCII characters in full mode print at most 100 characters before the ellipsis", () => {
   const x = "\u00e9".repeat(100);
-  const d = detailOf(ch2(opt(x + "1")), ch2(opt(x + "2")));
+  const d = detailOf(ch2(opt(x + "1zzzz")), ch2(opt(x + "2zzzz")));
   const m = /\) "(.*?)\u2026", then/.exec(d);
   assert.ok(m);
   assert.ok(Array.from(m[1]!).length <= 100);
@@ -298,6 +304,19 @@ test("shorten: quotes, escapes and the cut in the middle", () => {
   assert.equal(shorten(A), '"0x1111\u20261111"');
   assert.equal(shorten("short"), '"short"');
   assert.equal(shorten("\u200b"), "(empty)");
+});
+
+test("shorten: a short value with long escapes stays within 100 printed characters", () => {
+  const emoji = String.fromCodePoint(0x1f600).repeat(12);
+  const printed = shorten(emoji);
+  assert.equal(printed, `"${"\\u{1F600}".repeat(11)}\u2026"`);
+  assert.ok(printed.slice(1, -1).replaceAll("\u2026", "").length <= 100);
+});
+
+test("shorten: the last 4 characters come from the end of the whole value, not from the cut at 100", () => {
+  const long = "0x1111" + "a".repeat(140) + "BEEF";
+  assert.equal(long.length, 150);
+  assert.equal(shorten(long), '"0x1111\u2026BEEF"');
 });
 
 test("16 (quotes and spaces): quotes are escaped and a run of spaces across the cut stays escaped", () => {

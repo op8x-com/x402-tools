@@ -68,8 +68,9 @@ test("assetWhere: a known asset by symbol, the network as sent in quotes", () =>
   assert.equal(assetWhere(BASE_USDC, "eip155:8453", 2), 'USDC on "eip155:8453"');
 });
 
-test("assetWhere: an unknown asset by its cleaned address in quotes", () => {
-  assert.equal(assetWhere("0xabc\u001b[31mevil", "eip155:10", 2), '"0xabc[31mevil" on "eip155:10"');
+test("assetWhere: an unknown asset by its escaped address in quotes, nothing removed", () => {
+  assert.equal(assetWhere("0xabc\u001b[31mevil", "eip155:10", 2), '"0xabc\\u{001B}[31mevil" on "eip155:10"');
+  assert.equal(assetWhere(" 0xabc\u200b", "eip155:10\u00a0", 2), '" 0xabc\\u{200B}" on "eip155:10\\u{00A0}"');
 });
 
 test("assetWhere: a v1 network name resolves the label but prints the name as sent", () => {

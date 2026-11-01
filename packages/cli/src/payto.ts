@@ -32,11 +32,14 @@ function escapeAll(chars: string[], previous: string | undefined): string {
   return text;
 }
 
-/** The short form of a payTo value: cleaned, in double quotes, the first 6 and last 4 characters around an ellipsis. */
+/**
+ * The short form of a payTo value: cleaned, in double quotes, the first 6 and last 4 characters of the whole
+ * cleaned value around an ellipsis. A value of 12 characters or fewer prints whole through printFull, so it
+ * keeps the 100-character limit too (ten characters of at most 10 printed each fit it in the long form).
+ */
 export function shorten(value: string): string {
-  const chars = Array.from(cleanText(value, 100));
-  if (chars.length === 0) return "(empty)";
-  if (chars.length <= 12) return `"${escapeAll(chars, undefined)}"`;
+  const chars = Array.from(cleanText(value, Infinity));
+  if (chars.length <= 12) return printFull(value);
   return `"${escapeAll(chars.slice(0, 6), undefined)}\u2026${escapeAll(chars.slice(-4), chars[chars.length - 5])}"`;
 }
 
