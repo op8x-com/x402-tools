@@ -29,6 +29,9 @@ export async function startServer(): Promise<{ url: string; close: () => Promise
         const repriced = { ...v2, accepts: [{ ...v2.accepts[0], amount }] };
         return json(402, { "payment-required": b64(repriced), "cache-control": "no-store" }, {});
       }
+      case "/many-entries":
+        // A hostile body just under the 1 MiB read limit: one v2-legacy-network finding per entry.
+        return json(402, {}, { ...v2, accepts: Array(65000).fill({ network: "a" }) });
       case "/v2-body-only":
         return json(402, { "cache-control": "no-store" }, v2);
       case "/v1-good":

@@ -1,8 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { diffPaths, driftDetail, jsonKind, preflightPlan, runRules } from "../src/rules.ts";
+import { diffPaths, driftDetail, jsonKind, limitPerGroup, merge, preflightPlan, runRules } from "../src/rules.ts";
 import { extract } from "../src/extract.ts";
-import { b64, pf, pr, v1, v2 } from "./fixtures.ts";
+import { buildReport } from "../src/report.ts";
+import { b64, b64raw, pf, pr, v1, v2 } from "./fixtures.ts";
 import type { Finding } from "../src/types.ts";
 
 const NS = { "cache-control": "no-store" };
@@ -149,6 +150,22 @@ test("diffPaths", () => {
   assert.deepEqual(diffPaths({ a: 1 }, { a: 1, x: 2 }), [["x"]]);
   assert.deepEqual(diffPaths({ "a.b": 1 }, { "a.b": 2 }), [["a.b"]]);
   assert.deepEqual(diffPaths(1, 2), [[]]);
+});
+
+// JSON.parse creates "__proto__" as an own key; a literal { __proto__: {} } would set the prototype instead.
+const withProto = () => JSON.parse(JSON.stringify(v2).replace(/^\{/, '{"__proto__":{},'));
+
+test("diffPaths reads own properties only, so __proto__ on one side differs", () => {
+  assert.deepEqual(diffPaths({}, JSON.parse('{"__proto__":{}}')), [["__proto__"]]);
+  assert.deepEqual(diffPaths(JSON.parse('{"__proto__":{}}'), {}), [["__proto__"]]);
+});
+
+test("header-body-drift reports __proto__ present on one side only", () => {
+  const bodyHasKey = runRules([extract(pr("GET", 402, { ...NS, "payment-required": b64(v2) }, withProto()))]);
+  assert.equal(bodyHasKey.find((f) => f.id === "header-body-drift")?.detail, "Differing fields: __proto__");
+  const headerText = JSON.stringify(withProto());
+  const headerHasKey = runRules([extract(pr("GET", 402, { ...NS, "payment-required": b64raw(headerText) }, v2))]);
+  assert.equal(headerHasKey.find((f) => f.id === "header-body-drift")?.detail, "Differing fields: __proto__");
 });
 
 const nested = (depth: number, leaf: unknown, key = "k") => {
@@ -974,4 +991,208 @@ test("payment-flow warning names the network by the type rule, the scheme as an 
   assert.ok(find(missing, "payment-flow")?.detail.startsWith(`accepts[0] ('auth-capture' on a network that is not set)${rest}`));
   const solana = find(v2With({ scheme: "upto", network: "solana:abc" }), "payment-flow");
   assert.ok(solana?.detail.startsWith(`accepts[0] ('upto' on "solana:abc") defaults to the 'escrow' flow`), solana?.detail);
+});
+
+// merge before it became linear, kept as the reference for the differential test.
+function mergeBefore(findings: Finding[]): Finding[] {
+  const out: Finding[] = [];
+  for (const f of findings) {
+    const twin = out.find(
+      (o) => o.id === f.id && o.title === f.title && o.detail === f.detail && o.method !== f.method && o.method !== "both",
+    );
+    if (twin) twin.method = "both";
+    else out.push({ ...f });
+  }
+  return out;
+}
+
+const finding = (method: Finding["method"], title = "t", detail = "d"): Finding => ({ id: "r", level: "error", method, title, detail });
+
+test("merge folds identical findings of different methods into both", () => {
+  const twice = [finding("GET"), finding("GET"), finding("POST"), finding("POST")];
+  assert.deepEqual(merge(twice).map((f) => f.method), ["both", "both"]);
+  assert.deepEqual(merge([finding("both"), finding("GET")]).map((f) => f.method), ["both", "GET"]);
+  assert.deepEqual(merge([finding("GET"), finding("both")]).map((f) => f.method), ["both"]);
+  assert.deepEqual(merge([finding("GET", "a"), finding("POST", "b"), finding("POST", "a", "x")]).map((f) => f.method), ["GET", "POST", "POST"]);
+});
+
+// Small seeded generator, so the differential test is the same on every run.
+function mulberry32(seed: number): () => number {
+  let a = seed;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+test("merge gives the same result as before on random lists", () => {
+  const random = mulberry32(1);
+  const methods: Finding["method"][] = ["GET", "POST", "OPTIONS", "both"];
+  for (let run = 0; run < 200; run++) {
+    const list = Array.from({ length: Math.floor(random() * 41) }, () =>
+      finding(methods[Math.floor(random() * 4)], `t${Math.floor(random() * 3)}`),
+    );
+    const copy = () => list.map((f) => ({ ...f }));
+    assert.deepEqual(merge(copy()), mergeBefore(copy()), `run ${run}`);
+  }
+});
+
+// The summary title is fixed CLI text; tests and agents recognize a summary by it.
+const SUMMARY = /^\d+ more '[a-z0-9-]+' (errors?|warnings?|notes?|pass(es)?) not shown$/;
+const isSummary = (f: Finding) => SUMMARY.test(f.title);
+const SUMMARY_FIX = "Run the check again after changing the entries shown to see the rest.";
+const listed = (id: string) => `Only the first 10 '${id}' findings of this level are listed for each request method.`;
+const group = (n: number, level: Finding["level"] = "error", method: Finding["method"] = "GET", id = "r"): Finding[] =>
+  Array.from({ length: n }, (_, i) => ({ id, level, method, title: `t${i}`, detail: "d" }));
+
+test("limitPerGroup keeps 10 findings per group and replaces the rest with one summary", () => {
+  const ten = group(10);
+  assert.deepEqual(limitPerGroup(ten), ten);
+
+  const eleven = limitPerGroup(group(11));
+  assert.equal(eleven.length, 11);
+  assert.deepEqual(eleven[10], {
+    id: "r",
+    level: "error",
+    method: "GET",
+    title: "1 more 'r' error not shown",
+    detail: listed("r"),
+    fix: SUMMARY_FIX,
+  });
+
+  const many = limitPerGroup(group(25));
+  assert.equal(many.length, 11);
+  assert.equal(many[10].title, "15 more 'r' errors not shown");
+  assert.ok(many.slice(0, 10).every((f) => !isSummary(f)) && isSummary(many[10]));
+});
+
+test("limitPerGroup counts levels and methods apart and keeps the order around summaries", () => {
+  const errors = group(11, "error");
+  const warnings = group(11, "warn");
+  const alternating = errors.flatMap((e, i) => [e, warnings[i]]);
+  const out = limitPerGroup(alternating);
+  assert.deepEqual(out.map((f) => f.title), [
+    ...Array.from({ length: 10 }, (_, i) => [`t${i}`, `t${i}`]).flat(),
+    "1 more 'r' error not shown",
+    "1 more 'r' warning not shown",
+  ]);
+  assert.deepEqual(out.slice(20).map((f) => f.level), ["error", "warn"]);
+
+  const methods = limitPerGroup([...group(11, "error", "GET"), ...group(11, "error", "POST")]);
+  assert.deepEqual(methods.filter(isSummary).map((f) => f.method), ["GET", "POST"]);
+
+  const other: Finding = { id: "other", level: "error", method: "GET", title: "o", detail: "d" };
+  const mixed = group(20);
+  mixed.splice(15, 0, other);
+  assert.deepEqual(limitPerGroup(mixed).map((f) => f.title).slice(9), ["t9", "10 more 'r' errors not shown", "o"]);
+
+  assert.equal(limitPerGroup(group(12, "info")).at(-1)?.title, "2 more 'r' notes not shown");
+  assert.equal(limitPerGroup(group(12, "pass")).at(-1)?.title, "2 more 'r' passes not shown");
+});
+
+test("limitPerGroup leaves its input unchanged", () => {
+  const input = group(15);
+  const before = structuredClone(input);
+  limitPerGroup(input);
+  assert.deepEqual(input, before);
+});
+
+// Challenges in the body of a GET and a POST 402 without headers, as a hostile server could send them.
+const CHECKED = "https://api.example.com/weather";
+const bodyOnly = (challenge: unknown) => [extract(pr("GET", 402, {}, challenge)), extract(pr("POST", 402, {}, challenge))];
+const timed = (challenge: unknown) => {
+  const probes = bodyOnly(challenge);
+  const start = performance.now();
+  const findings = runRules(probes, undefined, CHECKED);
+  return { findings, ms: performance.now() - start };
+};
+const counts = (fs: Finding[]) => {
+  const c: Record<string, number> = {};
+  for (const f of fs) c[`${f.id}/${f.level}/${f.method}`] = (c[`${f.id}/${f.level}/${f.method}`] ?? 0) + 1;
+  return c;
+};
+// The largest entry counts that keep the challenge under the 1 MiB read limit (1,048,576 bytes).
+const V2_WORST_ENTRIES = 15418;
+const V1_WORST_ENTRIES = 17771;
+
+test("65,000 entries: 10 findings plus a summary, the other findings, in under 2 s", () => {
+  const challenge = { ...v2, accepts: Array(65000).fill({ network: "a" }) };
+  const { findings, ms } = timed(challenge);
+  assert.ok(ms < 2000, `${Math.round(ms)} ms`);
+  assert.deepEqual(counts(findings), {
+    "v2-body-only/error/both": 1,
+    "v2-legacy-network/error/both": 11,
+    "schema/error/both": 1,
+    "cache-control/warn/both": 1,
+    "official-client/error/both": 1,
+    "cors-allow-origin/info/both": 1,
+  });
+  assert.ok(findings.some((f) => f.title === "64990 more 'v2-legacy-network' errors not shown"));
+  const report = buildReport(CHECKED, "0.0.0", "2.29.0", [], findings);
+  assert.equal(report.summary.errors, 14);
+  assert.equal(report.summary.warnings, 1);
+});
+
+test("worst case on v2: three rules per entry, each capped, summaries after the tenth entry", () => {
+  const entry = { network: "a", maxAmountRequired: "1", extra: { paymentFlow: "x" } };
+  const challenge = { ...v2, accepts: Array(V2_WORST_ENTRIES).fill(entry) };
+  assert.ok(JSON.stringify(challenge).length < 1048576);
+  const { findings, ms } = timed(challenge);
+  assert.ok(ms < 2000, `${Math.round(ms)} ms`);
+  const c = counts(findings);
+  for (const id of ["v2-legacy-network", "mixed-dialect", "payment-flow"]) assert.equal(c[`${id}/error/both`], 11, id);
+  assert.equal(findings[0].id, "v2-body-only");
+  assert.ok(findings.slice(1, 31).every((f) => !isSummary(f)));
+  assert.deepEqual(findings.slice(31, 34).map((f) => f.title), [
+    `${V2_WORST_ENTRIES - 10} more 'v2-legacy-network' errors not shown`,
+    `${V2_WORST_ENTRIES - 10} more 'mixed-dialect' errors not shown`,
+    `${V2_WORST_ENTRIES - 10} more 'payment-flow' errors not shown`,
+  ]);
+});
+
+test("worst case on v1: three rules per entry, each capped", () => {
+  const challenge = { ...v1, accepts: Array(V1_WORST_ENTRIES).fill({ network: "a:b", amount: "1", extra: { paymentFlow: "x" } }) };
+  assert.ok(JSON.stringify(challenge).length < 1048576);
+  const { findings, ms } = timed(challenge);
+  assert.ok(ms < 2000, `${Math.round(ms)} ms`);
+  const c = counts(findings);
+  assert.equal(c["v1-caip2-network/warn/both"], 11);
+  assert.equal(c["payment-flow/error/both"], 11);
+  assert.equal(c["mixed-dialect/error/both"], 11);
+});
+
+test("schema issues of many v1 entries are capped too", () => {
+  const { findings } = timed({ ...v1, accepts: Array(1000).fill({ network: "a" }) });
+  const schema = findings.filter((f) => f.id === "schema");
+  assert.equal(schema.length, 11);
+  assert.equal(schema[10].title, "6990 more 'schema' errors not shown");
+});
+
+test("an error and a warning of the same rule are capped apart", () => {
+  const accepts = [
+    ...Array(12).fill({ ...v2.accepts[0], extra: { paymentFlow: "x" } }),
+    ...Array(12).fill({ ...v2.accepts[0], scheme: "auth-capture" }),
+  ];
+  const flows = timed({ ...v2, accepts }).findings.filter((f) => f.id === "payment-flow");
+  assert.equal(flows.filter((f) => f.level === "error").length, 11);
+  assert.equal(flows.filter((f) => f.level === "warn").length, 11);
+  assert.deepEqual(flows.filter(isSummary).map((f) => f.title), [
+    "2 more 'payment-flow' errors not shown",
+    "2 more 'payment-flow' warnings not shown",
+  ]);
+});
+
+test("a seller with 12 schema issues sees 10 and a summary", () => {
+  const { scheme: _s, asset: _a, payTo: _p, ...broken } = v2.accepts[0];
+  const schema = timed({ ...v2, accepts: Array(4).fill(broken) }).findings.filter((f) => f.id === "schema");
+  assert.equal(schema.length, 11);
+  assert.equal(schema[10].title, "2 more 'schema' errors not shown");
+});
+
+test("a few entries print exactly as before, without a summary", () => {
+  const { findings } = timed({ ...v2, accepts: Array(3).fill({ ...v2.accepts[0], network: "base" }) });
+  assert.equal(findings.filter((f) => f.id === "v2-legacy-network").length, 3);
+  assert.equal(findings.some(isSummary), false);
 });

@@ -1,6 +1,6 @@
 import { PaymentRequiredV1Schema, PaymentRequiredV2Schema } from "@x402/core/schemas";
 import { amountRule } from "./amount.ts";
-import { legacyToCaip2 } from "./assets.ts";
+import { legacyToCaip2, own } from "./assets.ts";
 import { headerDecoded, printEscaped } from "./extract.ts";
 import { hintRules, isJsonRpcError, postNeedsBody } from "./hints.ts";
 import { paytoRule } from "./payto.ts";
@@ -54,12 +54,14 @@ export function diffPaths(a: unknown, b: unknown, path: string[] = [], depth = 0
   const container = (v: unknown): v is Obj => typeof v === "object" && v !== null;
   if (!container(a) || !container(b) || Array.isArray(a) !== Array.isArray(b)) return [path];
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
-  return [...keys].flatMap((k) => diffPaths(a[k], b[k], [...path, k], depth + 1));
+  return [...keys].flatMap((k) => diffPaths(own(a, k), own(b, k), [...path, k], depth + 1));
 }
 
 const DRIFT_PREFIX = "Differing fields: ";
 const DRIFT_MAX_LENGTH = 300;
 const DRIFT_MAX_SHOWN = 10;
+// Findings kept per id, level and method; the rest become one summary finding.
+const FINDINGS_PER_GROUP = 10;
 const BARE_SEGMENT = /^[A-Za-z0-9_-]{1,40}$/;
 
 const driftSegment = (s: string) => (BARE_SEGMENT.test(s) ? s : printEscaped(s));
@@ -368,15 +370,68 @@ function methodRules(e: Extracted, x402Core: string): Finding[] {
   return out;
 }
 
-// Identical findings on GET and POST collapse into one with method "both".
-function merge(findings: Finding[]): Finding[] {
+const KIND: Record<Level, [string, string]> = {
+  error: ["error", "errors"],
+  warn: ["warning", "warnings"],
+  info: ["note", "notes"],
+  pass: ["pass", "passes"],
+};
+
+// A hostile challenge can trigger one rule per accepts[] entry. Each id, level and method keeps its first
+// FINDINGS_PER_GROUP findings; a summary in the place of the next one counts the rest. The summary holds
+// only own text: the rule id and the count, filled in after the pass when the count is known.
+export function limitPerGroup(findings: Finding[]): Finding[] {
   const out: Finding[] = [];
+  const groups = new Map<string, { kept: number; summary?: Finding; hidden: number }>();
   for (const f of findings) {
-    const twin = out.find(
-      (o) => o.id === f.id && o.title === f.title && o.detail === f.detail && o.method !== f.method && o.method !== "both",
-    );
-    if (twin) twin.method = "both";
-    else out.push({ ...f });
+    const key = JSON.stringify([f.id, f.level, f.method]);
+    let g = groups.get(key);
+    if (!g) {
+      g = { kept: 0, hidden: 0 };
+      groups.set(key, g);
+    }
+    if (g.kept < FINDINGS_PER_GROUP) {
+      g.kept++;
+      out.push(f);
+      continue;
+    }
+    if (!g.summary) {
+      g.summary = { id: f.id, level: f.level, method: f.method, title: "", detail: "" };
+      out.push(g.summary);
+    }
+    g.hidden++;
+  }
+  for (const { summary, hidden } of groups.values()) {
+    if (!summary) continue;
+    summary.title = `${hidden} more '${summary.id}' ${KIND[summary.level][hidden === 1 ? 0 : 1]} not shown`;
+    summary.detail = `Only the first ${FINDINGS_PER_GROUP} '${summary.id}' findings of this level are listed for each request method.`;
+    summary.fix = "Run the check again after changing the entries shown to see the rest.";
+  }
+  return out;
+}
+
+// Identical findings on GET and POST collapse into one with method "both".
+// Per key, a queue holds the output findings not yet "both", oldest first. They always share one
+// method: a finding of another method folds into the oldest instead of joining the queue.
+export function merge(findings: Finding[]): Finding[] {
+  const out: Finding[] = [];
+  const open = new Map<string, { items: Finding[]; head: number }>();
+  for (const f of findings) {
+    const key = JSON.stringify([f.id, f.title, f.detail]);
+    let queue = open.get(key);
+    if (!queue) {
+      queue = { items: [], head: 0 };
+      open.set(key, queue);
+    }
+    const oldest = queue.items[queue.head];
+    if (oldest && oldest.method !== f.method) {
+      oldest.method = "both";
+      queue.head++;
+      continue;
+    }
+    const copy = { ...f };
+    if (copy.method !== "both") queue.items.push(copy);
+    out.push(copy);
   }
   return out;
 }
@@ -628,5 +683,6 @@ export function runRules(
   }
   if (body) all.push(body);
   all.push(...corsRules(results, preflight));
-  return merge(all);
+  // Limit before merge, so equal GET and POST summaries fold into one.
+  return merge(limitPerGroup(all));
 }

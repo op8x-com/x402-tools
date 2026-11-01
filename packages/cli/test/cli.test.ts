@@ -36,6 +36,19 @@ test("valid v2 endpoint exits 0", async () => {
   assert.match(io.stdout(), /Official x402 client can read the challenge/);
 });
 
+test("65,000 accepts entries end in a summary finding within seconds", async () => {
+  const io = capture();
+  const start = performance.now();
+  const code = await run(["check", `${server.url}/many-entries`, "--json"], io);
+  const ms = performance.now() - start;
+  assert.equal(code, 1);
+  assert.ok(ms < 10_000, `${Math.round(ms)} ms`);
+  const report = JSON.parse(io.stdout());
+  const legacy = report.findings.filter((f: { id: string }) => f.id === "v2-legacy-network");
+  assert.equal(legacy.length, 11);
+  assert.equal(legacy[10].title, "64990 more 'v2-legacy-network' errors not shown");
+});
+
 test("v2 body-only exits 1 and is reported in JSON", async () => {
   const io = capture();
   const code = await run(["check", `${server.url}/v2-body-only`, "--json"], io);

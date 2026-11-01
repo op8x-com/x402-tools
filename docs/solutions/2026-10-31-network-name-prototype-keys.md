@@ -17,3 +17,6 @@ The asset and network tables in `packages/cli/src/assets.ts` are object literals
 
 ## Prevention
 `packages/cli/test/spend.test.ts` ("prototype keys as network names do not crash the report") covers the three names in v1 and v2. For new tables keyed by network input, use `own()`, a `Map`, or `Object.create(null)`. The older `LEGACY_TO_CAIP2` hint map in `rules.ts` had the same pattern: it did not crash, but `"constructor"` printed a function's source in the fix text. It was replaced on 2026-10-31 by `legacyToCaip2` in `assets.ts`, which uses `own()`; `rules.test.ts` covers the prototype names.
+
+## Same pattern when comparing objects
+Comparing two parsed JSON objects key by key must read own properties only. `JSON.parse` creates `__proto__` as an own key, so on the side without it `obj["__proto__"]` returns `Object.prototype`; both sides then look like empty objects and the difference is missed. Since 2026-11-01 `diffPaths` in `packages/cli/src/rules.ts` reads both sides through `own()` from `assets.ts`; `rules.test.ts` covers `__proto__` on either side.
