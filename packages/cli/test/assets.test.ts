@@ -64,17 +64,24 @@ test("v1 names map to CAIP-2 only in v1", () => {
   assert.equal(SOLANA_NETWORKS.length, 3);
 });
 
-test("assetWhere: a known asset by symbol, the network as sent", () => {
-  assert.equal(assetWhere(BASE_USDC, "eip155:8453", 2), "USDC on eip155:8453");
+test("assetWhere: a known asset by symbol, the network as sent in quotes", () => {
+  assert.equal(assetWhere(BASE_USDC, "eip155:8453", 2), 'USDC on "eip155:8453"');
 });
 
-test("assetWhere: an unknown asset by its cleaned address", () => {
-  assert.equal(assetWhere("0xabc[31mevil", "eip155:10", 2), "0xabc[31mevil on eip155:10");
+test("assetWhere: an unknown asset by its cleaned address in quotes", () => {
+  assert.equal(assetWhere("0xabc\u001b[31mevil", "eip155:10", 2), '"0xabc[31mevil" on "eip155:10"');
 });
 
 test("assetWhere: a v1 network name resolves the label but prints the name as sent", () => {
-  assert.equal(assetWhere(BASE_USDC, "base", 1), "USDC on base");
-  assert.equal(assetWhere(BASE_USDC, "base", 2), `${BASE_USDC} on base`);
+  assert.equal(assetWhere(BASE_USDC, "base", 1), 'USDC on "base"');
+  assert.equal(assetWhere(BASE_USDC, "base", 2), `"${BASE_USDC}" on "base"`);
+});
+
+test("assetWhere: an unknown asset and the network are escaped and cut at 48 printed characters", () => {
+  const long = "0x" + "a".repeat(58);
+  assert.equal(assetWhere(long, "eip155:10", 2), `"0x${"a".repeat(46)}\u2026" on "eip155:10"`);
+  assert.equal(assetWhere("x", "eip155:1 \u0027 x", 2), '"x" on "eip155:1 \\u{0027} x"');
+  assert.equal(assetWhere("a\u00e9", "n".repeat(60), 2), `"a\\u{00E9}" on "${"n".repeat(48)}\u2026"`);
 });
 
 test("TEST_NETWORKS: the v1 test networks, pinned so a new SDK network forces a look", () => {

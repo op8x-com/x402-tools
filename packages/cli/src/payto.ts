@@ -1,5 +1,5 @@
 import { assetWhere } from "./assets.ts";
-import { cleanText, escapeChar, printFull } from "./extract.ts";
+import { cleanText, escapeInQuotes, printFull } from "./extract.ts";
 import { changedGroups, type ChangedGroup, type ChangedPair } from "./pairs.ts";
 import type { Extracted, Finding } from "./types.ts";
 
@@ -22,12 +22,22 @@ const SERVER: Record<1 | 2, string> = {
 const FIX =
   "Return one stable payTo for the resource on every request. If you must issue one address per payment, decode the payment header for the paid retry (context.paymentHeader, the base64 PAYMENT-SIGNATURE) and return its accepted.payTo only if it is an address you issued and have not used yet; never return it unchecked. Tell buyers which addresses are yours.";
 
-const escapeAll = (chars: string[]) => chars.map(escapeChar).join("");
+// previous is the character before chars in the cleaned value, so a run of spaces across the cut stays escaped.
+function escapeAll(chars: string[], previous: string | undefined): string {
+  let text = "";
+  for (const c of chars) {
+    text += escapeInQuotes(c, previous);
+    previous = c;
+  }
+  return text;
+}
 
-function shorten(value: string): string {
+/** The short form of a payTo value: cleaned, in double quotes, the first 6 and last 4 characters around an ellipsis. */
+export function shorten(value: string): string {
   const chars = Array.from(cleanText(value, 100));
   if (chars.length === 0) return "(empty)";
-  return chars.length > 12 ? `${escapeAll(chars.slice(0, 6))}\u2026${escapeAll(chars.slice(-4))}` : escapeAll(chars);
+  if (chars.length <= 12) return `"${escapeAll(chars, undefined)}"`;
+  return `"${escapeAll(chars.slice(0, 6), undefined)}\u2026${escapeAll(chars.slice(-4), chars[chars.length - 5])}"`;
 }
 
 const hasDuplicate = (values: string[]) => new Set(values).size < values.length;
@@ -43,7 +53,7 @@ function groupItem(g: ChangedGroup, version: 1 | 2): string {
   // Raw values of one group are all different, so an equal printed pair is a look-alike.
   if (hasDuplicate(raw.map((v) => shorten(v)))) {
     print = printFull;
-    const printed = raw.map(printFull);
+    const printed = raw.map((v) => printFull(v));
     if (hasDuplicate(printed)) note = " (these look the same here but differ)";
   }
   const side = (values: string[], printed: string[]) => {

@@ -32,7 +32,7 @@ test("EURC only: default-asset with the EURC opt-in sentence", () => {
   const fs = check([eurc("10000")]);
   assert.deepEqual(ids(fs), ["default-asset"]);
   assert.equal(fs[0].level, "warn");
-  assert.match(fs[0].detail, /Offered: EURC on eip155:8453/);
+  assert.match(fs[0].detail, /Offered: EURC on "eip155:8453"/);
   assert.match(fs[0].fix ?? "", /spendControls\.allowedAssets .*"1000000" for 1 EURC/);
 });
 
@@ -52,7 +52,7 @@ test("default-cap: exactly 1 USD passes, one base unit more does not", () => {
   const fs = check([usdc("1000001")]);
   assert.deepEqual(ids(fs), ["default-cap"]);
   assert.equal(fs[0].title, "Price above the default client cap of 1 USD");
-  assert.match(fs[0].detail, /offered: 1\.000001 USDC on eip155:8453/);
+  assert.match(fs[0].detail, /offered: 1\.000001 USDC on "eip155:8453"/);
 });
 
 test("default-cap uses the asset's decimals (18 for mUSD)", () => {
@@ -70,7 +70,7 @@ test("v1: maxAmountRequired above the cap on a legacy name", () => {
 
 test("v1: the offered text names the network as the server sent it", () => {
   const fs = check([e1({ network: "base", asset: BASE_USDC, maxAmountRequired: "2000000" })], 1);
-  assert.match(fs[0].detail, /offered: 2 USDC on base\)/);
+  assert.match(fs[0].detail, /offered: 2 USDC on "base"\)/);
 });
 
 test("silent where default clients never reach spend controls", () => {
@@ -136,7 +136,7 @@ test("thousands of entries stay fast", () => {
 
 test("labels of unknown assets are cleaned", () => {
   const fs = check([e2({ network: "eip155:10", asset: "0xabc" + String.fromCharCode(0x202e, 0x1b) + "[31mevil" })]);
-  assert.match(fs[0].detail, /Offered: 0xabc\[31mevil on eip155:10/);
+  assert.match(fs[0].detail, /Offered: "0xabc\[31mevil" on "eip155:10"/);
 });
 
 test("eurc-same-amount: same human amount, one finding for two pairs", () => {
