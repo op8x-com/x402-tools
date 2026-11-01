@@ -2,8 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { diffPaths, driftDetail, jsonKind, preflightPlan, runRules } from "../src/rules.ts";
 import { extract } from "../src/extract.ts";
-import { b64, pr, v1, v2 } from "./fixtures.ts";
-import type { Finding, PreflightResult } from "../src/types.ts";
+import { b64, pf, pr, v1, v2 } from "./fixtures.ts";
+import type { Finding } from "../src/types.ts";
 
 const NS = { "cache-control": "no-store" };
 const ids = (fs: Finding[]) => fs.map((f) => f.id);
@@ -226,16 +226,6 @@ const ORIGIN_OK = { "access-control-allow-origin": "https://op8x.com" };
 const EXPOSE_OK = { "access-control-expose-headers": "PAYMENT-REQUIRED, PAYMENT-RESPONSE" };
 const corsV2 = (method: "GET" | "POST", headers: Record<string, string> = { ...ORIGIN_OK, ...EXPOSE_OK }) =>
   extract(pr(method, 402, { ...NS, "payment-required": b64(v2), ...headers }, {}));
-const pf = (status: number | undefined, headers: Record<string, string> = {}, error?: string): PreflightResult => ({
-  method: "OPTIONS",
-  url: "https://api.example.com/weather",
-  requestMethod: "POST",
-  requestHeaders: "payment-signature,content-type",
-  headers,
-  ms: 1,
-  ...(status !== undefined ? { status } : {}),
-  ...(error ? { error } : {}),
-});
 const PF_OK = {
   "access-control-allow-origin": "https://op8x.com",
   "access-control-allow-headers": "PAYMENT-SIGNATURE, Content-Type, Access-Control-Expose-Headers",

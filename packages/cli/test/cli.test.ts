@@ -60,6 +60,22 @@ test("drift is detected end to end", async () => {
   assert.ok(JSON.parse(io.stdout()).findings.some((f: { id: string }) => f.id === "header-body-drift"));
 });
 
+test("a hostile drift key cannot clear the screen or forge a finding line end to end", async () => {
+  const io = capture();
+  assert.equal(await run(["check", `${server.url}/drift-hostile`], io), 1);
+  const out = io.stdout();
+  assert.equal(out.includes("\u001b"), false);
+  const json = capture();
+  assert.equal(await run(["check", `${server.url}/drift-hostile`, "--json"], json), 1);
+  const lines = out.split("\n");
+  assert.equal(lines.filter((l) => /^(\u2716|!|i|\u2713|\u2714) /.test(l)).length, JSON.parse(json.stdout()).findings.length);
+  assert.equal(lines.some((l) => l.startsWith("\u2714")), false);
+  assert.ok(
+    out.includes('extensions."x\\u{001B}[2J\\u{000A}\\u{2714} pass \\u{0020}Official x402 client can read the challenge"'),
+    out,
+  );
+});
+
 test("GET 405 with POST 402 warns but does not fail", async () => {
   const io = capture();
   assert.equal(await run(["check", `${server.url}/get-405`, "--json"], io), 0);
