@@ -119,7 +119,7 @@ The existing `LEGACY_TO_CAIP2` in `rules.ts` stays the hint map for `v2-legacy-n
 
 ### Texts
 
-Amounts are shown in human units. Asset and network strings from the challenge are shown as labels. A label is the symbol from `DEFAULT_ASSETS` or `EURC_ASSETS` if there is one. Otherwise it is the raw string, cleaned and cut with the existing `UNSAFE` filter and code-point cut from `extract.ts` (`cleanReason`). `<cap>` is `DEFAULT_MAX_AMOUNT_PER_PAYMENT` as a number of USD, read from its string or number form.
+Amounts are shown in human units. Asset and network strings from the challenge are shown as labels. A label is the symbol from `DEFAULT_ASSETS` or `EURC_ASSETS` if there is one. Otherwise it is the raw string, cleaned and cut with the existing `UNSAFE` filter and code-point cut from `extract.ts` (`cleanReason`). Superseded by `./2026-11-01-cli-server-text-design.md`: an unknown asset and the network now print in double quotes, escaped and cut to 48 characters (`printFull`). `<cap>` is `DEFAULT_MAX_AMOUNT_PER_PAYMENT` as a number of USD, read from its string or number form.
 
 - `default-asset`
   - title: `Default x402 clients refuse every asset you offer`
