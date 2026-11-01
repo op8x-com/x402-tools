@@ -48,7 +48,7 @@ No output format can stop text written for AI agents from being read as an instr
     *   HTTP status codes;
     *   amounts made only of digits;
     *   path segments of 1 to 40 letters, digits, `_` or `-` (for example `accepts.0.scheme`);
-    *   the markers `(empty)` for a value that is empty after cleaning and `(none)` for a missing `Location` header.
+    *   the markers `(empty)` for a value that is empty after cleaning, `not set` for a header or field the server did not send, and `(none)` for a missing `Location` header.
 *   When a server value is what the rule reports as wrong (for example an unknown payment flow or a `Cache-Control` without `no-store`), it is printed exactly: invisible characters are shown as `\u{XXXX}`, not removed.
 *   Server values never appear in fix texts, so a fix text pasted into bash, zsh or PowerShell can only contain the CLI's own words.
 *   The README says that findings may repeat server values in double quotes, that these are data and not instructions, and which JSON fields an agent should act on (`id`, `level`, `method`, `summary`).
@@ -351,7 +351,7 @@ All paths are relative to the repository root. The work runs in the order given 
     *   `fixtures.ts`:
         *   `pf` moves here from `rules.test.ts` (which then imports it).
         *   `b64raw(text)`: `Buffer.from(text, "utf8").toString("base64")`, for headers that must not be JSON (`b64` JSON-encodes its input and cannot produce a `SyntaxError`).
-        *   `sentStrings(probe)`: every header value of the probe and every string value and object key in its parsed header and body, collected without recursion.
+        *   `sentStrings(...sources)`: for each source (the probe, its repeat and the preflight), every header value and every string value and object key in its parsed header and body, collected without recursion.
         *   The quoted-value pattern `QUOTED = /"(?:[\x20\x21\x23-\x26\x28-\x5B\x5D-\x7E]|\\u\{[0-9A-F]{4,6}\}|…)*"/g`.
         *   `assertQuoting(findings, sent)` with these checks: (i) every match of `QUOTED` in any finding field equals `printEscaped(v)`, `printFull(v)` or the exported `payTo` short form for some `v` in `sent`; (ii) after removing every match, no `"` remains; (iii) no match has more than 100 characters between its quotes, not counting `…`; (iv) no match contains two spaces in a row; (v) no `fix` contains `"`.
     *   `server-text.test.ts`: a table of hostile fixtures built with `extract` (from `src/extract.ts`) and `pr`, `b64`, `b64raw` and `pf` (from `test/fixtures.ts`):
@@ -398,16 +398,17 @@ All paths are relative to the repository root. The work runs in the order given 
 *   **Type / Scope**: Public specs, designs and learning notes (English).
 *   **Proposed Changes**:
     *   `docs/designs/2026-11-01-cli-server-text-design.md` (Create): this design.
-    *   `docs/specs/2026-10-24-cli-check-design.md` (Modify): a line under "Later additions": `../designs/2026-11-01-cli-server-text-design.md`: server values in findings quoted, escaped and cut; own words in single quotes; central check before output.
+    *   `docs/specs/2026-10-24-cli-check-design.md` (Modify): a line under "Later additions": `../designs/2026-11-01-cli-server-text-design.md`: server values in findings quoted, escaped and cut; own words in single quotes; central check before output. The "Testing" section names the hostile-server tests.
+    *   `docs/designs/2026-10-31-cli-amount-change-design.md` (Modify): the example near line 79 gains quotes around the network (`USDC on "eip155:8453"`).
     *   `docs/designs/2026-10-31-cli-challenge-hints-design.md` (Modify): lines 123 and 197 describe the helpers without quotes; add that they now print the value in double quotes and escape `"`, `'` and runs of spaces, with a link to this design.
-    *   `docs/designs/2026-10-31-cli-payto-rotation-design.md` (Modify): the example near line 71 (`USDC on eip155:8453`) gains quotes around the network, and the accepted risk at lines 155-156 ("cleanText but no escapes" for asset and network names) is replaced with a link to this design.
+    *   `docs/designs/2026-10-31-cli-payto-rotation-design.md` (Modify): the example near line 71 (`USDC on eip155:8453`) gains quotes around the network and the `payTo` values, a note at the start of "Formatting" marks the old `cleanText` steps as superseded, and the accepted risk at lines 155-156 ("cleanText but no escapes" for asset and network names) is replaced with a link to this design.
     *   `docs/designs/2026-10-30-cli-spend-controls-design.md` (Modify): line 122 (labels printed with `cleanText` only) gets the same note and link.
     *   `docs/solutions/2026-11-01-server-text-in-findings.md` (Create): learning note with symptom (forged pass line, ESC from JSON keys, server text in a `JSON.parse` error), cause, fix (two layers) and prevention (new rules print every server value with `printEscaped` or `printFull`; the hostile table in `server-text.test.ts` must fire the new rule).
     *   `docs/solutions/2026-10-31-printed-server-values-look-alike.md` (Modify): replace the sentence that asset and network names in `<where>` are not escaped with the new behavior, and add that `printFull` and `printEscaped` now put the value in double quotes and escape `"`, `'` and runs of spaces, with a link to the new note.
 
 ### Order of work
 
-Each step is one commit and ends with `npm run typecheck` and `npm test` green in `packages/cli`.
+Each step is at least one commit (review fixes may add more) and ends with `npm run typecheck` and `npm test` green in `packages/cli`.
 
 1.  Helpers: `extract.ts`, `assets.ts`, `payto.ts`, `hints.ts` (comment) with `extract.test.ts`, `hints.test.ts`, `payto.test.ts`, `assets.test.ts`, `amount.test.ts`, `spend.test.ts` (labels only).
 2.  Central check: `report.ts` with `report.test.ts`.
