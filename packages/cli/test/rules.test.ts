@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { diffPaths, driftDetail, jsonKind, merge, preflightPlan, runRules } from "../src/rules.ts";
+import { diffPaths, driftDetail, jsonKind, limitPerGroup, merge, preflightPlan, runRules } from "../src/rules.ts";
 import { extract } from "../src/extract.ts";
 import { b64, b64raw, pf, pr, v1, v2 } from "./fixtures.ts";
 import type { Finding } from "../src/types.ts";
@@ -1036,4 +1036,64 @@ test("merge gives the same result as before on random lists", () => {
     const copy = () => list.map((f) => ({ ...f }));
     assert.deepEqual(merge(copy()), mergeBefore(copy()), `run ${run}`);
   }
+});
+
+// The summary title is fixed CLI text; tests and agents recognize a summary by it.
+const SUMMARY = /^\d+ more '[a-z0-9-]+' (errors?|warnings?|notes?|pass(es)?) not shown$/;
+const isSummary = (f: Finding) => SUMMARY.test(f.title);
+const SUMMARY_FIX = "Run the check again after changing the entries shown to see the rest.";
+const listed = (id: string) => `Only the first 10 '${id}' findings of this level are listed for each request method.`;
+const group = (n: number, level: Finding["level"] = "error", method: Finding["method"] = "GET", id = "r"): Finding[] =>
+  Array.from({ length: n }, (_, i) => ({ id, level, method, title: `t${i}`, detail: "d" }));
+
+test("limitPerGroup keeps 10 findings per group and replaces the rest with one summary", () => {
+  const ten = group(10);
+  assert.deepEqual(limitPerGroup(ten), ten);
+
+  const eleven = limitPerGroup(group(11));
+  assert.equal(eleven.length, 11);
+  assert.deepEqual(eleven[10], {
+    id: "r",
+    level: "error",
+    method: "GET",
+    title: "1 more 'r' error not shown",
+    detail: listed("r"),
+    fix: SUMMARY_FIX,
+  });
+
+  const many = limitPerGroup(group(25));
+  assert.equal(many.length, 11);
+  assert.equal(many[10].title, "15 more 'r' errors not shown");
+  assert.ok(many.slice(0, 10).every((f) => !isSummary(f)) && isSummary(many[10]));
+});
+
+test("limitPerGroup counts levels and methods apart and keeps the order around summaries", () => {
+  const errors = group(11, "error");
+  const warnings = group(11, "warn");
+  const alternating = errors.flatMap((e, i) => [e, warnings[i]]);
+  const out = limitPerGroup(alternating);
+  assert.deepEqual(out.map((f) => f.title), [
+    ...Array.from({ length: 10 }, (_, i) => [`t${i}`, `t${i}`]).flat(),
+    "1 more 'r' error not shown",
+    "1 more 'r' warning not shown",
+  ]);
+  assert.deepEqual(out.slice(20).map((f) => f.level), ["error", "warn"]);
+
+  const methods = limitPerGroup([...group(11, "error", "GET"), ...group(11, "error", "POST")]);
+  assert.deepEqual(methods.filter(isSummary).map((f) => f.method), ["GET", "POST"]);
+
+  const other: Finding = { id: "other", level: "error", method: "GET", title: "o", detail: "d" };
+  const mixed = group(20);
+  mixed.splice(15, 0, other);
+  assert.deepEqual(limitPerGroup(mixed).map((f) => f.title).slice(9), ["t9", "10 more 'r' errors not shown", "o"]);
+
+  assert.equal(limitPerGroup(group(12, "info")).at(-1)?.title, "2 more 'r' notes not shown");
+  assert.equal(limitPerGroup(group(12, "pass")).at(-1)?.title, "2 more 'r' passes not shown");
+});
+
+test("limitPerGroup leaves its input unchanged", () => {
+  const input = group(15);
+  const before = structuredClone(input);
+  limitPerGroup(input);
+  assert.deepEqual(input, before);
 });

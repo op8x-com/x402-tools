@@ -60,6 +60,8 @@ export function diffPaths(a: unknown, b: unknown, path: string[] = [], depth = 0
 const DRIFT_PREFIX = "Differing fields: ";
 const DRIFT_MAX_LENGTH = 300;
 const DRIFT_MAX_SHOWN = 10;
+// Findings kept per id, level and method; the rest become one summary finding.
+const FINDINGS_PER_GROUP = 10;
 const BARE_SEGMENT = /^[A-Za-z0-9_-]{1,40}$/;
 
 const driftSegment = (s: string) => (BARE_SEGMENT.test(s) ? s : printEscaped(s));
@@ -364,6 +366,45 @@ function methodRules(e: Extracted, x402Core: string): Finding[] {
       "Official x402 client cannot read the challenge",
       `@x402/core ${x402Core}: ${e.official.reason}. The official client would fail before signing; see the other findings.`,
     );
+  }
+  return out;
+}
+
+const KIND: Record<Level, [string, string]> = {
+  error: ["error", "errors"],
+  warn: ["warning", "warnings"],
+  info: ["note", "notes"],
+  pass: ["pass", "passes"],
+};
+
+// A hostile challenge can trigger one rule per accepts[] entry. Each id, level and method keeps its
+// first 10 findings; a summary in the place of the 11th counts the rest. Only own words: id and number.
+export function limitPerGroup(findings: Finding[]): Finding[] {
+  const out: Finding[] = [];
+  const groups = new Map<string, { kept: number; summary?: Finding; hidden: number }>();
+  for (const f of findings) {
+    const key = JSON.stringify([f.id, f.level, f.method]);
+    let g = groups.get(key);
+    if (!g) {
+      g = { kept: 0, hidden: 0 };
+      groups.set(key, g);
+    }
+    if (g.kept < FINDINGS_PER_GROUP) {
+      g.kept++;
+      out.push(f);
+      continue;
+    }
+    if (!g.summary) {
+      g.summary = { id: f.id, level: f.level, method: f.method, title: "", detail: "" };
+      out.push(g.summary);
+    }
+    g.hidden++;
+  }
+  for (const { summary, hidden } of groups.values()) {
+    if (!summary) continue;
+    summary.title = `${hidden} more '${summary.id}' ${KIND[summary.level][hidden === 1 ? 0 : 1]} not shown`;
+    summary.detail = `Only the first ${FINDINGS_PER_GROUP} '${summary.id}' findings of this level are listed for each request method.`;
+    summary.fix = "Run the check again after changing the entries shown to see the rest.";
   }
   return out;
 }
