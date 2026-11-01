@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { findRotation, paytoRule } from "../src/payto.ts";
+import { findRotation, paytoRule, shorten } from "../src/payto.ts";
 import type { Extracted } from "../src/types.ts";
 import { v1, v2 } from "./fixtures.ts";
 
@@ -160,7 +160,7 @@ test("2 (text): shortened addresses, where and the v2 sentence", () => {
   const d = detailOf(ch2(opt(A)), ch2(opt(B)));
   assert.equal(
     d,
-    `Two unpaid GET requests sent a moment apart, the second with an Origin header as a browser sends it, got different payTo addresses: accepts[0] (USDC on eip155:84532) 0x1111\u20261111, then 0x2222\u20262222. A client signs its payment to the address in the challenge it read. A server built on @x402/core 2.x builds payTo again for the paid request and accepts the payment only if your payTo function returns, for that request, an address it issued to this buyer. Buyer-side spend tools that approve or pin recipients per host see a new recipient on every call and may hold or refuse the payment.`,
+    `Two unpaid GET requests sent a moment apart, the second with an Origin header as a browser sends it, got different payTo addresses: accepts[0] (USDC on "eip155:84532") "0x1111\u20261111", then "0x2222\u20262222". A client signs its payment to the address in the challenge it read. A server built on @x402/core 2.x builds payTo again for the paid request and accepts the payment only if your payTo function returns, for that request, an address it issued to this buyer. Buyer-side spend tools that approve or pin recipients per host see a new recipient on every call and may hold or refuse the payment.`,
   );
   assert.equal(
     paytoRule(ex(ch2(opt(A)), ch2(opt(B))))?.fix,
@@ -172,29 +172,29 @@ test("12 (text): v1 sentence", () => {
   const d = detailOf(ch1({ ...v1.accepts[0], payTo: A }), ch1({ ...v1.accepts[0], payTo: B }));
   assert.match(d, /The facilitator rejects a payment signed to a different payTo than the one your server checks it against\. Buyer-side/);
   assert.doesNotMatch(d, /@x402\/core/);
-  assert.match(d, /\(USDC on base-sepolia\)/);
+  assert.match(d, /\(USDC on "base-sepolia"\)/);
 });
 
 test("13: control characters and very long payTo are cleaned and capped", () => {
   const evil = "0xAAAA\u001b[31m\u202e" + "x".repeat(500);
   const d = detailOf(ch2(opt(evil)), ch2(opt(B)));
   assert.doesNotMatch(d, /[\u0000-\u001f\u202e]/);
-  assert.match(d, /0xAAAA\u2026xxxx, then/);
-  assert.ok(d.includes("accepts[0] (USDC on eip155:84532) 0xAAAA…xxxx, then 0x2222…2222. A client"));
+  assert.match(d, /"0xAAAA\u2026xxxx", then/);
+  assert.ok(d.includes('accepts[0] (USDC on "eip155:84532") "0xAAAA\u2026xxxx", then "0x2222\u20262222". A client'));
   const net = "ne\u001bt" + "n".repeat(100);
   assert.doesNotMatch(detailOf(ch2(opt(A, { network: net })), ch2(opt(B, { network: net }))), /\u001b/);
 });
 
 test("14: values of 12 characters or fewer are printed unshortened", () => {
-  assert.match(detailOf(ch2(opt("abcdefghijkl")), ch2(opt("short"))), /\) abcdefghijkl, then short\./);
-  assert.match(detailOf(ch2(opt("abcdefghijklm")), ch2(opt("short"))), /\) abcdef\u2026jklm, then short\./);
+  assert.match(detailOf(ch2(opt("abcdefghijkl")), ch2(opt("short"))), /\) "abcdefghijkl", then "short"\./);
+  assert.match(detailOf(ch2(opt("abcdefghijklm")), ch2(opt("short"))), /\) "abcdef\u2026jklm", then "short"\./);
 });
 
 test("15: addresses equal in first 6 and last 4 characters: the group is printed in full", () => {
   const x = "0xabcd" + "1".repeat(30) + "wxyz";
   const y = "0xabcd" + "2".repeat(30) + "wxyz";
   const d = detailOf(ch2(opt(x)), ch2(opt(y)));
-  assert.ok(d.includes(`${x}, then ${y}`));
+  assert.ok(d.includes(`"${x}", then "${y}"`));
   assert.doesNotMatch(d, /look the same/);
 });
 
@@ -202,7 +202,7 @@ test("16: addresses differing only in removed characters: look-alike note", () =
   const x = "0xabcd" + "1".repeat(30) + "wxyz";
   const y = "0xabcd" + "1".repeat(15) + "\u202e" + "1".repeat(15) + "wxyz";
   const d = detailOf(ch2(opt(x)), ch2(opt(y)));
-  assert.ok(d.includes(`${x}, then ${x} (these look the same here but differ)`));
+  assert.ok(d.includes(`"${x}", then "${x}" (these look the same here but differ)`));
   assert.match(detailOf(ch2(opt("\u202e")), ch2(opt("\u001b"))), /\(these look the same here but differ\)/);
 });
 
@@ -210,24 +210,24 @@ test("17: more than three rotating groups: three listed, then and <n> more", () 
   const mk = (p: string) => ch2(...[0, 1, 2, 3, 4].map((i) => opt(`${p}${i}`, { asset: `asset-${i}` })));
   const d = detailOf(mk("a"), mk("b"));
   assert.equal(d.match(/accepts\[\d\]/g)?.length, 3);
-  assert.match(d, /accepts\[2\] \(asset-2 on eip155:84532\) a2, then b2; and 2 more\. A client/);
+  assert.match(d, /accepts\[2\] \("asset-2" on "eip155:84532"\) "a2", then "b2"; and 2 more\. A client/);
   const three = detailOf(ch2(...[0, 1, 2].map((i) => opt(`a${i}`, { asset: `s${i}` }))), ch2(...[0, 1, 2].map((i) => opt(`b${i}`, { asset: `s${i}` }))));
   assert.doesNotMatch(three, /more/);
   const five = (p: string) => [0, 1, 2, 3, 4].map((i) => opt(`${p}${i}`));
   const d5 = detailOf(ch2(...five("a")), ch2(...five("b")));
-  assert.ok(d5.includes("(USDC on eip155:84532) a0 and a1 and a2 and 2 more, then b0 and b1 and b2 and 2 more. A client"));
+  assert.ok(d5.includes('(USDC on "eip155:84532") "a0" and "a1" and "a2" and 2 more, then "b0" and "b1" and "b2" and 2 more. A client'));
 });
 
 test("17 (cap): 1000 addresses per side keep the detail short", () => {
   const many = (p: string) => ch2(...Array.from({ length: 1000 }, (_, i) => opt(`${p}${i}`)));
   const d = detailOf(many("a"), many("b"));
   assert.ok(d.length < 2000, `detail has ${d.length} characters`);
-  assert.ok(d.includes("a0 and a1 and a2 and 997 more, then b0 and b1 and b2 and 997 more"));
+  assert.ok(d.includes('"a0" and "a1" and "a2" and 997 more, then "b0" and "b1" and "b2" and 997 more'));
 });
 
 test("several addresses on one side are joined with and", () => {
   const d = detailOf(ch2(opt(A), opt(B)), ch2(opt(C)));
-  assert.match(d, /0x1111\u20261111 and 0x2222\u20262222, then 0x3333\u20263333/);
+  assert.match(d, /"0x1111\u20261111" and "0x2222\u20262222", then "0x3333\u20263333"/);
 });
 
 test("18 (text): a large accepts[] lists at most three groups", () => {
@@ -258,21 +258,27 @@ test("16 (look-alikes): U+3164 and Cyrillic a are printed as escapes", () => {
   assert.doesNotMatch(d2, /look the same/);
 });
 
-test("16 (cut): values differing only after character 100", () => {
-  const d = detailOf(ch2(opt("0x" + "a".repeat(120) + "1")), ch2(opt("0x" + "a".repeat(120) + "2")));
+test("16 (cut): values differing only after character 100, with the same last 4 characters", () => {
+  const d = detailOf(ch2(opt("0x" + "a".repeat(120) + "1zzzz")), ch2(opt("0x" + "a".repeat(120) + "2zzzz")));
   assert.ok(d.includes(" (these look the same here but differ). A client"));
-  assert.ok(d.includes(`0x${"a".repeat(98)}\u2026`));
+  assert.ok(d.includes(`"0x${"a".repeat(98)}\u2026"`));
+});
+
+test("16 (cut, tail): values differing in their last characters past character 100 show it in the short form", () => {
+  const d = detailOf(ch2(opt("0x" + "a".repeat(120) + "1")), ch2(opt("0x" + "a".repeat(120) + "2")));
+  assert.ok(d.includes(') "0xaaaa\u2026aaa1", then "0xaaaa\u2026aaa2". A client'));
+  assert.doesNotMatch(d, /look the same/);
 });
 
 test("16 (empty): a value empty after cleaning prints (empty)", () => {
-  assert.match(detailOf(ch2(opt("\u200b")), ch2(opt(B))), /\) \(empty\), then 0x2222\u20262222\./);
+  assert.match(detailOf(ch2(opt("\u200b")), ch2(opt(B))), /\) \(empty\), then "0x2222\u20262222"\./);
   assert.match(detailOf(ch2(opt("\u200b")), ch2(opt("\u200b\u200b"))), /\) \(empty\), then \(empty\) \(these look the same here but differ\)\./);
 });
 
 test("16 (limit): 100 non-ASCII characters in full mode print at most 100 characters before the ellipsis", () => {
   const x = "\u00e9".repeat(100);
-  const d = detailOf(ch2(opt(x + "1")), ch2(opt(x + "2")));
-  const m = /\) (.*?)\u2026, then/.exec(d);
+  const d = detailOf(ch2(opt(x + "1zzzz")), ch2(opt(x + "2zzzz")));
+  const m = /\) "(.*?)\u2026", then/.exec(d);
   assert.ok(m);
   assert.ok(Array.from(m[1]!).length <= 100);
   assert.ok(m[1]!.endsWith("\\u{00E9}"));
@@ -288,9 +294,35 @@ test("16 (backslash): literal \\u{3164} text against real U+3164 prints differen
   assert.doesNotMatch(d, /look the same/);
 });
 
-test("16 (literal marker): literal (empty) against only U+200B ends with the look-alike note", () => {
+test("16 (literal marker): literal (empty) against only U+200B prints differently, no note", () => {
   const d = detailOf(ch2(opt("(empty)")), ch2(opt("\u200b")));
-  assert.match(d, /\) \(empty\), then \(empty\) \(these look the same here but differ\)\. A client/);
+  assert.ok(d.includes(') "(empty)", then (empty). A client'));
+  assert.doesNotMatch(d, /look the same/);
+});
+
+test("shorten: quotes, escapes and the cut in the middle", () => {
+  assert.equal(shorten(A), '"0x1111\u20261111"');
+  assert.equal(shorten("short"), '"short"');
+  assert.equal(shorten("\u200b"), "(empty)");
+});
+
+test("shorten: a short value with long escapes stays within 100 printed characters", () => {
+  const emoji = String.fromCodePoint(0x1f600).repeat(12);
+  const printed = shorten(emoji);
+  assert.equal(printed, `"${"\\u{1F600}".repeat(11)}\u2026"`);
+  assert.ok(printed.slice(1, -1).replaceAll("\u2026", "").length <= 100);
+});
+
+test("shorten: the last 4 characters come from the end of the whole value, not from the cut at 100", () => {
+  const long = "0x1111" + "a".repeat(140) + "BEEF";
+  assert.equal(long.length, 150);
+  assert.equal(shorten(long), '"0x1111\u2026BEEF"');
+});
+
+test("16 (quotes and spaces): quotes are escaped and a run of spaces across the cut stays escaped", () => {
+  const d = detailOf(ch2(opt(`0x"'abccc   yz`)), ch2(opt(B)));
+  assert.ok(d.includes(') "0x\\u{0022}\\u{0027}ab\u2026\\u{0020}\\u{0020}yz", then "0x2222\u20262222". A client'));
+  assert.doesNotMatch(d, /look the same/);
 });
 
 test("16 (non-ASCII cut): values differing only past the printed limit end with the look-alike note", () => {

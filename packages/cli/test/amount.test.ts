@@ -58,7 +58,7 @@ test("2: v2, different amount on accepts[0]: one warn finding with both amounts,
   assert.equal(f.title, "Price changes between two requests");
   assert.equal(
     detailOf(ch2(opt("1000")), ch2(opt("1200"))),
-    `Two unpaid GET requests sent a moment apart, the second with an Origin header as a browser sends it, asked different amounts: accepts[0] (USDC on eip155:84532) 1000 (0.001 USDC), then 1200 (0.0012 USDC). A client signs the amount in the challenge it read. ${SERVER_V2} ${TAIL}`,
+    `Two unpaid GET requests sent a moment apart, the second with an Origin header as a browser sends it, asked different amounts: accepts[0] (USDC on "eip155:84532") 1000 (0.001 USDC), then 1200 (0.0012 USDC). A client signs the amount in the challenge it read. ${SERVER_V2} ${TAIL}`,
   );
   assert.equal(
     f.fix,
@@ -83,7 +83,7 @@ test("4: v1, 1000 against 01000: no finding; 1000 against 02000: finding with v1
   const f = amountRule(ex(ch1(o("1000")), ch1(o("02000"))));
   assert.equal(
     f?.detail,
-    `Two unpaid GET requests sent a moment apart, the second with an Origin header as a browser sends it, asked different amounts: accepts[0] (USDC on base) 1000 (0.001 USDC), then 2000 (0.002 USDC). A client signs the amount in the challenge it read. ${SERVER_V1} ${TAIL}`,
+    `Two unpaid GET requests sent a moment apart, the second with an Origin header as a browser sends it, asked different amounts: accepts[0] (USDC on "base") 1000 (0.001 USDC), then 2000 (0.002 USDC). A client signs the amount in the challenge it read. ${SERVER_V1} ${TAIL}`,
   );
   assert.equal(
     f?.fix,
@@ -93,7 +93,7 @@ test("4: v1, 1000 against 01000: no finding; 1000 against 02000: finding with v1
 
 test("5: unknown asset: atomic amounts only, no human value", () => {
   const d = detailOf(ch2(opt("1000", { asset: "0xdead" })), ch2(opt("1200", { asset: "0xdead" })));
-  assert.match(d, /accepts\[0\] \(0xdead on eip155:84532\) 1000, then 1200\. A client/);
+  assert.match(d, /accepts\[0\] \("0xdead" on "eip155:84532"\) 1000, then 1200\. A client/);
   assert.doesNotMatch(d, /\(0\.0/);
 });
 
@@ -148,7 +148,7 @@ test("11: more than three groups: three listed then 'and n more'; five amounts a
   const plain = ch2(...Array.from({ length: 5 }, (_, i) => opt("1000", { asset: `asset-${i}` })));
   const repeat = ch2(...Array.from({ length: 5 }, (_, i) => opt("1200", { asset: `asset-${i}` })));
   const d = detailOf(plain, repeat);
-  assert.match(d, /accepts\[2\] \(asset-2 on eip155:84532\) 1000, then 1200; and 2 more\. A client/);
+  assert.match(d, /accepts\[2\] \("asset-2" on "eip155:84532"\) 1000, then 1200; and 2 more\. A client/);
   assert.doesNotMatch(d, /accepts\[3\]/);
   const many = (base: number) => ch2(...Array.from({ length: 5 }, (_, i) => opt(String(base + i))));
   const d2 = detailOf(many(100), many(200));

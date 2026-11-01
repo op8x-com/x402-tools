@@ -56,13 +56,13 @@ test("testnet-only: a v2 challenge on Base Sepolia only", () => {
     method: "GET",
     title: "Only test networks offered",
     detail:
-      "Every payment option is on a test network: eip155:84532. Buyers that pay on mainnet find no option they can use. Ignore this if the endpoint is meant for testing.",
+      'Every payment option is on a test network: "eip155:84532". Buyers that pay on mainnet find no option they can use. Ignore this if the endpoint is meant for testing.',
     fix: "Add a mainnet option next to the test one, for example eip155:8453 (v1: base) with USDC.",
   });
 });
 
 test("testnet-only: a v1 name in a v1 challenge fires, in a v2 challenge it stays silent", () => {
-  assert.match(find(hintRules(atBody(v1), CALLED), "testnet-only")?.detail ?? "", /test network: base-sepolia\. /);
+  assert.match(find(hintRules(atBody(v1), CALLED), "testnet-only")?.detail ?? "", /test network: "base-sepolia"\. /);
   assert.equal(find(hintRules(at(withAccepts([entry("base-sepolia")])), CALLED), "testnet-only"), undefined);
 });
 
@@ -78,14 +78,20 @@ test("testnet-only: an unknown network stays silent", () => {
 
 test("testnet-only: invalid entries are skipped, valid test entries still fire", () => {
   const c = withAccepts([null, { network: "eip155:8453" }, entry("eip155:84532")]);
-  assert.match(find(hintRules(at(c), CALLED), "testnet-only")?.detail ?? "", /test network: eip155:84532\. /);
+  assert.match(find(hintRules(at(c), CALLED), "testnet-only")?.detail ?? "", /test network: "eip155:84532"\. /);
 });
 
 test("testnet-only: 1,000 test entries name at most 3 networks, deduplicated in order", () => {
   const nets = ["eip155:84532", "eip155:11155111", "eip155:43113", "eip155:80002", "eip155:1328"];
   const c = withAccepts(Array.from({ length: 1000 }, (_, i) => entry(nets[i % nets.length])));
   const d = find(hintRules(at(c), CALLED), "testnet-only")?.detail ?? "";
-  assert.match(d, /^Every payment option is on a test network: eip155:84532, eip155:11155111, eip155:43113 and 2 more\. Buyers/);
+  assert.match(d, /^Every payment option is on a test network: "eip155:84532", "eip155:11155111", "eip155:43113" and 2 more\. Buyers/);
+});
+
+test("testnet-only: three test networks are each printed in full", () => {
+  const c = withAccepts([entry("eip155:84532"), entry("eip155:11155111"), entry("eip155:43113")]);
+  const d = find(hintRules(at(c), CALLED), "testnet-only")?.detail ?? "";
+  assert.match(d, /^Every payment option is on a test network: "eip155:84532", "eip155:11155111", "eip155:43113"\. Buyers/);
 });
 
 // extensions-placement
@@ -130,7 +136,7 @@ test("resource-url-mismatch: http behind a proxy", () => {
     level: "info",
     method: "GET",
     title: "resource.url differs from the URL checked",
-    detail: `resource.url is http://api.example.com/weather; the URL checked is https://api.example.com/weather. Differs in: scheme. The server likely sees http behind a proxy that ends TLS. ${STAGING}`,
+    detail: `resource.url is "http://api.example.com/weather"; the URL checked is https://api.example.com/weather. Differs in: scheme. The server likely sees http behind a proxy that ends TLS. ${STAGING}`,
     fix: "Set the route's resource to the public URL, or let the server trust the forwarded scheme and host from the proxy. The Bazaar lists the URL from resource.url.",
   });
 });
@@ -138,12 +144,12 @@ test("resource-url-mismatch: http behind a proxy", () => {
 test("resource-url-mismatch: other host, other path, all three", () => {
   assert.equal(
     urlHint("https://staging.example.com/weather")?.detail,
-    `resource.url is https://staging.example.com/weather; the URL checked is https://api.example.com/weather. Differs in: host. ${STAGING}`,
+    `resource.url is "https://staging.example.com/weather"; the URL checked is https://api.example.com/weather. Differs in: host. ${STAGING}`,
   );
   assert.equal(urlHint("https://api.example.com:8443/weather")?.detail.includes("Differs in: host."), true);
   assert.equal(
     urlHint("https://api.example.com/forecast")?.detail,
-    `resource.url is https://api.example.com/forecast; the URL checked is https://api.example.com/weather. Differs in: path. If this route serves many paths on purpose, you can ignore this. ${STAGING}`,
+    `resource.url is "https://api.example.com/forecast"; the URL checked is https://api.example.com/weather. Differs in: path. If this route serves many paths on purpose, you can ignore this. ${STAGING}`,
   );
   assert.match(
     urlHint("http://other.example.com/x")?.detail ?? "",
@@ -164,7 +170,7 @@ test("resource-url-mismatch: one trailing slash and the query are ignored", () =
 });
 
 test("resource-url-mismatch: a relative resource.url fires", () => {
-  assert.equal(urlHint("/weather")?.detail, `resource.url is not an absolute URL: /weather. ${STAGING}`);
+  assert.equal(urlHint("/weather")?.detail, `resource.url is not an absolute URL: "/weather". ${STAGING}`);
 });
 
 test("resource-url-mismatch: non-string or empty resource.url, or no resource object, stays silent", () => {
@@ -186,32 +192,32 @@ test("resource-url-mismatch: control characters are escaped and a 10,000-charact
   const d = urlHint(`https://evil.example.com/\u001b[31m\u202e${"a".repeat(10000)}`)?.detail ?? "";
   assert.equal(/[\u0000-\u001f\u007f-\u009f\u202e]/.test(d), false);
   const printed = d.slice("resource.url is ".length, d.indexOf("; the URL checked"));
-  assert.ok(printed.endsWith("\u2026"));
-  assert.ok(Array.from(printed).length <= 101);
+  assert.ok(printed.startsWith('"') && printed.endsWith('\u2026"'));
+  assert.ok(Array.from(printed).length <= 103);
   assert.match(d, /Differs in: host, path\./);
 });
 
 test("resource-url-mismatch: a trailing no-break space is printed escaped, not trimmed", () => {
   assert.equal(
     urlHint(`${CALLED}\u00A0`)?.detail,
-    `resource.url is https://api.example.com/weather\\u{00A0}; the URL checked is https://api.example.com/weather. Differs in: path. If this route serves many paths on purpose, you can ignore this. ${STAGING}`,
+    `resource.url is "https://api.example.com/weather\\u{00A0}"; the URL checked is https://api.example.com/weather. Differs in: path. If this route serves many paths on purpose, you can ignore this. ${STAGING}`,
   );
 });
 
 test("resource-url-mismatch: a zero-width space in the path is printed escaped, not removed", () => {
   assert.equal(
     urlHint("https://api.example.com/wea\u200Bther")?.detail,
-    `resource.url is https://api.example.com/wea\\u{200B}ther; the URL checked is https://api.example.com/weather. Differs in: path. If this route serves many paths on purpose, you can ignore this. ${STAGING}`,
+    `resource.url is "https://api.example.com/wea\\u{200B}ther"; the URL checked is https://api.example.com/weather. Differs in: path. If this route serves many paths on purpose, you can ignore this. ${STAGING}`,
   );
 });
 
 test("resource-url-mismatch: a resource.url of format characters only is printed escaped, not as (empty)", () => {
-  assert.equal(urlHint("\u200B\u2060")?.detail, `resource.url is not an absolute URL: \\u{200B}\\u{2060}. ${STAGING}`);
+  assert.equal(urlHint("\u200B\u2060")?.detail, `resource.url is not an absolute URL: "\\u{200B}\\u{2060}". ${STAGING}`);
 });
 
 test("resource-url-mismatch: a Cyrillic look-alike host is printed escaped and named as host", () => {
   const d = urlHint("https://\u0430pi.example.com/weather")?.detail ?? "";
-  assert.ok(d.startsWith("resource.url is https://\\u{0430}pi.example.com/weather; "));
+  assert.ok(d.startsWith('resource.url is "https://\\u{0430}pi.example.com/weather"; '));
   assert.match(d, /Differs in: host\. This is expected/);
 });
 
@@ -244,19 +250,19 @@ test("self-payment: payer equal to payTo with other letter case on eip155:8453",
     method: "GET",
     title: "Payer is the payTo address",
     detail:
-      "The address given with --payer is the payTo of accepts[0] (eip155:8453). Payer and receiver are the same; some facilitators reject such a payment.",
+      'The address given with --payer is the payTo of accepts[0] ("eip155:8453"). Payer and receiver are the same; some facilitators reject such a payment.',
     fix: "Test with a second wallet that is not the payTo.",
   });
 });
 
 test("self-payment: v1 name base compares EVM addresses without case", () => {
   const c = { ...v1main, accepts: [{ ...v1main.accepts[0], payTo: PAYTO }] };
-  assert.match(selfPay(atBody(c), PAYTO.toUpperCase().replace("0X", "0x"))?.detail ?? "", /payTo of accepts\[0\] \(base\)\. /);
+  assert.match(selfPay(atBody(c), PAYTO.toUpperCase().replace("0X", "0x"))?.detail ?? "", /payTo of accepts\[0\] \("base"\)\. /);
 });
 
 test("self-payment: Solana addresses compare exactly", () => {
   const c = withAccepts([entry(SOL, { payTo: SOL_PAYTO })]);
-  assert.match(selfPay(at(c), SOL_PAYTO)?.detail ?? "", /payTo of accepts\[0\] \(solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp\)\. /);
+  assert.match(selfPay(at(c), SOL_PAYTO)?.detail ?? "", /payTo of accepts\[0\] \("solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"\)\. /);
   assert.equal(selfPay(at(c), SOL_PAYTO.toLowerCase()), undefined);
 });
 
@@ -271,7 +277,12 @@ test("self-payment: one finding at most, naming the first matching index", () =>
   const c = withAccepts([entry("eip155:8453"), entry("eip155:8453", { payTo: PAYTO }), entry("eip155:1", { payTo: PAYTO })]);
   const fs = hintRules(at(c), CALLED, PAYTO).filter((f) => f.id === "self-payment");
   assert.equal(fs.length, 1);
-  assert.match(fs[0].detail, /payTo of accepts\[1\] \(eip155:8453\)\. /);
+  assert.match(fs[0].detail, /payTo of accepts\[1\] \("eip155:8453"\)\. /);
+});
+
+test("self-payment: the network is printed escaped, invisible characters stay visible", () => {
+  const c = withAccepts([entry("eip155:8453\u200b", { payTo: PAYTO })]);
+  assert.match(selfPay(at(c), PAYTO)?.detail ?? "", /payTo of accepts\[0\] \("eip155:8453\\u\{200B\}"\)\. /);
 });
 
 // post-needs-body

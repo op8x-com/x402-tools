@@ -21,7 +21,7 @@ const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !
 const CAP = typeof DEFAULT_MAX_AMOUNT_PER_PAYMENT === "string" ? DEFAULT_MAX_AMOUNT_PER_PAYMENT.replace(/^\$/, "") : String(DEFAULT_MAX_AMOUNT_PER_PAYMENT);
 const CLIENTS = "Clients built on @x402/core 2.23.0 or later (for example @x402/fetch, @x402/axios) without spendControls";
 const EURC_OPT_IN =
-  'EURC: add it to spendControls.allowedAssets (network and EURC token address) with its own maxAmountPerPayment in atomic units, for example "1000000" for 1 EURC.';
+  "EURC: add it to spendControls.allowedAssets (network and EURC token address) with its own maxAmountPerPayment in atomic units, for example '1000000' for 1 EURC.";
 
 function stub(version: 1 | 2): SchemeNetworkClient {
   return {

@@ -41,6 +41,14 @@ export async function startServer(): Promise<{ url: string; close: () => Promise
         return json(402, { "payment-required": "", "cache-control": "no-store" }, {});
       case "/drift":
         return json(402, challenge, { ...v2, accepts: [{ ...v2.accepts[0], amount: "20000" }] });
+      case "/drift-hostile": {
+        // A body key that tries to clear the screen and forge a pass line; the header still decodes.
+        const key = "x\u001b[2J\n\u2714 pass  Official x402 client can read the challenge";
+        return json(402, { "payment-required": b64({ ...v2, extensions: {} }), "cache-control": "no-store" }, {
+          ...v2,
+          extensions: { [key]: 1 },
+        });
+      }
       case "/get-405":
         if (req.method === "GET") {
           res.writeHead(405);

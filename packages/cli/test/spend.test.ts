@@ -32,14 +32,28 @@ test("EURC only: default-asset with the EURC opt-in sentence", () => {
   const fs = check([eurc("10000")]);
   assert.deepEqual(ids(fs), ["default-asset"]);
   assert.equal(fs[0].level, "warn");
-  assert.match(fs[0].detail, /Offered: EURC on eip155:8453/);
-  assert.match(fs[0].fix ?? "", /spendControls\.allowedAssets .*"1000000" for 1 EURC/);
+  assert.match(fs[0].detail, /Offered: EURC on "eip155:8453"/);
+  assert.match(fs[0].fix ?? "", /spendControls\.allowedAssets .*, for example '1000000' for 1 EURC\./);
 });
 
 test("USDC on a chain without a default asset: default-asset without the EURC sentence", () => {
   const fs = check([e2({ network: "eip155:10", asset: BASE_USDC })]);
   assert.deepEqual(ids(fs), ["default-asset"]);
   assert.doesNotMatch(fs[0].fix ?? "", /EURC/);
+});
+
+test("default-asset prints a refused asset exactly: invisible characters and spaces stay visible", () => {
+  const offered = (over: Record<string, unknown>) => {
+    const fs = check([{ ...usdc("10000"), ...over }]);
+    assert.deepEqual(ids(fs), ["default-asset"]);
+    return fs[0].detail.slice(fs[0].detail.indexOf("Offered: "));
+  };
+  const ZWSP = String.fromCodePoint(0x200b);
+  assert.match(offered({ asset: ZWSP + BASE_USDC }), /^Offered: "\\u\{200B\}0x833589/);
+  assert.match(offered({ asset: ` ${BASE_USDC}` }), new RegExp(`^Offered: " ${BASE_USDC}" on "eip155:8453"`));
+  // A full address plus a trailing invisible character: the escape stays visible, nothing is cut.
+  assert.match(offered({ asset: BASE_USDC + ZWSP }), new RegExp(`^Offered: "${BASE_USDC}\\\\u\\{200B\\}" on`));
+  assert.match(offered({ network: BASE + ZWSP }), new RegExp(`^Offered: "${BASE_USDC}" on "eip155:8453\\\\u\\{200B\\}"`));
 });
 
 test("existing fixtures report none of the new findings", () => {
@@ -52,7 +66,7 @@ test("default-cap: exactly 1 USD passes, one base unit more does not", () => {
   const fs = check([usdc("1000001")]);
   assert.deepEqual(ids(fs), ["default-cap"]);
   assert.equal(fs[0].title, "Price above the default client cap of 1 USD");
-  assert.match(fs[0].detail, /offered: 1\.000001 USDC on eip155:8453/);
+  assert.match(fs[0].detail, /offered: 1\.000001 USDC on "eip155:8453"/);
 });
 
 test("default-cap uses the asset's decimals (18 for mUSD)", () => {
@@ -70,7 +84,7 @@ test("v1: maxAmountRequired above the cap on a legacy name", () => {
 
 test("v1: the offered text names the network as the server sent it", () => {
   const fs = check([e1({ network: "base", asset: BASE_USDC, maxAmountRequired: "2000000" })], 1);
-  assert.match(fs[0].detail, /offered: 2 USDC on base\)/);
+  assert.match(fs[0].detail, /offered: 2 USDC on "base"\)/);
 });
 
 test("silent where default clients never reach spend controls", () => {
@@ -134,9 +148,9 @@ test("thousands of entries stay fast", () => {
   assert.ok(performance.now() - start < 2000);
 });
 
-test("labels of unknown assets are cleaned", () => {
+test("labels of unknown assets are escaped", () => {
   const fs = check([e2({ network: "eip155:10", asset: "0xabc" + String.fromCharCode(0x202e, 0x1b) + "[31mevil" })]);
-  assert.match(fs[0].detail, /Offered: 0xabc\[31mevil on eip155:10/);
+  assert.match(fs[0].detail, /Offered: "0xabc\\u\{202E\}\\u\{001B\}\[31mevil" on "eip155:10"/);
 });
 
 test("eurc-same-amount: same human amount, one finding for two pairs", () => {

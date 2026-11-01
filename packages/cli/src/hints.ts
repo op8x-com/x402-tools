@@ -3,8 +3,9 @@ import { isObject, printEscaped, printFull } from "./extract.ts";
 import type { Extracted, Finding } from "./types.ts";
 
 // Challenge hints (docs/designs/2026-10-31-cli-challenge-hints-design.md): mistakes that are visible in
-// the unpaid response but not in the seller's own logs. Server strings are printed only through printFull, and
-// resource.url, which stands next to the URL checked, through printEscaped.
+// the unpaid response but not in the seller's own logs. Server strings are printed in double quotes, only through
+// printFull (test network names, each matched against a known one) or printEscaped (resource.url, which stands next
+// to the URL checked, and the self-payment network, which is never compared with a known name).
 
 interface Entry {
   index: number;
@@ -28,7 +29,7 @@ const MAX_NETWORKS = 3;
 function testnetOnly(entries: Entry[], version: 1 | 2): Omit<Finding, "method"> | undefined {
   if (entries.length === 0 || !entries.every((x) => isTestNetwork(x.network, version))) return undefined;
   const names = [...new Set(entries.map((x) => x.network))];
-  let list = names.slice(0, MAX_NETWORKS).map(printFull).join(", ");
+  let list = names.slice(0, MAX_NETWORKS).map((v) => printFull(v)).join(", ");
   if (names.length > MAX_NETWORKS) list += ` and ${names.length - MAX_NETWORKS} more`;
   return {
     id: "testnet-only",
@@ -113,7 +114,7 @@ function selfPayment(entries: Entry[], version: 1 | 2, payer: string): Omit<Find
     id: "self-payment",
     level: "warn",
     title: "Payer is the payTo address",
-    detail: `The address given with --payer is the payTo of accepts[${match.index}] (${printFull(match.network)}). Payer and receiver are the same; some facilitators reject such a payment.`,
+    detail: `The address given with --payer is the payTo of accepts[${match.index}] (${printEscaped(match.network)}). Payer and receiver are the same; some facilitators reject such a payment.`,
     fix: "Test with a second wallet that is not the payTo.",
   };
 }

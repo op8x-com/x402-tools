@@ -1,3 +1,4 @@
+import { neutralize } from "./extract.ts";
 import { ORIGIN } from "./probe.ts";
 import type { Finding, Level, PreflightResult, ProbeResult } from "./types.ts";
 
@@ -66,14 +67,22 @@ function buildNotChecked(
   return out;
 }
 
+/** Layer 2: server-controlled text never carries control characters. Covers every string field, also future ones. */
+function neutralizeFinding(f: Finding): Finding {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(f)) out[key] = typeof value === "string" ? neutralize(value) : value;
+  return out as unknown as Finding;
+}
+
 export function buildReport(
   url: string,
   version: string,
   x402Core: string,
   probes: (ProbeResult | PreflightResult)[],
-  findings: Finding[],
+  rawFindings: Finding[],
   now: Date = new Date(),
 ): Report {
+  const findings = rawFindings.map((f) => neutralizeFinding(f));
   return {
     tool: "op8x",
     version,
@@ -84,7 +93,7 @@ export function buildReport(
       method: p.method,
       ...(p.status !== undefined ? { status: p.status } : {}),
       ms: p.ms,
-      ...(p.error ? { error: p.error } : {}),
+      ...(p.error ? { error: neutralize(p.error) } : {}),
       ...(p.method !== "OPTIONS" && p.origin ? { origin: p.origin } : {}),
       ...(p.method === "OPTIONS"
         ? {

@@ -64,17 +64,30 @@ test("v1 names map to CAIP-2 only in v1", () => {
   assert.equal(SOLANA_NETWORKS.length, 3);
 });
 
-test("assetWhere: a known asset by symbol, the network as sent", () => {
-  assert.equal(assetWhere(BASE_USDC, "eip155:8453", 2), "USDC on eip155:8453");
+test("assetWhere: a known asset by symbol, the network as sent in quotes", () => {
+  assert.equal(assetWhere(BASE_USDC, "eip155:8453", 2), 'USDC on "eip155:8453"');
 });
 
-test("assetWhere: an unknown asset by its cleaned address", () => {
-  assert.equal(assetWhere("0xabc[31mevil", "eip155:10", 2), "0xabc[31mevil on eip155:10");
+test("assetWhere: an unknown asset by its escaped address in quotes, nothing removed", () => {
+  assert.equal(assetWhere("0xabc\u001b[31mevil", "eip155:10", 2), '"0xabc\\u{001B}[31mevil" on "eip155:10"');
+  assert.equal(assetWhere(" 0xabc\u200b", "eip155:10\u00a0", 2), '" 0xabc\\u{200B}" on "eip155:10\\u{00A0}"');
 });
 
 test("assetWhere: a v1 network name resolves the label but prints the name as sent", () => {
-  assert.equal(assetWhere(BASE_USDC, "base", 1), "USDC on base");
-  assert.equal(assetWhere(BASE_USDC, "base", 2), `${BASE_USDC} on base`);
+  assert.equal(assetWhere(BASE_USDC, "base", 1), 'USDC on "base"');
+  assert.equal(assetWhere(BASE_USDC, "base", 2), `"${BASE_USDC}" on "base"`);
+});
+
+test("assetWhere: a full address with a trailing invisible character shows the escape, no cut mark", () => {
+  const addr = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+  assert.equal(assetWhere(addr + "\u200b", "eip155:10", 2), `"${addr}\\u{200B}" on "eip155:10"`);
+});
+
+test("assetWhere: an unknown asset and the network are escaped and cut at 100 printed characters", () => {
+  const long = "0x" + "a".repeat(108);
+  assert.equal(assetWhere(long, "eip155:10", 2), `"0x${"a".repeat(98)}\u2026" on "eip155:10"`);
+  assert.equal(assetWhere("x", "eip155:1 \u0027 x", 2), '"x" on "eip155:1 \\u{0027} x"');
+  assert.equal(assetWhere("a\u00e9", "n".repeat(110), 2), `"a\\u{00E9}" on "${"n".repeat(100)}\u2026"`);
 });
 
 test("TEST_NETWORKS: the v1 test networks, pinned so a new SDK network forces a look", () => {

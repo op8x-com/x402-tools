@@ -211,3 +211,33 @@ test("renderText with curl.exe: Reproduce lines use it, the validate line keeps 
   assert.ok(validate.length > 0);
   for (const l of validate) assert.ok(l.startsWith("curl -X POST"), l);
 });
+
+test("buildReport neutralizes control characters in every finding string and in request errors", () => {
+  const hostile: Finding = {
+    id: "stub",
+    level: "warn",
+    method: "GET",
+    title: "t\x1b[31mred\nline",
+    detail: "d\x1b[2Jx\ny",
+    fix: "f\x1bz\nw",
+  };
+  const failed: ProbeResult = {
+    method: "GET", url: "https://a.example/x", headers: {}, bodyText: "", ms: 1, error: "boom\x1b[0m\nnext",
+  };
+  const r = buildReport("https://a.example/x", "0", "2", [failed], [hostile]);
+  assert.equal(r.findings[0].title, "t\\u{001B}[31mred\\u{000A}line");
+  assert.equal(r.findings[0].detail, "d\\u{001B}[2Jx\\u{000A}y");
+  assert.equal(r.findings[0].fix, "f\\u{001B}z\\u{000A}w");
+  assert.equal(r.requests[0].error, "boom\\u{001B}[0m\\u{000A}next");
+  assert.equal(r.findings[0].id, "stub");
+  assert.equal(r.summary.warnings, 1);
+  assert.equal(hostile.title.includes("\x1b"), true, "input finding is not mutated");
+  // JSON.stringify escapes C0 itself, so the check runs on the parsed strings.
+  const parsed = JSON.parse(renderJson(r)) as { findings: Record<string, unknown>[]; requests: Record<string, unknown>[] };
+  for (const item of [...parsed.findings, ...parsed.requests]) {
+    for (const [field, value] of Object.entries(item)) {
+      if (typeof value !== "string") continue;
+      assert.equal(/[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(value), false, `${field}: ${value}`);
+    }
+  }
+});

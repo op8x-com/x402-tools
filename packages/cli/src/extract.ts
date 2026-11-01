@@ -106,6 +106,11 @@ export function cleanText(text: string, max: number): string {
   return Array.from(text.replace(UNSAFE, "").trim()).slice(0, max).join("");
 }
 
+/** Every control, format, surrogate and line-separator character as \u{XXXX}; everything else, the backslash too, as is. */
+export function neutralize(text: string): string {
+  return text.replace(UNSAFE, (c) => escapeChar(c));
+}
+
 const MAX_PRINTED = 100;
 
 /** One code point as printed: printable ASCII except the backslash as is, everything else as \u{XXXX}. */
@@ -115,42 +120,57 @@ export function escapeChar(c: string): string {
 }
 
 /**
- * A server value printed in full for comparison (see docs/solutions/2026-10-31-printed-server-values-look-alike.md):
- * cleaned, escaped with escapeChar, at most 100 printed characters, a cut marked with an ellipsis.
+ * One code point of a server value inside double quotes: as escapeChar, and also both quote characters and
+ * a space after a space, so the value cannot close its quotes, imitate the CLI's single quotes or pad a line.
  */
-export function printFull(value: string): string {
-  const chars = Array.from(cleanText(value, 100));
-  if (chars.length === 0) return "(empty)";
-  // cleanText stops at 100 characters; asking for 101 shows whether it cut anything.
-  return escapeCapped(chars, Array.from(cleanText(value, 101)).length > MAX_PRINTED);
+export function escapeInQuotes(c: string, previous: string | undefined): string {
+  if (c === '"') return "\\u{0022}";
+  if (c === "'") return "\\u{0027}";
+  if (c === " " && previous === " ") return "\\u{0020}";
+  return escapeChar(c);
 }
 
 /**
- * A server value printed next to a value the CLI prints itself: like printFull, but nothing is removed or
- * trimmed, so characters that cleanText drops (U+00A0, U+200B, U+2060) show as \u{XXXX} and the two cannot
- * look the same. A non-empty value never prints as "(empty)".
+ * A server value printed in full for comparison (see docs/solutions/2026-10-31-printed-server-values-look-alike.md):
+ * cleaned, then in double quotes, escaped with escapeInQuotes, at most `max` printed characters, a cut marked
+ * with an ellipsis. A value empty after cleaning prints as (empty) without quotes.
  */
-export function printEscaped(value: string): string {
-  const chars = Array.from(value);
-  return escapeCapped(chars.slice(0, MAX_PRINTED), chars.length > MAX_PRINTED);
+export function printFull(value: string, max = MAX_PRINTED): string {
+  const chars = Array.from(cleanText(value, max));
+  if (chars.length === 0) return "(empty)";
+  // cleanText stops at max characters; asking for one more shows whether it cut anything.
+  return escapeCapped(chars, Array.from(cleanText(value, max + 1)).length > max, max);
 }
 
-// Escapes chars with escapeChar up to 100 printed characters; a cut is marked with an ellipsis.
-function escapeCapped(chars: string[], cutBefore: boolean): string {
+/**
+ * A server value printed next to a value the CLI prints itself, or reported as wrong: like printFull, but
+ * nothing is removed or trimmed, so characters that cleanText drops (U+00A0, U+200B, U+2060) show as
+ * \u{XXXX} and the two cannot look the same. An empty value prints as "".
+ */
+export function printEscaped(value: string, max = MAX_PRINTED): string {
+  const chars = Array.from(value);
+  return escapeCapped(chars.slice(0, max), chars.length > max, max);
+}
+
+// Escapes chars with escapeInQuotes up to max printed characters (an escape is never split) and puts them in
+// double quotes; a cut is marked with an ellipsis before the closing quote.
+function escapeCapped(chars: string[], cutBefore: boolean, max: number): string {
   let cut = cutBefore;
   let text = "";
   let used = 0;
+  let previous: string | undefined;
   for (const c of chars) {
-    const e = escapeChar(c);
+    const e = escapeInQuotes(c, previous);
     const n = Array.from(e).length;
-    if (used + n > MAX_PRINTED) {
+    if (used + n > max) {
       cut = true;
       break;
     }
     text += e;
     used += n;
+    previous = c;
   }
-  return cut ? `${text}\u2026` : text;
+  return cut ? `"${text}\u2026"` : `"${text}"`;
 }
 
 /** Report-safe text of a thrown value, at most 200 characters. */
@@ -174,6 +194,8 @@ export function officialClientRead(e: Pick<Extracted, "headers" | "body" | "body
     const result: unknown = client.getPaymentRequiredResponse((name) => e.headers[name.toLowerCase()], e.body);
     return isObject(result) ? { readable: true } : { readable: false, reason: "challenge is not a JSON object" };
   } catch (err) {
+    // The JSON.parse message quotes the decoded header text, which the server controls.
+    if (err instanceof SyntaxError) return { readable: false, reason: "the decoded PAYMENT-REQUIRED header is not JSON" };
     return { readable: false, reason: cleanReason(err) };
   }
 }
