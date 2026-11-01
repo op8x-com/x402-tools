@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { diffPaths, driftDetail, jsonKind, preflightPlan, runRules } from "../src/rules.ts";
 import { extract } from "../src/extract.ts";
-import { b64, pf, pr, v1, v2 } from "./fixtures.ts";
+import { b64, b64raw, pf, pr, v1, v2 } from "./fixtures.ts";
 import type { Finding } from "../src/types.ts";
 
 const NS = { "cache-control": "no-store" };
@@ -149,6 +149,22 @@ test("diffPaths", () => {
   assert.deepEqual(diffPaths({ a: 1 }, { a: 1, x: 2 }), [["x"]]);
   assert.deepEqual(diffPaths({ "a.b": 1 }, { "a.b": 2 }), [["a.b"]]);
   assert.deepEqual(diffPaths(1, 2), [[]]);
+});
+
+// JSON.parse creates "__proto__" as an own key; a literal { __proto__: {} } would set the prototype instead.
+const withProto = () => JSON.parse(JSON.stringify(v2).replace(/^\{/, '{"__proto__":{},'));
+
+test("diffPaths reads own properties only, so __proto__ on one side differs", () => {
+  assert.deepEqual(diffPaths({}, JSON.parse('{"__proto__":{}}')), [["__proto__"]]);
+  assert.deepEqual(diffPaths(JSON.parse('{"__proto__":{}}'), {}), [["__proto__"]]);
+});
+
+test("header-body-drift reports __proto__ present on one side only", () => {
+  const bodyOnly = runRules([extract(pr("GET", 402, { ...NS, "payment-required": b64(v2) }, withProto()))]);
+  assert.equal(bodyOnly.find((f) => f.id === "header-body-drift")?.detail, "Differing fields: __proto__");
+  const headerText = JSON.stringify(withProto());
+  const headerOnly = runRules([extract(pr("GET", 402, { ...NS, "payment-required": b64raw(headerText) }, v2))]);
+  assert.equal(headerOnly.find((f) => f.id === "header-body-drift")?.detail, "Differing fields: __proto__");
 });
 
 const nested = (depth: number, leaf: unknown, key = "k") => {

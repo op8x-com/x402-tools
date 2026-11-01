@@ -1,6 +1,6 @@
 import { PaymentRequiredV1Schema, PaymentRequiredV2Schema } from "@x402/core/schemas";
 import { amountRule } from "./amount.ts";
-import { legacyToCaip2 } from "./assets.ts";
+import { legacyToCaip2, own } from "./assets.ts";
 import { headerDecoded, printEscaped } from "./extract.ts";
 import { hintRules, isJsonRpcError, postNeedsBody } from "./hints.ts";
 import { paytoRule } from "./payto.ts";
@@ -54,7 +54,7 @@ export function diffPaths(a: unknown, b: unknown, path: string[] = [], depth = 0
   const container = (v: unknown): v is Obj => typeof v === "object" && v !== null;
   if (!container(a) || !container(b) || Array.isArray(a) !== Array.isArray(b)) return [path];
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
-  return [...keys].flatMap((k) => diffPaths(a[k], b[k], [...path, k], depth + 1));
+  return [...keys].flatMap((k) => diffPaths(own(a, k), own(b, k), [...path, k], depth + 1));
 }
 
 const DRIFT_PREFIX = "Differing fields: ";
