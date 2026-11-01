@@ -125,9 +125,10 @@ export function sentStrings(...sources: (ProbeResult | PreflightResult)[]): Set<
 export const QUOTED = /"(?:[\x20\x21\x23-\x26\x28-\x5B\x5D-\x7E]|\\u\{[0-9A-F]{4,6}\}|\u2026)*"/g;
 
 /**
- * The quoting rule for server values in findings: (i) every quoted span is printEscaped, printFull, or the payTo short form of a value the server sent; (ii) no other double quote; (iii) at most 100
- * characters between the quotes, not counting the cut mark; (iv) no two spaces in a row inside quotes;
- * (v) no fix contains a double quote.
+ * The quoting rule for server values in findings: (i) every quoted span is printEscaped, printFull, or the
+ * payTo short form of a value the server sent; (ii) no other double quote; (iii) at most 100 characters
+ * between the quotes, not counting the cut mark; (iv) no two spaces in a row inside quotes; (v) no fix
+ * contains a double quote.
  */
 export function assertQuoting(findings: Finding[], sent: Set<string>): void {
   const accepted = new Set<string>();
