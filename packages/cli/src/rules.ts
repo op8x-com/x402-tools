@@ -369,14 +369,27 @@ function methodRules(e: Extracted, x402Core: string): Finding[] {
 }
 
 // Identical findings on GET and POST collapse into one with method "both".
-function merge(findings: Finding[]): Finding[] {
+// Per key, a queue holds the output findings not yet "both", oldest first. They always share one
+// method: a finding of another method folds into the oldest instead of joining the queue.
+export function merge(findings: Finding[]): Finding[] {
   const out: Finding[] = [];
+  const open = new Map<string, { items: Finding[]; head: number }>();
   for (const f of findings) {
-    const twin = out.find(
-      (o) => o.id === f.id && o.title === f.title && o.detail === f.detail && o.method !== f.method && o.method !== "both",
-    );
-    if (twin) twin.method = "both";
-    else out.push({ ...f });
+    const key = JSON.stringify([f.id, f.title, f.detail]);
+    let queue = open.get(key);
+    if (!queue) {
+      queue = { items: [], head: 0 };
+      open.set(key, queue);
+    }
+    const oldest = queue.items[queue.head];
+    if (oldest && oldest.method !== f.method) {
+      oldest.method = "both";
+      queue.head++;
+      continue;
+    }
+    const copy = { ...f };
+    if (copy.method !== "both") queue.items.push(copy);
+    out.push(copy);
   }
   return out;
 }

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { diffPaths, driftDetail, jsonKind, preflightPlan, runRules } from "../src/rules.ts";
+import { diffPaths, driftDetail, jsonKind, merge, preflightPlan, runRules } from "../src/rules.ts";
 import { extract } from "../src/extract.ts";
 import { b64, b64raw, pf, pr, v1, v2 } from "./fixtures.ts";
 import type { Finding } from "../src/types.ts";
@@ -990,4 +990,50 @@ test("payment-flow warning names the network by the type rule, the scheme as an 
   assert.ok(find(missing, "payment-flow")?.detail.startsWith(`accepts[0] ('auth-capture' on a network that is not set)${rest}`));
   const solana = find(v2With({ scheme: "upto", network: "solana:abc" }), "payment-flow");
   assert.ok(solana?.detail.startsWith(`accepts[0] ('upto' on "solana:abc") defaults to the 'escrow' flow`), solana?.detail);
+});
+
+// merge before it became linear, kept as the reference for the differential test.
+function mergeBefore(findings: Finding[]): Finding[] {
+  const out: Finding[] = [];
+  for (const f of findings) {
+    const twin = out.find(
+      (o) => o.id === f.id && o.title === f.title && o.detail === f.detail && o.method !== f.method && o.method !== "both",
+    );
+    if (twin) twin.method = "both";
+    else out.push({ ...f });
+  }
+  return out;
+}
+
+const finding = (method: Finding["method"], title = "t", detail = "d"): Finding => ({ id: "r", level: "error", method, title, detail });
+
+test("merge folds identical findings of different methods into both", () => {
+  const twice = [finding("GET"), finding("GET"), finding("POST"), finding("POST")];
+  assert.deepEqual(merge(twice).map((f) => f.method), ["both", "both"]);
+  assert.deepEqual(merge([finding("both"), finding("GET")]).map((f) => f.method), ["both", "GET"]);
+  assert.deepEqual(merge([finding("GET"), finding("both")]).map((f) => f.method), ["both"]);
+  assert.deepEqual(merge([finding("GET", "a"), finding("POST", "b"), finding("POST", "a", "x")]).map((f) => f.method), ["GET", "POST", "POST"]);
+});
+
+// Small seeded generator, so the differential test is the same on every run.
+function mulberry32(seed: number): () => number {
+  let a = seed;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+test("merge gives the same result as before on random lists", () => {
+  const random = mulberry32(1);
+  const methods: Finding["method"][] = ["GET", "POST", "OPTIONS", "both"];
+  for (let run = 0; run < 200; run++) {
+    const list = Array.from({ length: Math.floor(random() * 41) }, () =>
+      finding(methods[Math.floor(random() * 4)], `t${Math.floor(random() * 3)}`),
+    );
+    const copy = () => list.map((f) => ({ ...f }));
+    assert.deepEqual(merge(copy()), mergeBefore(copy()), `run ${run}`);
+  }
 });
