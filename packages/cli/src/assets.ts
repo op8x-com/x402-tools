@@ -170,7 +170,7 @@ export const V1_NETWORKS: Record<string, string> = {
 export const SOLANA_NETWORKS = Object.keys(DEFAULT_ASSETS).filter((n) => n.startsWith("solana:"));
 
 // Only own keys count, never "__proto__" or "constructor": keys come from the challenge.
-export const own =<T>(table: Record<string, T>, key: string): T | undefined => (Object.hasOwn(table, key) ? table[key] : undefined);
+export const own = <T>(table: Record<string, T>, key: string): T | undefined => (Object.hasOwn(table, key) ? table[key] : undefined);
 
 /** CAIP-2 identifier for a v1 network name, if default clients know it. */
 export const legacyToCaip2 = (network: string): string | undefined => own(V1_NETWORKS, network);

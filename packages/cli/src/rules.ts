@@ -377,8 +377,9 @@ const KIND: Record<Level, [string, string]> = {
   pass: ["pass", "passes"],
 };
 
-// A hostile challenge can trigger one rule per accepts[] entry. Each id, level and method keeps its
-// first 10 findings; a summary in the place of the 11th counts the rest. Only own words: id and number.
+// A hostile challenge can trigger one rule per accepts[] entry. Each id, level and method keeps its first
+// FINDINGS_PER_GROUP findings; a summary in the place of the next one counts the rest. The summary holds
+// only own text: the rule id and the count, filled in after the pass when the count is known.
 export function limitPerGroup(findings: Finding[]): Finding[] {
   const out: Finding[] = [];
   const groups = new Map<string, { kept: number; summary?: Finding; hidden: number }>();

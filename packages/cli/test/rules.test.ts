@@ -161,11 +161,11 @@ test("diffPaths reads own properties only, so __proto__ on one side differs", ()
 });
 
 test("header-body-drift reports __proto__ present on one side only", () => {
-  const bodyOnly = runRules([extract(pr("GET", 402, { ...NS, "payment-required": b64(v2) }, withProto()))]);
-  assert.equal(bodyOnly.find((f) => f.id === "header-body-drift")?.detail, "Differing fields: __proto__");
+  const bodyHasKey = runRules([extract(pr("GET", 402, { ...NS, "payment-required": b64(v2) }, withProto()))]);
+  assert.equal(bodyHasKey.find((f) => f.id === "header-body-drift")?.detail, "Differing fields: __proto__");
   const headerText = JSON.stringify(withProto());
-  const headerOnly = runRules([extract(pr("GET", 402, { ...NS, "payment-required": b64raw(headerText) }, v2))]);
-  assert.equal(headerOnly.find((f) => f.id === "header-body-drift")?.detail, "Differing fields: __proto__");
+  const headerHasKey = runRules([extract(pr("GET", 402, { ...NS, "payment-required": b64raw(headerText) }, v2))]);
+  assert.equal(headerHasKey.find((f) => f.id === "header-body-drift")?.detail, "Differing fields: __proto__");
 });
 
 const nested = (depth: number, leaf: unknown, key = "k") => {
