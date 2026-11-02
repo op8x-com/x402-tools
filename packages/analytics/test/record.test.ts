@@ -414,7 +414,7 @@ test("hasTransaction is false for missing, empty, blank, control-only, numeric a
     ["missing", { success: false }],
     ["empty", { success: false, transaction: "" }],
     ["blank", { success: false, transaction: "   " }],
-    ["control characters only", { success: false, transaction: " ‎" }],
+    ["control characters only", { success: false, transaction: "\u0000\u200e" }],
     ["number", { success: false, transaction: 12345 }],
     ["null", { success: false, transaction: null }],
   ];
@@ -436,7 +436,6 @@ test("hasTransaction is false for success true with an empty transaction", async
 test("hasTransaction is absent when the receipt does not decode", async () => {
   const r = await receiptOf({ "payment-response": "%%" });
   assert.deepEqual(r.receipt, { header: "PAYMENT-RESPONSE", decodable: false });
-  assert.ok(!("hasTransaction" in (r.receipt ?? {})));
 });
 
 test("hasTransaction ignores a __proto__ transaction", async () => {
