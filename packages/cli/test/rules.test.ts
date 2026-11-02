@@ -394,12 +394,12 @@ test("refused preflight with only a headers list that has * and credentials poin
 test("refused preflight trims only HTTP whitespace around methods", () => {
   const f = preflightFinding(400, {
     ...ORIGIN_OK,
-    "access-control-allow-methods": "GET, POST ",
+    "access-control-allow-methods": "GET, POST\u00A0",
     "access-control-allow-headers": ALL_HEADERS,
   });
   assert.ok(f?.detail.includes("method POST is not in it"));
   assert.equal(f?.fix, FIX_A("method POST"));
-  for (const methods of [" POST ", "GET,	POST", "	POST"]) {
+  for (const methods of [" POST ", "GET,\tPOST", "\tPOST"]) {
     const g = preflightFinding(400, {
       ...ORIGIN_OK,
       "access-control-allow-methods": methods,
