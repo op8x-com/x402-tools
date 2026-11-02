@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security issue
+    url: https://github.com/op8x-com/x402-tools/blob/main/.github/SECURITY.md
+    about: Report vulnerabilities privately by email, not as a public issue.
+  - name: Confidential question (collector data, data protection)
+    url: mailto:hello@op8x.com
+    about: Questions about your own data or GDPR requests go to hello@op8x.com.
