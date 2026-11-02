@@ -101,7 +101,7 @@ Invalid options never throw. Warnings, all prefixed `op8x.analytics:`:
 
 "Once per isolate" state lives in `src/warnings.ts` at module scope, so a seller who builds `analytics()` per request does not flood the log.
 
-With `chainCheck: true` the record includes the public transaction hash so the collector can confirm settlement on-chain. The hash links the record to the payer address on-chain. op8x's hosted collector uses it only for that check, stores only the result and deletes the hash afterwards. If you point `endpoint` at your own server, handle it the same way. With `log: true` the hash also appears in the Worker log, where this deletion does not apply. Without `chainCheck` the transaction field is never read.
+With `chainCheck: true` the record includes the public transaction hash so the collector can confirm settlement on-chain. The hash links the record to the payer address on-chain. op8x's hosted collector uses it only for that check, stores only the result and deletes the hash afterwards. If you point `endpoint` at your own server, handle it the same way. With `log: true` the hash also appears in the Worker log, where this deletion does not apply. Without `chainCheck` the hash is never sent; only `receipt.hasTransaction` is derived from it.
 
 ## Record format (version 1)
 
@@ -150,6 +150,7 @@ interface ReceiptInfo {
   decodable: boolean;
   success?: boolean;
   transaction?: string;       // only with chainCheck: true
+  hasTransaction?: boolean;   // whenever the receipt decodes
   network?: string;
   errorReason?: string;
 }
@@ -167,7 +168,7 @@ Rules for `type`:
 
 The payer address comes from the receipt's `payer`, falling back to `payload.authorization.from` in the payment payload. It is trimmed and lowercased (by the caller in `record.ts` and again inside `hashPayer`, so direct callers of the exported `hashPayer` get the same result), hashed before it leaves `src/hash.ts`, and only when `salt` is set; the receipt's `payer` is used even when the payment header is undecodable.
 
-Never read or recorded: `cf-connecting-ip`, `x-forwarded-for`, `x-real-ip`, any IP source; the URL path and query; cookies and `authorization`; the `payload` part of payment headers except `authorization.from` for hashing; the receipt's `transaction` unless `chainCheck` is true; response bodies other than the 402 challenge, and of that only the fields above.
+Never read or recorded: `cf-connecting-ip`, `x-forwarded-for`, `x-real-ip`, any IP source; the URL path and query; cookies and `authorization`; the `payload` part of payment headers except `authorization.from` for hashing; the receipt's `transaction` unless `chainCheck` is true (only `receipt.hasTransaction` is derived from it); response bodies other than the 402 challenge, and of that only the fields above.
 
 User-Agent classes, matched case-insensitively in this order: contains `op8x` → `op8x`; `x402` → `x402-client`; `axios` → `axios`; `python` → `python`; `go-http-client` → `go`; `curl` → `curl`; `mozilla` → `browser`; `node` or `undici` → `node`; empty or missing → `none`; else `other`. The raw User-Agent is never stored.
 

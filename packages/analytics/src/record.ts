@@ -109,7 +109,7 @@ function authorizationFrom(payload: Obj | undefined): string | undefined {
 }
 
 export interface RecordOptions {
-  /** Include receipt.transaction; without it the field is never read. */
+  /** Include receipt.transaction; without it only receipt.hasTransaction is derived. */
   chainCheck?: boolean;
 }
 
@@ -157,6 +157,7 @@ export async function buildRecord(
     if (decoded) {
       const success = own(decoded, "success");
       if (typeof success === "boolean") receipt.success = success;
+      receipt.hasTransaction = clean(own(decoded, "transaction")) !== undefined;
       if (options?.chainCheck === true) {
         const transaction = clean(own(decoded, "transaction"));
         if (transaction !== undefined) receipt.transaction = transaction;

@@ -748,6 +748,7 @@ for (const chainCheck of [undefined, false, true]) {
       await settleWithin(promises, 3000);
       assert.equal(collector.records.length, 1);
       assert.equal(collector.records[0]?.receipt?.success, true);
+      assert.equal(collector.records[0]?.receipt?.hasTransaction, true);
       const raw = JSON.stringify(collector.requests);
       if (chainCheck === true) {
         assert.equal(collector.records[0]?.receipt?.transaction, TX);
@@ -760,6 +761,37 @@ for (const chainCheck of [undefined, false, true]) {
     }
   });
 }
+
+test("log line carries hasTransaction for a failed probe receipt and not the hash", async () => {
+  const hash = "0x" + "ab".repeat(32);
+  const m1 = {
+    success: false,
+    transaction: hash,
+    network: "eip155:84532",
+    payer: "0x" + "11".repeat(20),
+    amount: "1000",
+    errorReason: "fulfilment_failed",
+    errorMessage: "probe abort",
+  };
+  const app = new Hono();
+  app.use(analytics({ log: true }));
+  app.get("/paid", (c) => c.json({ error: "probe abort" }, 402, { "PAYMENT-RESPONSE": b64(m1) }));
+  const { ctx, promises } = fakeCtx();
+  const log = console.log;
+  const lines: unknown[][] = [];
+  console.log = (...a: unknown[]) => void lines.push(a);
+  try {
+    await (await app.request("/paid", { headers: { "PAYMENT-SIGNATURE": b64(v2Payment) } }, {}, ctx)).arrayBuffer();
+    await settleWithin(promises, 1000);
+  } finally {
+    console.log = log;
+  }
+  const line = lines.find((l) => l[0] === "op8x.analytics");
+  assert.ok(line, "a record was logged");
+  const text = String(line[1]);
+  assert.ok(text.includes('"hasTransaction":true'), "hasTransaction flag in the log line");
+  assert.ok(!text.includes(hash), "transaction hash in the log line");
+});
 
 const disabled: Array<[string, () => MiddlewareHandler]> = [
   ["no endpoint and no log", () => analytics({})],

@@ -1,4 +1,4 @@
 package: @op8x/analytics@0.0.1
-source: packages/analytics at commit 7c12856ef8414d5efbdf19c2ea4a00f0fb27c7a2
+source: packages/analytics at commit 21d1949e52015a070bde64858f61601dfc99c6a2
 tarball: op8x-analytics-0.0.1.tgz
-sha256: 1aab40f0a0b143b78fdb9e7d3d04366f1b9671cc5d032d0c27ea96e2ca6734ed
+sha256: b800ad75ebd7c80d61dc6ad83abdbbf607c9a2b068e7616be4d7d898c6c711de

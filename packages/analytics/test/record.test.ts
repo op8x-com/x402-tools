@@ -177,6 +177,7 @@ test("receipt v2 and v1, failure fields", async () => {
     header: "PAYMENT-RESPONSE",
     decodable: true,
     success: true,
+    hasTransaction: true,
     network: "eip155:84532",
   });
   const v1 = await buildRecord(input({ res: { "x-payment-response": b64(v1Receipt) } }));
@@ -332,14 +333,132 @@ test("undecodable payment header still hashes the receipt payer (only with a has
   assert.deepEqual(plain.payment, { header: "X-PAYMENT", decodable: false });
 });
 
-test("receipt transaction only with chainCheck; never read or serialised by default", async () => {
+test("receipt transaction only with chainCheck; never serialised by default", async () => {
   const over: Over = { res: { "payment-response": b64(v2Receipt) }, req: { "payment-signature": b64(v2Payment) } };
   for (const opts of [undefined, {}, { chainCheck: false }]) {
     const r = await buildRecord(input(over), fakeHash, opts);
     assert.equal(r.receipt?.transaction, undefined);
     assert.ok(!JSON.stringify(r).includes(TX), "transaction hash leaked");
     assert.equal(r.receipt?.success, true);
+    assert.equal(r.receipt?.hasTransaction, true);
   }
   const checked = await buildRecord(input(over), undefined, { chainCheck: true });
   assert.equal(checked.receipt?.transaction, TX);
+});
+
+const HASH = "0x" + "ab".repeat(32);
+const ADDR = "0x" + "11".repeat(20);
+const NET = "eip155:84532";
+
+async function receiptOf(res: Record<string, string>, opts?: { chainCheck?: boolean }) {
+  return buildRecord(input({ status: 402, res }), undefined, opts);
+}
+
+const settlementCases: Array<[string, Record<string, unknown>, boolean]> = [
+  [
+    "M1 settle ok, hook aborts with a reason",
+    {
+      success: false,
+      transaction: HASH,
+      network: NET,
+      payer: ADDR,
+      amount: "1000",
+      errorReason: "fulfilment_failed",
+      errorMessage: "probe abort",
+    },
+    true,
+  ],
+  [
+    "M2 settle ok, hook aborts with an empty reason",
+    { success: false, transaction: HASH, network: NET, payer: ADDR, errorReason: "", errorMessage: "probe abort" },
+    true,
+  ],
+  [
+    "M3 facilitator failure with a hash",
+    {
+      success: false,
+      errorReason: "invalid_exact_evm_transaction_failed",
+      transaction: HASH,
+      network: NET,
+      payer: ADDR,
+    },
+    true,
+  ],
+  [
+    "M4 rejected before broadcast",
+    {
+      success: false,
+      errorReason: "invalid_exact_evm_payload_signature",
+      transaction: "",
+      network: NET,
+      payer: ADDR,
+    },
+    false,
+  ],
+  ["M5 settle ok", { success: true, transaction: HASH, network: NET, payer: ADDR }, true],
+];
+
+for (const [name, receipt, expected] of settlementCases) {
+  test(`hasTransaction ${name}: ${expected}`, async () => {
+    const r = await receiptOf({ "payment-response": b64(receipt) });
+    assert.equal(r.receipt?.decodable, true);
+    assert.equal(r.receipt?.success, receipt.success);
+    assert.equal(r.receipt?.hasTransaction, expected);
+    assert.equal(r.receipt?.transaction, undefined);
+    assert.ok(!JSON.stringify(r).includes(HASH), "transaction hash leaked");
+  });
+}
+
+test("hasTransaction is false for missing, empty, blank, control-only, numeric and null transaction", async () => {
+  const values: Array<[string, Record<string, unknown>]> = [
+    ["missing", { success: false }],
+    ["empty", { success: false, transaction: "" }],
+    ["blank", { success: false, transaction: "   " }],
+    ["control characters only", { success: false, transaction: "\u0000\u200e" }],
+    ["number", { success: false, transaction: 12345 }],
+    ["null", { success: false, transaction: null }],
+  ];
+  for (const [label, receipt] of values) {
+    const r = await receiptOf({ "payment-response": b64(receipt) });
+    assert.equal(r.receipt?.hasTransaction, false, label);
+    assert.equal(r.receipt?.transaction, undefined, label);
+    assert.ok(!JSON.stringify(r).includes(HASH), label);
+  }
+});
+
+test("hasTransaction is false for success true with an empty transaction", async () => {
+  const r = await receiptOf({ "payment-response": b64({ success: true, transaction: "" }) });
+  assert.equal(r.receipt?.success, true);
+  assert.equal(r.receipt?.hasTransaction, false);
+  assert.ok(!JSON.stringify(r).includes(HASH));
+});
+
+test("hasTransaction is absent when the receipt does not decode", async () => {
+  const r = await receiptOf({ "payment-response": "%%" });
+  assert.deepEqual(r.receipt, { header: "PAYMENT-RESPONSE", decodable: false });
+});
+
+test("hasTransaction ignores a __proto__ transaction", async () => {
+  const rec = btoa(`{"__proto__":{"transaction":"${HASH}"},"success":false,"network":"n"}`);
+  const r = await receiptOf({ "payment-response": rec });
+  assert.equal(r.receipt?.hasTransaction, false);
+  assert.equal(r.receipt?.transaction, undefined);
+  assert.ok(!JSON.stringify(r).includes(HASH));
+});
+
+test("chainCheck adds the transaction next to hasTransaction", async () => {
+  const r = await receiptOf(
+    { "payment-response": b64({ success: false, transaction: HASH, network: NET }) },
+    { chainCheck: true },
+  );
+  assert.equal(r.receipt?.transaction, HASH);
+  assert.equal(r.receipt?.hasTransaction, true);
+});
+
+test("hasTransaction works for the v1 X-PAYMENT-RESPONSE header", async () => {
+  const r = await receiptOf({ "x-payment-response": b64({ success: true, transaction: HASH, network: "base-sepolia" }) });
+  assert.equal(r.receipt?.header, "X-PAYMENT-RESPONSE");
+  assert.equal(r.receipt?.hasTransaction, true);
+  assert.equal(r.receipt?.transaction, undefined);
+  assert.ok(!JSON.stringify(r).includes(HASH));
 });
