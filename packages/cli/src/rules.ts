@@ -493,6 +493,50 @@ export function preflightPlan(results: Extracted[]): { method: Method; headers: 
   return { method, headers: headers.join(",") };
 }
 
+// A 400, 401 or 403 preflight: what the allow lists in the answer leave out, then the likely causes in
+// the order that evidence suggests. An absent list is unknown, not empty; "*" counts as allowed in both.
+function refusalHint(pre: PreflightResult, required: string[]): { extra: string; fix: string } {
+  const methods = pre.headers["access-control-allow-methods"];
+  const allow = pre.headers["access-control-allow-headers"];
+  const sentences: string[] = [];
+  const items: string[] = [];
+  if (methods !== undefined) {
+    const have = methods.split(",").map((s) => s.trim());
+    if (!have.includes("*") && !have.includes(pre.requestMethod)) {
+      sentences.push(`Access-Control-Allow-Methods is ${shown(methods)}; method ${pre.requestMethod} is not in it.`);
+      items.push(`method ${pre.requestMethod}`);
+    }
+  }
+  if (allow !== undefined) {
+    const missing = missingNames(allow, required, false);
+    if (missing.length > 0) {
+      sentences.push(`Access-Control-Allow-Headers is ${shown(allow)}; headers ${missing.join(", ")} are not in it.`);
+      items.push(`headers ${missing.join(", ")}`);
+    }
+  }
+  if (items.length > 0) {
+    sentences.push(
+      "A CORS middleware that does not allow them refuses such preflights (Starlette answers 400 this way); authentication or a firewall that does not exempt OPTIONS is the other common cause.",
+    );
+    return {
+      extra: sentences.join(" "),
+      fix: `Allow ${items.join(" and ")} in the CORS configuration; if the preflight is still refused, exempt OPTIONS from authentication and firewalls.`,
+    };
+  }
+  const fix = `Exempt OPTIONS from authentication and firewalls, and check that the CORS configuration allows this Origin, method ${pre.requestMethod} and headers ${required.join(", ")}.`;
+  const tail = "so the likely cause is authentication or a firewall that does not exempt OPTIONS, or a CORS check on the Origin.";
+  if (methods !== undefined && allow !== undefined) {
+    return { extra: `The CORS lists in the answer allow this method and these headers, ${tail}`, fix };
+  }
+  if (methods !== undefined) return { extra: `The CORS list in the answer allows this method, ${tail}`, fix };
+  if (allow !== undefined) return { extra: `The CORS list in the answer allows these headers, ${tail}`, fix };
+  return {
+    extra:
+      "Likely causes: authentication or a firewall that does not exempt OPTIONS, or a CORS middleware that refused the Origin, method or headers without sending its lists (Spring answers 403 this way).",
+    fix,
+  };
+}
+
 function corsRules(results: Extracted[], pre: PreflightResult | undefined): Finding[] {
   const out: Finding[] = [];
   const add = (id: string, level: Level, method: Finding["method"], title: string, detail: string, fix: string) => {
@@ -545,6 +589,7 @@ function corsRules(results: Extracted[], pre: PreflightResult | undefined): Find
   }
   if (!pre) return out;
 
+  const required = headerNames(pre.requestHeaders).map((n) => DISPLAY[n] ?? n);
   const asked = `OPTIONS for ${pre.requestMethod} with ${pre.requestHeaders}`;
   const refused = (title: string, detail: string, fix: string) =>
     add("cors-preflight", "warn", "OPTIONS", title, `${detail} The browser refuses the paid retry with a network error. ${BROWSER_ONLY}`, fix);
@@ -558,6 +603,11 @@ function corsRules(results: Extracted[], pre: PreflightResult | undefined): Find
       `${asked} returned 402.`,
       "Answer the preflight OPTIONS without requiring payment, with a non-trivial Access-Control-Max-Age.",
     );
+    return out;
+  }
+  if (pre.status === 400 || pre.status === 401 || pre.status === 403) {
+    const { extra, fix } = refusalHint(pre, required);
+    refused(`Preflight rejected (${pre.status})`, `${asked} returned ${pre.status}; browsers need a 2xx. ${extra}`, fix);
     return out;
   }
   if (pre.status === undefined || pre.status < 200 || pre.status > 299) {
@@ -579,7 +629,6 @@ function corsRules(results: Extracted[], pre: PreflightResult | undefined): Find
 
   const allow = pre.headers["access-control-allow-headers"];
   const credentialed = isCredentialed(pre.headers["access-control-allow-credentials"]);
-  const required = headerNames(pre.requestHeaders).map((n) => DISPLAY[n] ?? n);
   const missing = missingNames(allow, required, credentialed);
   if (missing.length > 0) {
     add(

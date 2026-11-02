@@ -309,6 +309,117 @@ test("rejected, failed and origin-less preflights warn", () => {
   assert.ok(ids(runRules([corsV2("POST")], pf(204, { "access-control-allow-headers": "*" }))).includes("cors-preflight"));
 });
 
+// Refused preflights (400, 401, 403): what the allow lists leave out, then the likely causes.
+
+const ASKED = "OPTIONS for POST with payment-signature,content-type";
+const TAIL = "The browser refuses the paid retry with a network error. Affects browser clients only.";
+const CAUSE_A =
+  "A CORS middleware that does not allow them refuses such preflights (Starlette answers 400 this way); authentication or a firewall that does not exempt OPTIONS is the other common cause.";
+const FIX_A = (items: string) =>
+  `Allow ${items} in the CORS configuration; if the preflight is still refused, exempt OPTIONS from authentication and firewalls.`;
+const FIX_BC =
+  "Exempt OPTIONS from authentication and firewalls, and check that the CORS configuration allows this Origin, method POST and headers PAYMENT-SIGNATURE, Content-Type.";
+const ALL_HEADERS = "PAYMENT-SIGNATURE, Content-Type";
+const preflightFinding = (status: number | undefined, headers: Record<string, string> = ORIGIN_OK) =>
+  runRules([corsV2("POST")], pf(status, headers)).find((x) => x.id === "cors-preflight");
+const refusal = (status: number, extra: string) => `${ASKED} returned ${status}; browsers need a 2xx. ${extra} ${TAIL}`;
+
+test("refused preflight names the method and headers the lists leave out", () => {
+  const f = preflightFinding(400, {
+    ...ORIGIN_OK,
+    "access-control-allow-methods": "GET",
+    "access-control-allow-headers": "Accept, Accept-Language, Content-Language, Content-Type",
+  });
+  assert.equal(f?.title, "Preflight rejected (400)");
+  assert.equal(f?.level, "warn");
+  assert.equal(
+    f?.detail,
+    refusal(
+      400,
+      `Access-Control-Allow-Methods is "GET"; method POST is not in it. Access-Control-Allow-Headers is "Accept, Accept-Language, Content-Language, Content-Type"; headers PAYMENT-SIGNATURE are not in it. ${CAUSE_A}`,
+    ),
+  );
+  assert.equal(f?.fix, FIX_A("method POST and headers PAYMENT-SIGNATURE"));
+});
+
+test("refused preflight with one list names only what that list leaves out", () => {
+  const m = preflightFinding(400, { ...ORIGIN_OK, "access-control-allow-methods": "GET" });
+  assert.equal(m?.detail, refusal(400, `Access-Control-Allow-Methods is "GET"; method POST is not in it. ${CAUSE_A}`));
+  assert.equal(m?.fix, FIX_A("method POST"));
+  const h = preflightFinding(400, { ...ORIGIN_OK, "access-control-allow-headers": "content-type" });
+  assert.equal(
+    h?.detail,
+    refusal(400, `Access-Control-Allow-Headers is "content-type"; headers PAYMENT-SIGNATURE are not in it. ${CAUSE_A}`),
+  );
+  assert.equal(h?.fix, FIX_A("headers PAYMENT-SIGNATURE"));
+});
+
+test("refused preflight compares the method exactly", () => {
+  const f = preflightFinding(400, {
+    ...ORIGIN_OK,
+    "access-control-allow-methods": "post",
+    "access-control-allow-headers": ALL_HEADERS,
+  });
+  assert.equal(f?.detail, refusal(400, `Access-Control-Allow-Methods is "post"; method POST is not in it. ${CAUSE_A}`));
+  assert.equal(f?.fix, FIX_A("method POST"));
+});
+
+test("refused preflight counts * in the method list as allowed, with or without credentials", () => {
+  const causeB =
+    "The CORS list in the answer allows this method, so the likely cause is authentication or a firewall that does not exempt OPTIONS, or a CORS check on the Origin.";
+  const creds: Record<string, string>[] = [{}, { "access-control-allow-credentials": "true" }];
+  for (const cred of creds) {
+    const f = preflightFinding(400, { ...ORIGIN_OK, ...cred, "access-control-allow-methods": "*" });
+    assert.equal(f?.detail, refusal(400, causeB));
+    assert.equal(f?.fix, FIX_BC);
+  }
+});
+
+test("refused preflight with complete lists points to authentication, a firewall or the Origin", () => {
+  const f = preflightFinding(400, {
+    ...ORIGIN_OK,
+    "access-control-allow-methods": "GET, POST",
+    "access-control-allow-headers": ALL_HEADERS,
+  });
+  assert.equal(
+    f?.detail,
+    refusal(
+      400,
+      "The CORS lists in the answer allow this method and these headers, so the likely cause is authentication or a firewall that does not exempt OPTIONS, or a CORS check on the Origin.",
+    ),
+  );
+  assert.equal(f?.fix, FIX_BC);
+});
+
+test("refused preflight without lists names both cause families", () => {
+  const causeC =
+    "Likely causes: authentication or a firewall that does not exempt OPTIONS, or a CORS middleware that refused the Origin, method or headers without sending its lists (Spring answers 403 this way).";
+  for (const status of [400, 401, 403]) {
+    const f = preflightFinding(status);
+    assert.equal(f?.title, `Preflight rejected (${status})`);
+    assert.equal(f?.detail, refusal(status, causeC));
+    assert.equal(f?.fix, FIX_BC);
+  }
+});
+
+test("other rejected preflights keep the plain advice", () => {
+  for (const status of [404, 500, undefined]) {
+    const f = preflightFinding(status, {
+      ...ORIGIN_OK,
+      "access-control-allow-methods": "GET",
+      "access-control-allow-headers": "content-type",
+    });
+    assert.equal(f?.title, `Preflight rejected (${status})`);
+    assert.equal(f?.detail, `${ASKED} returned ${status}; browsers need a 2xx. ${TAIL}`);
+    assert.equal(f?.fix, "Answer the preflight OPTIONS with 204 and the CORS headers.");
+  }
+});
+
+test("a 2xx preflight never mentions Access-Control-Allow-Methods", () => {
+  const fs = runRules([corsV2("POST")], pf(204, { ...PF_OK, "access-control-allow-methods": "GET" }));
+  for (const f of fs) assert.doesNotMatch(`${f.title} ${f.detail} ${f.fix}`, /Access-Control-Allow-Methods/);
+});
+
 test("allow headers missing PAYMENT-SIGNATURE and Content-Type warns", () => {
   const f = runRules([corsV2("POST")], pf(204, { ...ORIGIN_OK, "access-control-allow-headers": "authorization" })).find(
     (x) => x.id === "cors-allow-headers",
