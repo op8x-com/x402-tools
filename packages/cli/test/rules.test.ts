@@ -375,6 +375,40 @@ test("refused preflight counts * in the method list as allowed, with or without 
   }
 });
 
+test("refused preflight with only a headers list that has * and credentials points to authentication or the Origin", () => {
+  const f = preflightFinding(400, {
+    ...ORIGIN_OK,
+    "access-control-allow-headers": "*",
+    "access-control-allow-credentials": "true",
+  });
+  assert.equal(
+    f?.detail,
+    refusal(
+      400,
+      "The CORS list in the answer allows these headers, so the likely cause is authentication or a firewall that does not exempt OPTIONS, or a CORS check on the Origin.",
+    ),
+  );
+  assert.equal(f?.fix, FIX_BC);
+});
+
+test("refused preflight trims only HTTP whitespace around methods", () => {
+  const f = preflightFinding(400, {
+    ...ORIGIN_OK,
+    "access-control-allow-methods": "GET, POST ",
+    "access-control-allow-headers": ALL_HEADERS,
+  });
+  assert.ok(f?.detail.includes("method POST is not in it"));
+  assert.equal(f?.fix, FIX_A("method POST"));
+  for (const methods of [" POST ", "GET,	POST", "	POST"]) {
+    const g = preflightFinding(400, {
+      ...ORIGIN_OK,
+      "access-control-allow-methods": methods,
+      "access-control-allow-headers": ALL_HEADERS,
+    });
+    assert.equal(g?.fix, FIX_BC);
+  }
+});
+
 test("refused preflight with complete lists points to authentication, a firewall or the Origin", () => {
   const f = preflightFinding(400, {
     ...ORIGIN_OK,
