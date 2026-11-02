@@ -409,12 +409,14 @@ for (const [name, receipt, expected] of settlementCases) {
   });
 }
 
-test("hasTransaction is false for missing, empty, blank, control-only, numeric and null transaction", async () => {
+test("hasTransaction is false for missing, empty, blank, control-only, invisible-only, numeric and null transaction", async () => {
   const values: Array<[string, Record<string, unknown>]> = [
     ["missing", { success: false }],
     ["empty", { success: false, transaction: "" }],
     ["blank", { success: false, transaction: "   " }],
     ["control characters only", { success: false, transaction: "\u0000\u200e" }],
+    ["arabic letter mark only", { success: false, transaction: "\u061c" }],
+    ["zero width space and word joiner only", { success: false, transaction: "\u200b\u2060" }],
     ["number", { success: false, transaction: 12345 }],
     ["null", { success: false, transaction: null }],
   ];
