@@ -72,10 +72,27 @@ Record format version `1`. Strings are trimmed, stripped of control characters (
 | `receipt.header` | string | with `receipt` | `PAYMENT-RESPONSE` or `X-PAYMENT-RESPONSE`. |
 | `receipt.decodable` | boolean | with `receipt` | Whether the header could be decoded. |
 | `receipt.success` | boolean | when known | The receipt's `success` field. |
+| `receipt.hasTransaction` | boolean | with a decodable receipt | Whether the receipt's `transaction` is a non-empty string. The hash itself is sent only with `chainCheck`. See "Reading the receipt". |
 | `receipt.network` | string | when known | Network of the settlement. |
 | `receipt.errorReason` | string | when present | The receipt's `errorReason` field. |
 | `receipt.transaction` | string | with the `chainCheck` option | Public transaction hash, so the collector can confirm settlement on-chain. A collector uses it only for that check and does not keep it. |
 | `delivery` | string | with `payment` | `ok` when the final status is below 400, else `failed`. |
+
+## Reading the receipt
+
+The table describes what the receipt asserts, not the payment state.
+
+| `receipt.success` | `receipt.hasTransaction` | Group | Meaning |
+|---|---|---|---|
+| `true` | any | settled (reported) | A settlement, cancellation or refund reported as successful. |
+| `false` | `false` | failed (reported) | Failure reported, no transaction named. A consumer may count it as failed, as reported by the seller, not as proven on-chain: transport errors to the facilitator also give an empty `transaction`, and in flows that settle before the handler it can follow a completed deposit. |
+| `false` | `true` | unresolved | A transaction exists but the receipt reports failure. Covers a seller aborting after a successful transfer, a pending settlement and a reverted transaction. Only an on-chain check can resolve it. |
+| `false` | missing | unknown | Record from an older module. |
+| missing | any | unknown | |
+
+- A consumer must not count "unresolved" as a failed payment or as a successful one. It shows it as its own group or resolves it on-chain (with `chainCheck`). `errorReason` may be shown as text but must not decide the group.
+- A `payment.received` record without `receipt` is "unknown", not "failed" (for example a 502 after a facilitator timeout).
+- `delivery: failed` together with `success: true` can mean a cancellation or refund in a flow that settles before the handler.
 
 ## Compatibility
 

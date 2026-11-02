@@ -113,7 +113,7 @@ analytics({
 | `log` | `false` | Write one `console.log("op8x.analytics", <json>)` line per record. |
 | `salt` | none | Enables the `payer` field (a keyed hash of the payer address). Omitted: no `payer` field at all. A blank or non-string value also disables hashing and logs one warning, `op8x.analytics: salt must be a non-empty string, payer hashing disabled`. Keep it secret. |
 | `timeoutMs` | `2000` | Abort the send after this long; also the limit for reading the 402 body copy. Clamped to 100..10000. |
-| `chainCheck` | `false` | Add `receipt.transaction` so the collector can confirm settlement on-chain. Omitted: the transaction hash is never read. |
+| `chainCheck` | `false` | Add `receipt.transaction` so the collector can confirm settlement on-chain. Omitted: the transaction hash is never sent; the record only says whether there is one. |
 
 ## Write key
 
@@ -149,7 +149,7 @@ The payer address behind `payment.payer` is taken from the receipt's `payer`, fa
 - The URL path and query string; only the route pattern is recorded.
 - Cookies, `authorization` and the raw User-Agent.
 - Payment signatures and the payment payload, except the payer address, which is hashed with your `salt` before it leaves the middleware and is not recorded at all without a `salt`.
-- The receipt's transaction hash, unless you set `chainCheck: true`. With `chainCheck: true` the record includes the public transaction hash so the collector can confirm settlement on-chain. The hash links the record to the payer address on-chain. op8x's hosted collector uses it only for that check, stores only the result and deletes the hash afterwards. If you point `endpoint` at your own server, handle it the same way. With `log: true` the hash also appears in the Worker log, where this deletion does not apply.
+- The receipt's transaction hash, unless you set `chainCheck: true`. Without it the record only says whether the receipt names a transaction (`receipt.hasTransaction`). With `chainCheck: true` the record includes the public transaction hash so the collector can confirm settlement on-chain. The hash links the record to the payer address on-chain. op8x's hosted collector uses it only for that check, stores only the result and deletes the hash afterwards. If you point `endpoint` at your own server, handle it the same way. With `log: true` the hash also appears in the Worker log, where this deletion does not apply.
 
 ## Guarantees
 
