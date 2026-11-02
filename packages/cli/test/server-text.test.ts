@@ -138,6 +138,14 @@ const HOSTILE_CASES: Record<string, Case> = {
       },
     ],
   },
+  "11 CORS preflight refused": {
+    probes: [pr("GET", 402, header(v2, { "access-control-allow-origin": "https://op8x.com" }), {})],
+    preflight: pf(400, {
+      "access-control-allow-origin": "https://op8x.com",
+      "access-control-allow-methods": `GET${ESC}, ${HOSTILE}`,
+      "access-control-allow-headers": `Accept${CSI}, ${HOSTILE}`,
+    }),
+  },
   "10 many hostile networks": {
     probes: both(402, header({ ...v2, accepts: Array.from({ length: 15 }, () => entry({ network: HOSTILE_LEGACY })) }), {}),
   },
@@ -160,6 +168,7 @@ test("hostile fixtures fire every finding that prints a server value", () => {
     "cache-control",
     "cors-expose-headers",
     "cors-allow-headers",
+    "cors-preflight",
     "default-asset",
     "payto-rotates",
   ]) {
@@ -175,6 +184,10 @@ test("hostile fixtures fire every finding that prints a server value", () => {
   assert.ok(ids("4 v1 with a CAIP-2 network").includes("v1-caip2-network"));
   assert.ok(ids("5 version neither 1 nor 2").includes("version-missing"));
   assert.ok(ids("6 CORS preflight").includes("cors-allow-headers"));
+  assert.ok(ids("11 CORS preflight refused").includes("cors-preflight"));
+  const refusedFinding = find(outcomes["11 CORS preflight refused"], "cors-preflight")[0];
+  assert.ok(refusedFinding.detail.includes('Access-Control-Allow-Methods is "'));
+  assert.ok(refusedFinding.detail.includes('Access-Control-Allow-Headers is "'));
   assert.ok(ids("8 auth-capture with an array network and without a network").includes("payment-flow"));
   const nine = ids("9 hostile asset and network, payTo rotation");
   assert.ok(nine.includes("default-asset") && nine.includes("payto-rotates"));
