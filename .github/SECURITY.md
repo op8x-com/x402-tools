@@ -2,7 +2,12 @@
 
 ## Reporting a vulnerability
 
-Please email security@op8x.com with the subject `Security: <short summary>`. Do not open a public issue or pull request for a vulnerability.
+Report it privately, either way works:
+
+- on GitHub: [Report a vulnerability](https://github.com/op8x-com/x402-tools/security/advisories/new) in the Security tab, or
+- by email to security@op8x.com with the subject `Security: <short summary>`.
+
+Do not open a public issue or pull request for a vulnerability.
 
 Include:
 
