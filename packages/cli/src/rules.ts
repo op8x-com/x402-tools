@@ -501,7 +501,7 @@ function refusalHint(pre: PreflightResult, required: string[]): { extra: string;
   const sentences: string[] = [];
   const items: string[] = [];
   if (methods !== undefined) {
-    const have = methods.split(",").map((s) => s.replace(/^[ 	]+|[ 	]+$/g, ""));
+    const have = methods.split(",").map((s) => s.replace(/^[ \t]+|[ \t]+$/g, ""));
     if (!have.includes("*") && !have.includes(pre.requestMethod)) {
       sentences.push(`Access-Control-Allow-Methods is ${shown(methods)}; method ${pre.requestMethod} is not in it.`);
       items.push(`method ${pre.requestMethod}`);
