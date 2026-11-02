@@ -100,3 +100,17 @@ test("clean strips Unicode bidi controls", () => {
   assert.equal(clean("x\u2066y\u2067z\u2068w\u2069v"), "xyzwv");
   assert.equal(clean("\u202e\u2066"), undefined);
 });
+
+test("clean strips Unicode format characters, line separators and lone surrogates", () => {
+  assert.equal(clean("\u061c"), undefined);
+  assert.equal(clean("\u200b"), undefined);
+  assert.equal(clean("\u2060"), undefined);
+  assert.equal(clean("a\u061cb\u200bc\u2060d"), "abcd");
+  assert.equal(clean("a\u00adb\u200cc\u200dd\ufeffe\u2028f\u2029g\ud800h\udc00i\udb40\udc41j"), "abcdefghij");
+});
+
+test("clean keeps letters, digits, punctuation and non-Latin text", () => {
+  assert.equal(clean("eip155:8453"), "eip155:8453");
+  assert.equal(clean("solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"), "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp");
+  assert.equal(clean("0.01 caf\u00e9 \u0436\u0443\u0440 \u0639\u0631\u0628\u064a"), "0.01 caf\u00e9 \u0436\u0443\u0440 \u0639\u0631\u0628\u064a");
+});

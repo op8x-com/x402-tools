@@ -40,7 +40,7 @@ Every response has an empty body. The module ignores the status: it never change
 
 ## Fields
 
-Record format version `1`. Strings are trimmed, stripped of control characters (including Unicode bidi controls) and capped at 128 characters (256 for `challenge.error` and `receipt.errorReason`) before they are sent. A field the module cannot determine is omitted, never guessed.
+Record format version `1`. Strings are trimmed, stripped of the Unicode categories Cc, Cf, Cs, Zl and Zp (control characters, format characters such as bidi controls, U+200B and U+2060, lone surrogates, line and paragraph separators) and capped at 128 characters (256 for `challenge.error` and `receipt.errorReason`) before they are sent. A field the module cannot determine is omitted, never guessed.
 
 | JSON path | Type | Sent | Meaning |
 | --- | --- | --- | --- |
