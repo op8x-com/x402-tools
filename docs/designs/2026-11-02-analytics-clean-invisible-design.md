@@ -45,6 +45,8 @@ U+00A0, U+FEFF, U+2028 and U+2029 at the start or end are already removed by `tr
     *   **B. Add U+061C, U+200B and U+2060.** Closes the three cases the review found, but the list stays hand-written and other format characters (U+00AD, U+200C, U+200D, U+2061-U+2064, U+FEFF in the middle, tag characters U+E0000-U+E007F) stay.
 *   Consequence of C: lone surrogates and U+2028/U+2029 in the middle are removed too, and so is U+200D (ZERO WIDTH JOINER), which splits joined emoji into their parts; no cleaned field is expected to carry emoji.
 
+*   Decided on 2026-11-02, after review: the length cap must not split a surrogate pair. `clean()` caps at `max` UTF-16 code units as before; when the cut leaves a high surrogate at the end, that unit is dropped and the result is trimmed again. Without this, a value whose character at the cap is an emoji or another character outside the Basic Multilingual Plane ended in a lone surrogate, which contradicts removing Cs.
+
 ## Design
 
 `CONTROL` in `packages/analytics/src/decode.ts` becomes `/[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/gu`; its comment and the doc comment of `clean()` name the removed characters. `clean()` keeps its order: remove, trim, cap, trim, empty becomes `undefined`.
@@ -61,6 +63,8 @@ New cases in `packages/analytics/test/decode.test.ts`, written before the fix:
 *   The same for U+200B and U+2060.
 *   U+00AD, U+200D, U+FEFF, U+2028 and a lone surrogate in the middle are removed; letters, digits, `:`, `-`, `.` and non-Latin letters (`"é"`, `"ж"`) stay.
 *   A receipt `{"success":false,"transaction":"\u061c"}` gives `hasTransaction: false` (test next to the existing `hasTransaction` tests).
+
+*   A value with a surrogate pair across the cap (127 `x` plus an emoji, with `max` 128 and 256) loses the whole pair; a pair inside the cap stays; a space before the cut pair is trimmed.
 
 ## Risks & Mitigations
 

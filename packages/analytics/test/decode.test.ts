@@ -101,6 +101,14 @@ test("clean strips Unicode bidi controls", () => {
   assert.equal(clean("\u202e\u2066"), undefined);
 });
 
+test("clean does not split a surrogate pair at the length cap", () => {
+  const emoji = "\ud83d\ude00";
+  assert.equal(clean("x".repeat(127) + emoji), "x".repeat(127));
+  assert.equal(clean("x".repeat(126) + emoji + "y"), "x".repeat(126) + emoji);
+  assert.equal(clean("x".repeat(255) + emoji, 256), "x".repeat(255));
+  assert.equal(clean("x".repeat(126) + " " + emoji), "x".repeat(126));
+});
+
 test("clean strips Unicode format characters, line separators and lone surrogates", () => {
   assert.equal(clean("\u061c"), undefined);
   assert.equal(clean("\u200b"), undefined);
