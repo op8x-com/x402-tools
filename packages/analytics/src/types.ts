@@ -57,6 +57,8 @@ export interface ReceiptInfo {
   header: "PAYMENT-RESPONSE" | "X-PAYMENT-RESPONSE";
   decodable: boolean;
   success?: boolean;
+  /** Receipt names a transaction; the hash itself only with chainCheck. */
+  hasTransaction?: boolean;
   /** Only with the chainCheck option. */
   transaction?: string;
   network?: string;
