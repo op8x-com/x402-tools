@@ -42,6 +42,8 @@ Every response has an empty body. The module ignores the status: it never change
 
 Record format version `1`. Strings are trimmed, stripped of the Unicode categories Cc, Cf, Cs, Zl and Zp (control characters, format characters such as bidi controls, U+200B and U+2060, lone surrogates, line and paragraph separators) and capped at 128 UTF-16 code units (256 for `challenge.error` and `receipt.errorReason`) without splitting a surrogate pair before they are sent. A field the module cannot determine is omitted, never guessed.
 
+A collector may store a `scheme`, `network` or `asset` value that does not have the usual shape (a scheme name, a CAIP-2 or v1 network name, a token address) as `other`, and may drop an `amount` that is not an integer in the asset's smallest unit.
+
 | JSON path | Type | Sent | Meaning |
 | --- | --- | --- | --- |
 | `v` | number | always | Record format version, `1`. |
