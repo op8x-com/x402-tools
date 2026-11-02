@@ -1,0 +1,83 @@
+name: Bug report
+description: Something in @op8x/cli or @op8x/analytics does not work as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. This issue is public.
+
+        - Do not paste secrets: no private keys, API keys, tokens, signed payment headers or `.env` contents.
+        - Do not paste request bodies or personal data. Status codes, header names and redacted challenge fields are enough.
+        - A security problem goes to [SECURITY.md](https://github.com/op8x-com/x402-tools/blob/main/.github/SECURITY.md), not here.
+  - type: dropdown
+    id: package
+    attributes:
+      label: Package
+      options:
+        - "@op8x/cli"
+        - "@op8x/analytics"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "For the CLI: output of `npx @op8x/cli --version`. Otherwise the version in your package.json or the commit you built from."
+      placeholder: "0.0.3"
+    validations:
+      required: true
+  - type: dropdown
+    id: framework
+    attributes:
+      label: Framework of the x402 server
+      options:
+        - Hono (Cloudflare Workers)
+        - Hono (other runtime)
+        - Express
+        - Next.js
+        - MCP server
+        - Other or unknown
+    validations:
+      required: true
+  - type: dropdown
+    id: x402-version
+    attributes:
+      label: x402 version of the challenge
+      description: "v2 sends the challenge in the PAYMENT-REQUIRED header, v1 in the response body."
+      options:
+        - v2
+        - v1
+        - Both
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Node.js version and OS
+      placeholder: "Node 24.1, Windows 11"
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Commands you can copy and run. Use a public test endpoint or replace your URL with a placeholder.
+      placeholder: |
+        1. npx @op8x/cli check https://example.com/paid
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: Output or error message, with secrets and personal data removed.
+      render: text
+    validations:
+      required: true

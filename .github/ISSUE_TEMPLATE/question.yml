@@ -1,0 +1,26 @@
+name: Question
+description: Ask how to use @op8x/cli or @op8x/analytics, or what a finding means.
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This issue is public. Do not paste secrets, request bodies or personal data.
+        Questions about your own collector data or data protection go to hello@op8x.com instead.
+  - type: dropdown
+    id: package
+    attributes:
+      label: Package
+      options:
+        - "@op8x/cli"
+        - "@op8x/analytics"
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What are you trying to do, and what have you tried?
+    validations:
+      required: true
