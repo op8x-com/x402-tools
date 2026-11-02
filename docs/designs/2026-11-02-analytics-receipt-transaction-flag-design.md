@@ -217,7 +217,8 @@ receipt.hasTransaction = clean(own(decoded, "transaction")) !== undefined;
 ```
 
 *   `hasTransaction` reports what the receipt asserts: whether its
-    `transaction` field is a non-empty string. It says nothing beyond that.
+    `transaction` field is a non-empty string after trimming and removing
+    control characters. It says nothing beyond that.
 *   Set whenever the receipt header decodes to an object. A decoded receipt
     without `transaction`, or with an empty, whitespace-only,
     control-characters-only or non-string value, gives `false`. The module has
@@ -243,7 +244,7 @@ asserts, not the payment state:
 | `false` | `false` | failed (reported) | Failure reported, no transaction named. A consumer may count it as failed, as reported by the seller, not as proven on-chain: transport errors to the facilitator also give an empty `transaction`, and in flows that settle before the handler it can follow a completed deposit. |
 | `false` | `true` | unresolved | A transaction exists but the receipt reports failure. Covers a seller aborting after a successful transfer, a pending settlement and a reverted transaction. Only an on-chain check can resolve it. |
 | `false` | missing | unknown | Record from an older module. |
-| missing | any | unknown | |
+| missing | any | unknown | No `success` field in the receipt, or the receipt did not decode. |
 
 *   A consumer must not count "unresolved" as a failed payment or as a
     successful one. It shows it as its own group or resolves it on-chain (with
