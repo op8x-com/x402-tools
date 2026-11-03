@@ -145,9 +145,8 @@ The helper reads two headers of the preflight answer.
     requested names from `pre.requestHeaders`, mapped through `DISPLAY` as for
     `cors-allow-headers` (`PAYMENT-SIGNATURE`, `Content-Type`, `X-PAYMENT`),
     checked with `missingNames(allow, required, false)`. `missingNames` uses the
-    existing `headerNames`, which still trims with `String.prototype.trim`, so
-    header names are cleaned by a looser rule than methods (see Risks &
-    Mitigations).
+    existing `headerNames`, which trims names with the same `trimHttp` as
+    methods.
 *   Header values are shown with `shown()`, which escapes server text
     (`printEscaped`).
 
@@ -228,11 +227,10 @@ Line breaks in the example are the document's; the CLI wraps as it does today.
     the method sentence may name `POST`, which browsers do not need there.
     Mitigation: case A names authentication or a firewall as the second cause
     and its fix falls back to it. Accepted residual limit.
-*   **Header names trimmed more loosely than methods.** The shared
-    `headerNames` strips all Unicode white space, so a header name followed by
-    U+00A0 counts as allowed although browsers do not accept it. This also
-    affects the existing `cors-allow-headers` and `cors-expose-headers` rules,
-    so it is fixed separately, not in this change. Accepted until then.
+*   **Header names trimmed more loosely than methods.** Resolved in a follow-up
+    change: the shared `headerNames` now strips only space and tab with
+    `trimHttp`, so a header name followed by U+00A0 no longer counts as allowed
+    in this hint or in `cors-allow-headers` and `cors-expose-headers`.
 *   **New server input in the output.** See Security.
 *   **Changed text.** See Compatibility.
 

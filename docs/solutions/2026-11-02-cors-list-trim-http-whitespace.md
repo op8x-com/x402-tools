@@ -17,5 +17,7 @@ The items were cleaned with `String.prototype.trim()`, which removes every Unico
 
 A first fix used the regex `/^[ \t]+|[ \t]+$/g`. Its second alternative is retried from every position of a long space run, so an item like `x`, many spaces, `x` took quadratic time (200,000 spaces: about 32 s). `trimHttp` walks in from both ends with two loops and is linear; a test with that input and a 200 ms limit guards it.
 
+`headerNames`, which the header-name checks share (`cors-allow-headers`, `cors-expose-headers`, `cors-client-retry`, the refused-preflight hint and the note on `*` with credentials), had the same weakness and now cleans names with `trimHttp` too. The tests "allow headers trims only HTTP whitespace around names", "expose headers trims only HTTP whitespace around names" and "refused preflight trims only HTTP whitespace around header names" cover it.
+
 ## Prevention
-When comparing tokens from HTTP header lists, trim space and tab only, never with `trim()`. Write such characters in tests as escapes (` `, `\t`) so editors and formatters cannot change them unnoticed. `headerNames` in the same file, which the header-name checks share, still uses `trim()`; it has the same weakness for header names and is a known open point.
+When comparing tokens from HTTP header lists, trim space and tab only with `trimHttp`, never with `trim()`. Write such characters in tests as escapes (`\u00A0`, `\t`) so editors and formatters cannot change them unnoticed.
