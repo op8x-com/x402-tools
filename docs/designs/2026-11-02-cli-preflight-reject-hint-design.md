@@ -136,12 +136,18 @@ helper when `pre.status === 400 || pre.status === 401 || pre.status === 403`.
 The helper reads two headers of the preflight answer.
 
 *   **Method:** only if `access-control-allow-methods` is present (new; the CLI
-    does not read this header today). Split on `,`, trim, compare to
-    `pre.requestMethod` exactly. `*` counts as allowed.
+    does not read this header today). Split on `,`, strip leading and trailing
+    space and tab only (as Fetch strips HTTP whitespace; `String.prototype.trim`
+    would also strip U+00A0 and similar, which browsers keep), compare to
+    `pre.requestMethod` exactly. `*` counts as allowed. The strip runs in
+    linear time.
 *   **Headers:** only if `access-control-allow-headers` is present. The
     requested names from `pre.requestHeaders`, mapped through `DISPLAY` as for
     `cors-allow-headers` (`PAYMENT-SIGNATURE`, `Content-Type`, `X-PAYMENT`),
-    checked with `missingNames(allow, required, false)`.
+    checked with `missingNames(allow, required, false)`. `missingNames` uses the
+    existing `headerNames`, which still trims with `String.prototype.trim`, so
+    header names are cleaned by a looser rule than methods (see Risks &
+    Mitigations).
 *   Header values are shown with `shown()`, which escapes server text
     (`printEscaped`).
 
@@ -203,7 +209,7 @@ Line breaks in the example are the document's; the CLI wraps as it does today.
 ## Non-Functional Requirements
 
 *   **Security:** the CLI starts parsing one more server header,
-    `Access-Control-Allow-Methods` (split and compare only). Its value and the
+    `Access-Control-Allow-Methods` (split, strip space and tab, compare). Its value and the
     `Access-Control-Allow-Headers` value appear in output only through
     `shown()`; acceptance case 9 covers both. Parsing network input is high
     risk under the project rules, so the code gets an adversarial review in
@@ -222,6 +228,11 @@ Line breaks in the example are the document's; the CLI wraps as it does today.
     the method sentence may name `POST`, which browsers do not need there.
     Mitigation: case A names authentication or a firewall as the second cause
     and its fix falls back to it. Accepted residual limit.
+*   **Header names trimmed more loosely than methods.** The shared
+    `headerNames` strips all Unicode white space, so a header name followed by
+    U+00A0 counts as allowed although browsers do not accept it. This also
+    affects the existing `cors-allow-headers` and `cors-expose-headers` rules,
+    so it is fixed separately, not in this change. Accepted until then.
 *   **New server input in the output.** See Security.
 *   **Changed text.** See Compatibility.
 
