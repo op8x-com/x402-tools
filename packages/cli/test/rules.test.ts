@@ -409,6 +409,21 @@ test("refused preflight trims only HTTP whitespace around methods", () => {
   }
 });
 
+test("refused preflight trims a long space run inside a method item in linear time", () => {
+  const start = performance.now();
+  const findings = runRules(
+    [corsV2("POST")],
+    pf(400, {
+      ...ORIGIN_OK,
+      "access-control-allow-methods": "GET, x" + " ".repeat(200_000) + "x",
+      "access-control-allow-headers": "PAYMENT-SIGNATURE, Content-Type",
+    }),
+  );
+  const ms = performance.now() - start;
+  assert.ok(findings.find((x) => x.id === "cors-preflight")?.detail.includes("method POST is not in it"));
+  assert.ok(ms < 200, `took ${ms.toFixed(0)} ms`);
+});
+
 test("refused preflight with complete lists points to authentication, a firewall or the Origin", () => {
   const f = preflightFinding(400, {
     ...ORIGIN_OK,

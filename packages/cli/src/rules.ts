@@ -451,6 +451,15 @@ const headerNames = (v: string | undefined) =>
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean);
 
+// Strips only HTTP tab and space from both ends, as Fetch does, in linear time.
+const trimHttp = (s: string) => {
+  let a = 0;
+  let b = s.length;
+  while (a < b && (s[a] === " " || s[a] === "\t")) a++;
+  while (b > a && (s[b - 1] === " " || s[b - 1] === "\t")) b--;
+  return s.slice(a, b);
+};
+
 // "*" is a wildcard only on requests without credentials; with them it is a literal name.
 function missingNames(list: string | undefined, required: string[], credentialed: boolean): string[] {
   const have = headerNames(list);
@@ -501,7 +510,7 @@ function refusalHint(pre: PreflightResult, required: string[]): { extra: string;
   const sentences: string[] = [];
   const items: string[] = [];
   if (methods !== undefined) {
-    const have = methods.split(",").map((s) => s.replace(/^[ \t]+|[ \t]+$/g, ""));
+    const have = methods.split(",").map(trimHttp);
     if (!have.includes("*") && !have.includes(pre.requestMethod)) {
       sentences.push(`Access-Control-Allow-Methods is ${shown(methods)}; method ${pre.requestMethod} is not in it.`);
       items.push(`method ${pre.requestMethod}`);
