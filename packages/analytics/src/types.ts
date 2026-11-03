@@ -89,4 +89,6 @@ export interface AnalyticsRecord {
   receipt?: ReceiptInfo;
   /** Present with payment: status < 400 -> ok, else failed. */
   delivery?: "ok" | "failed";
+  /** Value of the op8x-test request header, only when it is exactly 43 base64url characters. */
+  test_nonce?: string;
 }

@@ -79,6 +79,16 @@ A collector may store a `scheme`, `network` or `asset` value that does not have 
 | `receipt.errorReason` | string | when present | The receipt's `errorReason` field. |
 | `receipt.transaction` | string | with the `chainCheck` option | Public transaction hash, so the collector can confirm settlement on-chain. A collector uses it only for that check and does not keep it. |
 | `delivery` | string | with `payment` | `ok` when the final status is below 400, else `failed`. |
+| `test_nonce` | string | with a valid `op8x-test` header | Value of the request header `op8x-test`, sent only when it is exactly 43 base64url characters. See "Connection test nonce". |
+
+## Connection test nonce
+
+- The module sends `test_nonce` only when the request header `op8x-test` consists of exactly 43 characters from `A-Z`, `a-z`, `0-9`, `_` and `-`. Padding (`=`), `+`, `/`, other lengths and repeated headers are never sent. The value is sent as the Fetch `Headers` API returns it (without surrounding whitespace) and is not shortened or otherwise changed.
+- A valid nonce lets the collector take the event out of the count once. The field is only valid when the collector issued the nonce; otherwise it is ignored.
+- The field is always a string. A collector rejects any other type with `400 bad_field_type`.
+- The name is snake_case, unlike the camelCase names of the other fields. It is fixed by this format.
+- Compatibility: new in 0.0.2. Older module versions do not send the field and count the request normally.
+- It is unrelated to a collector-side `purchase_class` of `test` or `probe`.
 
 ## Reading the receipt
 

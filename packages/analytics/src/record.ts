@@ -108,6 +108,9 @@ function authorizationFrom(payload: Obj | undefined): string | undefined {
   return typeof from === "string" ? from : undefined;
 }
 
+/** Exact format of a connection-test nonce: 43 base64url characters, no padding. */
+const NONCE_RE = /^[A-Za-z0-9_-]{43}$/;
+
 export interface RecordOptions {
   /** Include receipt.transaction; without it only receipt.hasTransaction is derived. */
   chainCheck?: boolean;
@@ -141,6 +144,11 @@ export async function buildRecord(
           ? "challenge.issued"
           : "request.unpaid",
   };
+
+  // Behavior of the public buildRecord: a nonce-shaped op8x-test value becomes test_nonce.
+  // Length first so an oversized header costs nothing; anything else is ignored, never cleaned or truncated.
+  const nonce = req.get("op8x-test");
+  if (nonce !== null && nonce.length === 43 && NONCE_RE.test(nonce)) record.test_nonce = nonce;
 
   if (status === 402) record.challenge = buildChallenge(res, input.body);
 
