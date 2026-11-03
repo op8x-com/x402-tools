@@ -4,6 +4,7 @@ import { createTransport } from "../src/transport.ts";
 import { resetWarnings } from "../src/warnings.ts";
 import { startCollector } from "./collector.ts";
 import type { AnalyticsRecord } from "../src/types.ts";
+import { VERSION } from "../src/version.ts";
 
 beforeEach(() => resetWarnings());
 
@@ -52,7 +53,7 @@ test("sends the record with json content-type and op8x user-agent", async () => 
     const r = c.requests[0]!;
     assert.equal(r.method, "POST");
     assert.equal(r.headers["content-type"], "application/json");
-    assert.equal(r.headers["user-agent"], "op8x-analytics/0.0.1");
+    assert.equal(r.headers["user-agent"], `op8x-analytics/${VERSION}`);
     assert.equal(s.warns.length, 0);
     assert.equal(s.logs.length, 0);
   } finally {

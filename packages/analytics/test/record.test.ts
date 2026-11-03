@@ -464,3 +464,77 @@ test("hasTransaction works for the v1 X-PAYMENT-RESPONSE header", async () => {
   assert.equal(r.receipt?.transaction, undefined);
   assert.ok(!JSON.stringify(r).includes(HASH));
 });
+
+// Nonces are built at runtime so no key-shaped literal sits in the source.
+const NONCE = Buffer.alloc(32, 7).toString("base64url");
+
+function withTest(value: string, name = "op8x-test"): RecordInput {
+  const requestHeaders = new Headers();
+  requestHeaders.set(name, value);
+  return input({ requestHeaders });
+}
+
+test("test_nonce: a valid 43-character value is set", async () => {
+  assert.equal(NONCE.length, 43);
+  assert.equal((await buildRecord(withTest(NONCE))).test_nonce, NONCE);
+  const edge = "_".repeat(42) + "-";
+  assert.equal((await buildRecord(withTest(edge))).test_nonce, edge);
+  const letters = "A".repeat(43);
+  assert.equal((await buildRecord(withTest(letters))).test_nonce, letters);
+});
+
+test("test_nonce: the header name is case-insensitive", async () => {
+  assert.equal((await buildRecord(withTest(NONCE, "OP8X-Test"))).test_nonce, NONCE);
+});
+
+test("test_nonce: missing header sets no field", async () => {
+  const r = await buildRecord(input());
+  assert.equal("test_nonce" in r, false);
+});
+
+test("test_nonce: empty value sets no field", async () => {
+  const r = await buildRecord(withTest(""));
+  assert.equal("test_nonce" in r, false);
+});
+
+test("test_nonce: 42 characters set no field", async () => {
+  const r = await buildRecord(withTest(NONCE.slice(0, 42)));
+  assert.equal("test_nonce" in r, false);
+});
+
+test("test_nonce: 44 characters set no field", async () => {
+  const r = await buildRecord(withTest(NONCE + "A"));
+  assert.equal("test_nonce" in r, false);
+});
+
+test("test_nonce: base64 padding with = sets no field", async () => {
+  const r = await buildRecord(withTest(NONCE.slice(0, 42) + "="));
+  assert.equal("test_nonce" in r, false);
+});
+
+test("test_nonce: + and / (standard base64) set no field", async () => {
+  for (const bad of ["+", "/"]) {
+    const r = await buildRecord(withTest(NONCE.slice(0, 42) + bad));
+    assert.equal("test_nonce" in r, false, bad);
+  }
+});
+
+test("test_nonce: a header set twice sets no field", async () => {
+  const requestHeaders = new Headers();
+  requestHeaders.append("op8x-test", NONCE);
+  requestHeaders.append("op8x-test", NONCE);
+  const r = await buildRecord(input({ requestHeaders }));
+  assert.equal("test_nonce" in r, false);
+});
+
+test("test_nonce: a 16 KB value sets no field", async () => {
+  const r = await buildRecord(withTest("A".repeat(16 * 1024)));
+  assert.equal("test_nonce" in r, false);
+});
+
+test("test_nonce: the value appears in no other field", async () => {
+  const r = await buildRecord(withTest(NONCE));
+  const { test_nonce, ...rest } = r;
+  assert.equal(test_nonce, NONCE);
+  assert.ok(!JSON.stringify(rest).includes(NONCE));
+});

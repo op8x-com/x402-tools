@@ -873,3 +873,68 @@ test("per-request idle and setup-failure instances warn once per isolate", async
   for (let i = 0; i < 20; i++) await app.request("/json");
   assert.equal(warn.mock.callCount(), 2);
 });
+
+// Built at runtime so no key-shaped literal sits in the source.
+const TEST_NONCE = Buffer.alloc(32, 9).toString("base64url");
+// Right length, wrong alphabet: passes the length check and fails the pattern.
+const BAD_NONCE = "bad+value/" + "Z".repeat(33);
+
+for (const [label, value] of [
+  ["valid", TEST_NONCE],
+  ["invalid", BAD_NONCE],
+] as const) {
+  for (const path of PATHS) {
+    test(`response with the op8x-test header (${label}) is byte-identical with and without the middleware: ${path}`, async () => {
+      const collector = await startCollector("ok");
+      try {
+        const init = { headers: { "op8x-test": value } };
+        const plain = buildApp(undefined);
+        const withMw = buildApp(analytics({ endpoint: collector.url }));
+        const a = fakeCtx();
+        const b = fakeCtx();
+        const expected = await snapshot(await plain.request(path, init, {}, a.ctx));
+        const actual = await snapshot(await withMw.request(path, init, {}, b.ctx));
+        assert.deepEqual(actual.status, expected.status);
+        assert.deepEqual(actual.headers, expected.headers);
+        assert.deepEqual(actual.body, expected.body);
+        await settleWithin(b.promises, 3000);
+      } finally {
+        await collector.close();
+      }
+    });
+  }
+}
+
+test("op8x-test: a valid value reaches the collector as test_nonce, the seller handler still sees the header", async () => {
+  const collector = await startCollector("ok");
+  try {
+    let seen: string | null = null;
+    const app = new Hono();
+    app.use("*", analytics({ endpoint: collector.url }));
+    app.get("/h", (c) => {
+      seen = c.req.header("op8x-test") ?? null;
+      return c.text("ok");
+    });
+    const { ctx, promises } = fakeCtx();
+    await (await app.request("/h", { headers: { "op8x-test": TEST_NONCE } }, {}, ctx)).arrayBuffer();
+    await settleWithin(promises, 3000);
+    assert.equal(seen, TEST_NONCE);
+    assert.equal(collector.records.length, 1);
+    assert.equal(collector.records[0]?.test_nonce, TEST_NONCE);
+  } finally {
+    await collector.close();
+  }
+});
+
+test("op8x-test: an invalid value never appears in the record or the log", async (t) => {
+  const log = t.mock.method(console, "log", () => {});
+  const app = buildApp(analytics({ log: true }));
+  const { ctx, promises } = fakeCtx();
+  await (await app.request("/json", { headers: { "op8x-test": BAD_NONCE } }, {}, ctx)).arrayBuffer();
+  await settleWithin(promises, 1000);
+  const lines = log.mock.calls.filter((c) => c.arguments[0] === "op8x.analytics");
+  assert.equal(lines.length, 1);
+  const text = String(lines[0]?.arguments[1]);
+  assert.ok(!text.includes(BAD_NONCE));
+  assert.ok(!text.includes("test_nonce"));
+});

@@ -2,7 +2,7 @@
 
 Fail-open request analytics for x402 sellers on Cloudflare Workers. A Hono middleware that writes one metadata record per request: was it unpaid, was a 402 challenge issued, did a payment arrive, did a receipt come back, was the paid response delivered.
 
-> **Pre-release (0.0.1), not on npm yet.** `npm install @op8x/analytics` does not work today. Build it from a clone, see below.
+> **Pre-release (0.0.2), not on npm yet.** `npm install @op8x/analytics` does not work today. Build it from a clone, see below.
 
 Records go to an HTTP endpoint you choose (`endpoint`) and/or to the Worker log (`log: true`, read it with `wrangler tail`). There is no default endpoint: without `endpoint` nothing leaves your Worker. With neither option set, the middleware logs one warning on the first request and records nothing.
 
@@ -149,7 +149,12 @@ The payer address behind `payment.payer` is taken from the receipt's `payer`, fa
 - The URL path and query string; only the route pattern is recorded.
 - Cookies, `authorization` and the raw User-Agent.
 - Payment signatures and the payment payload, except the payer address, which is hashed with your `salt` before it leaves the middleware and is not recorded at all without a `salt`.
+- The value of the request header `op8x-test`, unless it has the nonce format: exactly 43 base64url characters. Any other value is ignored and never recorded.
 - The receipt's transaction hash, unless you set `chainCheck: true`. Without it the record only says whether the receipt names a transaction (`receipt.hasTransaction`). With `chainCheck: true` the record includes the public transaction hash so the collector can confirm settlement on-chain. The hash links the record to the payer address on-chain. op8x's hosted collector uses it only for that check, stores only the result and deletes the hash afterwards. If you point `endpoint` at your own server, handle it the same way. With `log: true` the hash also appears in the Worker log, where this deletion does not apply.
+
+## Connection test
+
+A request that carries the header `op8x-test` with a nonce of exactly 43 base64url characters gets the record field `test_nonce` (see the [ingest contract](docs/ingest-contract.md)). A collector can use it to recognize a connection test and keep that request out of your numbers. The header does not change the response, and it stays on the request for your own handler. Requires `@op8x/analytics` 0.0.2 or later; older versions count the test request as a normal request.
 
 ## Guarantees
 
@@ -164,7 +169,7 @@ The payer address behind `payment.payer` is taken from the receipt's `payer`, fa
 - **Body challenges over 64 KB.** Only the first 64 KB of a 402 body are read, and only within `timeoutMs`. A longer or slower body challenge is truncated, does not parse, and is recorded as `location: "none"` (or `"header"` when a header challenge is present).
 - **`ms` on Workers.** Workers advance the clock only across I/O, so `ms` covers time spent waiting on I/O downstream (fetches, KV, the facilitator); CPU time in your handlers does not advance it.
 
-## Not in 0.0.1
+## Not in 0.0.2
 
 No batching, retries, sampling or persistence; no adapters other than Hono; no default endpoint.
 
