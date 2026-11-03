@@ -19,5 +19,7 @@ A first fix used the regex `/^[ \t]+|[ \t]+$/g`. Its second alternative is retri
 
 `headerNames`, which the header-name checks share (`cors-allow-headers`, `cors-expose-headers`, `cors-client-retry`, the refused-preflight hint and the note on `*` with credentials), had the same weakness and now cleans names with `trimHttp` too. The tests "allow headers trims only HTTP whitespace around names", "expose headers trims only HTTP whitespace around names" and "refused preflight trims only HTTP whitespace around header names" cover it.
 
+`isCredentialed` read `Access-Control-Allow-Credentials` with `trim().toLowerCase()`, so `TRUE` or `true` plus a no-break space counted as credentialed and the `*` note blamed the wildcard. Fetch accepts only exactly `true` after stripping space and tab, so such a value fails credentialed requests on that header alone, while requests without credentials still honour `*`. `isCredentialed` now compares `trimHttp(v) === "true"`, and the rule `cors-allow-credentials` reports a value that reads `true` only when case and the characters `trim()` removes are ignored. The tests starting with "allow credentials" in `packages/cli/test/rules.test.ts` cover it.
+
 ## Prevention
-When comparing tokens from HTTP header lists, trim space and tab only with `trimHttp`, never with `trim()`. Write such characters in tests as escapes (`\u00A0`, `\t`) so editors and formatters cannot change them unnoticed.
+When comparing tokens from HTTP header lists, trim space and tab only with `trimHttp`, never with `trim()`. Where Fetch compares a value byte for byte, as with `Access-Control-Allow-Credentials`, do not lowercase it either. Write such characters in tests as escapes (`\u00A0`, `\t`) so editors and formatters cannot change them unnoticed.

@@ -484,6 +484,60 @@ test("allow headers * does not count with credentials", () => {
   assert.ok(ids(runRules([corsV2("POST")], pf(204, cred))).includes("cors-allow-headers"));
 });
 
+// Fetch accepts credentials only for exactly "true" after stripping space and tab.
+
+test("allow credentials is exact: TRUE or true with a no-break space does not turn off the * wildcard", () => {
+  const expose = (cred: string) =>
+    runRules(
+      [corsV2("GET", { ...ORIGIN_OK, "access-control-expose-headers": "*", "access-control-allow-credentials": cred })],
+      pf(204, PF_OK),
+    );
+  const allow = (cred: string) =>
+    runRules([corsV2("POST")], pf(204, { ...ORIGIN_OK, "access-control-allow-headers": "*", "access-control-allow-credentials": cred }));
+  for (const cred of ["TRUE", "True", "true\u00A0", "TRUE\t "]) {
+    assert.equal(ids(expose(cred)).includes("cors-expose-headers"), false, cred);
+    assert.equal(ids(allow(cred)).includes("cors-allow-headers"), false, cred);
+  }
+  for (const cred of ["true", " true", "true\t", "\ttrue "]) {
+    assert.ok(ids(expose(cred)).includes("cors-expose-headers"), cred);
+    assert.ok(ids(allow(cred)).includes("cors-allow-headers"), cred);
+  }
+});
+
+test("allow credentials that is almost true warns on the response and the preflight", () => {
+  const credFinding = (fs: Finding[]) => fs.find((x) => x.id === "cors-allow-credentials");
+  const f = credFinding(
+    runRules([corsV2("GET", { ...ORIGIN_OK, ...EXPOSE_OK, "access-control-allow-credentials": "TRUE" })], pf(204, PF_OK)),
+  );
+  assert.equal(f?.level, "warn");
+  assert.equal(f?.method, "GET");
+  assert.equal(
+    f?.detail,
+    'Access-Control-Allow-Credentials is "TRUE"; browsers accept only the exact value true, so credentialed requests fail the CORS check. Affects browser clients only.',
+  );
+  assert.equal(
+    f?.fix,
+    "Send exactly 'Access-Control-Allow-Credentials: true', or leave the header out if the API does not use cookies or HTTP authentication.",
+  );
+  const g = credFinding(runRules([corsV2("POST")], pf(204, { ...PF_OK, "access-control-allow-credentials": "true\u00A0" })));
+  assert.equal(g?.method, "OPTIONS");
+  assert.match(g?.detail ?? "", /^Access-Control-Allow-Credentials is "true\\u\{00A0\}";/);
+});
+
+test("allow credentials: exact true and values that mean no credentials stay quiet", () => {
+  for (const cred of ["true", " true", "true\t", "false", "yes", "", "TRUE, TRUE"]) {
+    const fs = runRules(
+      [corsV2("GET", { ...ORIGIN_OK, ...EXPOSE_OK, "access-control-allow-credentials": cred })],
+      pf(204, { ...PF_OK, "access-control-allow-credentials": cred }),
+    );
+    assert.equal(
+      fs.find((x) => x.id === "cors-allow-credentials"),
+      undefined,
+      JSON.stringify(cred),
+    );
+  }
+});
+
 test("v1 spelling X-PAYMENT is required when it was asked for", () => {
   const asked = { ...pf(204, PF_OK), requestHeaders: "payment-signature,content-type,x-payment" };
   const f = runRules([corsV2("POST")], asked).find((x) => x.id === "cors-allow-headers");
