@@ -17,7 +17,7 @@ A small paid API on Cloudflare Workers that shows `@op8x/analytics` in an x402 f
 
 ## The module comes from a packed tarball
 
-`@op8x/analytics` is installed from `vendor/op8x-analytics-0.0.1.tgz`, the output of `npm pack` in `packages/analytics`, so the demo runs exactly the artifact a seller would install. `vendor/SOURCE` records the source commit and the tarball's SHA-256. To check the tarball, pack `packages/analytics` afresh and compare the two file by file. The check also verifies the SHA-256 in `SOURCE` and the dependency in `package.json`. Changes to `devDependencies` alone do not count, since they never reach the demo. CI runs the same check, so a forgotten repack or a hand-edited tarball fails the pull request:
+`@op8x/analytics` is installed from `vendor/op8x-analytics-<version>.tgz`, the output of `npm pack` in `packages/analytics`, so the demo runs exactly the artifact a seller would install. `vendor/SOURCE` records the source commit and the tarball's SHA-256. To check the tarball, pack `packages/analytics` afresh and compare the two file by file. The check also verifies the SHA-256 in `SOURCE` and the dependency in `package.json`. Changes to `devDependencies` alone do not count, since they never reach the demo. CI runs the same check, so a forgotten repack or a hand-edited tarball fails the pull request:
 
 ```
 cd packages/analytics
@@ -33,7 +33,7 @@ cd packages/analytics
 npm ci
 cd ../../apps/demo-api
 npm run pack-analytics
-npm install ./vendor/op8x-analytics-0.0.1.tgz
+npm install ./vendor/op8x-analytics-<version>.tgz
 ```
 
 Dependabot keeps the dependencies of `packages/analytics` and of this app current. An update that changes the build output of `packages/analytics` (for example a new TypeScript version) fails the check until the tarball is repacked on that pull request's branch.

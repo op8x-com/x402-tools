@@ -61,7 +61,8 @@ test("readTarball returns the files of an archive, including one larger than a b
 });
 
 test("readTarball reads the vendored tarball", () => {
-  const files = readTarball(readFileSync(new URL("../vendor/op8x-analytics-0.0.1.tgz", import.meta.url)));
+  const { tarball } = parseSource(readFileSync(new URL("../vendor/SOURCE", import.meta.url), "utf8"));
+  const files = readTarball(readFileSync(new URL(`../vendor/${tarball}`, import.meta.url)));
   assert.ok(files.has("package/package.json"));
   assert.ok(files.has("package/dist/index.js"));
 });
