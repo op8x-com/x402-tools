@@ -467,7 +467,10 @@ function missingNames(list: string | undefined, required: string[], credentialed
   return required.filter((n) => !have.includes(n.toLowerCase()));
 }
 
-const isCredentialed = (v: string | undefined) => (v ?? "").trim().toLowerCase() === "true";
+// Fetch compares the trimmed value byte for byte: "TRUE" or "true" plus a no-break space is not credentialed.
+const isCredentialed = (v: string | undefined) => v !== undefined && trimHttp(v) === "true";
+// Meant as true but refused by browsers, so credentialed requests fail on this header alone.
+const almostTrue = (v: string | undefined) => v !== undefined && !isCredentialed(v) && v.trim().toLowerCase() === "true";
 const starNote = (list: string | undefined, credentialed: boolean) =>
   credentialed && headerNames(list).includes("*") ? " '*' does not cover credentialed requests." : "";
 const shown = (v: string | undefined) => (v === undefined ? "not set" : printEscaped(v));
@@ -583,7 +586,19 @@ function corsRules(results: Extracted[], pre: PreflightResult | undefined): Find
     ...(versions.has(2) || !versions.has(1) ? ["PAYMENT-REQUIRED", "PAYMENT-RESPONSE"] : []),
     ...(versions.has(1) ? ["X-PAYMENT-RESPONSE"] : []),
   ];
+  const credentialsNote = (method: Finding["method"], v: string | undefined) => {
+    if (!almostTrue(v)) return;
+    add(
+      "cors-allow-credentials",
+      "warn",
+      method,
+      "Access-Control-Allow-Credentials is not exactly true",
+      `Access-Control-Allow-Credentials is ${shown(v)}; browsers accept only the exact value true, so credentialed requests fail the CORS check. ${BROWSER_ONLY}`,
+      "Send exactly 'Access-Control-Allow-Credentials: true', or leave the header out if the API does not use cookies or HTTP authentication.",
+    );
+  };
   for (const e of ready) {
+    credentialsNote(e.method, e.allowCredentials);
     const credentialed = isCredentialed(e.allowCredentials);
     const missing = missingNames(e.exposeHeaders, expose, credentialed);
     if (missing.length === 0) continue;
@@ -637,6 +652,7 @@ function corsRules(results: Extracted[], pre: PreflightResult | undefined): Find
   }
 
   const allow = pre.headers["access-control-allow-headers"];
+  credentialsNote("OPTIONS", pre.headers["access-control-allow-credentials"]);
   const credentialed = isCredentialed(pre.headers["access-control-allow-credentials"]);
   const missing = missingNames(allow, required, credentialed);
   if (missing.length > 0) {
