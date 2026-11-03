@@ -490,6 +490,63 @@ test("v1 spelling X-PAYMENT is required when it was asked for", () => {
   assert.match(f?.detail ?? "", /X-PAYMENT/);
 });
 
+test("allow headers trims only HTTP whitespace around names", () => {
+  const allow = (v: string) =>
+    runRules([corsV2("POST")], pf(204, { ...PF_OK, "access-control-allow-headers": v })).find(
+      (x) => x.id === "cors-allow-headers",
+    );
+  assert.match(allow("PAYMENT-SIGNATURE\u00A0, Content-Type")?.detail ?? "", /missing: PAYMENT-SIGNATURE\./);
+  assert.ok(allow("\uFEFFPAYMENT-SIGNATURE, Content-Type"));
+  for (const v of [" PAYMENT-SIGNATURE , Content-Type", "\tPAYMENT-SIGNATURE,\tContent-Type\t"]) {
+    assert.equal(allow(v), undefined);
+  }
+});
+
+test("allow headers * followed by a no-break space is not a wildcard", () => {
+  const f = runRules([corsV2("POST")], pf(204, { ...ORIGIN_OK, "access-control-allow-headers": "*\u00A0" })).find(
+    (x) => x.id === "cors-allow-headers",
+  );
+  assert.ok(f);
+});
+
+test("expose headers trims only HTTP whitespace around names", () => {
+  const expose = (v: string) =>
+    runRules([corsV2("GET", { ...ORIGIN_OK, "access-control-expose-headers": v })], pf(204, PF_OK)).find(
+      (x) => x.id === "cors-expose-headers",
+    );
+  assert.match(expose("PAYMENT-REQUIRED\u00A0, PAYMENT-RESPONSE")?.detail ?? "", /missing: PAYMENT-REQUIRED\./);
+  assert.ok(expose("PAYMENT-REQUIRED, PAYMENT-RESPONSE\u2028"));
+  for (const v of [" PAYMENT-REQUIRED , PAYMENT-RESPONSE ", "PAYMENT-REQUIRED,\tPAYMENT-RESPONSE\t"]) {
+    assert.equal(expose(v), undefined);
+  }
+});
+
+test("refused preflight trims only HTTP whitespace around header names", () => {
+  const f = preflightFinding(400, {
+    ...ORIGIN_OK,
+    "access-control-allow-methods": "GET, POST",
+    "access-control-allow-headers": "PAYMENT-SIGNATURE\u00A0, Content-Type",
+  });
+  assert.equal(f?.fix, FIX_A("headers PAYMENT-SIGNATURE"));
+  const g = preflightFinding(400, {
+    ...ORIGIN_OK,
+    "access-control-allow-methods": "GET, POST",
+    "access-control-allow-headers": "\tPAYMENT-SIGNATURE ,\tContent-Type",
+  });
+  assert.equal(g?.fix, FIX_BC);
+});
+
+test("header lists with a long space run inside an item are read in linear time", () => {
+  const long = "x" + " ".repeat(200_000) + "x, PAYMENT-SIGNATURE";
+  const start = performance.now();
+  runRules(
+    [corsV2("GET", { ...ORIGIN_OK, "access-control-expose-headers": long })],
+    pf(204, { ...ORIGIN_OK, "access-control-allow-headers": long }),
+  );
+  const ms = performance.now() - start;
+  assert.ok(ms < 200, `took ${ms.toFixed(0)} ms`);
+});
+
 test("allow list without Access-Control-Expose-Headers gets the SDK retry advisory", () => {
   const exact = { ...ORIGIN_OK, "access-control-allow-headers": "payment-signature, content-type" };
   const f = runRules([corsV2("POST")], pf(204, exact)).find((x) => x.id === "cors-client-retry");

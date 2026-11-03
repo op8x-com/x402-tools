@@ -445,12 +445,6 @@ const DISPLAY: Record<string, string> = {
   "x-payment": "X-PAYMENT",
 };
 
-const headerNames = (v: string | undefined) =>
-  (v ?? "")
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-
 // Strips only HTTP tab and space from both ends, as Fetch does, in linear time.
 const trimHttp = (s: string) => {
   let a = 0;
@@ -459,6 +453,12 @@ const trimHttp = (s: string) => {
   while (b > a && (s[b - 1] === " " || s[b - 1] === "\t")) b--;
   return s.slice(a, b);
 };
+
+const headerNames = (v: string | undefined) =>
+  (v ?? "")
+    .split(",")
+    .map((s) => trimHttp(s).toLowerCase())
+    .filter(Boolean);
 
 // "*" is a wildcard only on requests without credentials; with them it is a literal name.
 function missingNames(list: string | undefined, required: string[], credentialed: boolean): string[] {
