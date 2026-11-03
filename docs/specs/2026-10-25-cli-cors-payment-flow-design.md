@@ -43,6 +43,7 @@ CORS findings are `warn` or `info`, never `error`: they affect browser clients o
 | `cors-origin-refused` | info | GET/POST | Plain probe got a 402 (or the permit2 412); the repeat with `Origin` failed or returned anything but 402 | Answer requests with an Origin header with the same 402 plus CORS headers, if browser apps should pay |
 | `cors-allow-origin` | info | GET/POST | Repeat got a 402 without `Access-Control-Allow-Origin` | Send `Access-Control-Allow-Origin` on the 402 and the preflight |
 | `cors-expose-headers` | warn | GET/POST | CORS-ready 402 whose `Access-Control-Expose-Headers` lacks `PAYMENT-REQUIRED`, `PAYMENT-RESPONSE` (v2 or unknown version) or `X-PAYMENT-RESPONSE` (v1) | Add the missing names, merged with the existing value |
+| `cors-allow-credentials` | warn | GET/POST, OPTIONS | CORS-ready 402, or 2xx preflight with `Access-Control-Allow-Origin`, whose `Access-Control-Allow-Credentials` is not exactly `true` after stripping space and tab but reads `true` ignoring case and the characters JavaScript `trim()` removes at both ends (`TRUE`, `true` plus a no-break space); browsers then fail credentialed requests on this header | Send exactly `Access-Control-Allow-Credentials: true`, or leave the header out if the API does not use cookies or HTTP authentication |
 | `cors-preflight` | warn | OPTIONS | Preflight failed at network level (the four `cors-preflight` rows are checked in this order; only the first match is reported) | Answer OPTIONS preflights for this URL |
 | `cors-preflight` | warn | OPTIONS | Preflight returned 402 | Answer the preflight without requiring payment, with a non-trivial `Access-Control-Max-Age` |
 | `cors-preflight` | warn | OPTIONS | Preflight returned a non-2xx status | Answer the preflight with 204 and the CORS headers (400, 401, 403: see `../designs/2026-11-02-cli-preflight-reject-hint-design.md`) |
@@ -55,7 +56,7 @@ CORS findings are `warn` or `info`, never `error`: they affect browser clients o
 Details:
 
 - Outside the browser-like repeat, "402" includes the 412 with `permit2_allowance_required` (`is402`); the repeat itself must return a literal 402.
-- Header lists are compared case-insensitively after splitting on commas. `*` counts as a wildcard only when `Access-Control-Allow-Credentials` is not `true` (case-insensitive, read from the same response); on credentialed responses it is a literal name, and the details of `cors-expose-headers` and `cors-allow-headers` say so.
+- Header lists are compared case-insensitively after splitting on commas. `*` counts as a wildcard only when `Access-Control-Allow-Credentials` is not `true` (exactly `true` after stripping space and tab, as Fetch compares it; read from the same response); on credentialed responses it is a literal name, and the details of `cors-expose-headers` and `cors-allow-headers` say so.
 - Without any CORS-ready 402, only `cors-origin-refused` and `cors-allow-origin` can appear; nothing else in CORS has an effect without `Access-Control-Allow-Origin`.
 - Versions come from both header and body challenges: for the preflight plan, of the CORS-ready 402s only; for `cors-expose-headers`, of all 402s.
 - Scheme defaults for `payment-flow` (from the scheme specs in the x402 repository at commit `4241d56`): `auth-capture` → `escrow`; `upto` on a network in the `solana` namespace → `escrow`; `exact` on a network in the `lnbtc` namespace → `upfront`; everything else → `authorization`. The missing-flow warning applies to v2 only; `@x402/core` 2.29 drops an unknown flow in v1 too, so the error covers both versions. The rule reads the header challenge if it decodes, otherwise the body challenge.
@@ -86,6 +87,7 @@ Details:
 - The browser-like repeat must return 402. An endpoint that answers both requests with the permit2 412 gets `cors-origin-refused` and no further CORS checks.
 - Only one preflight is sent. When POST is CORS-ready, a preflight problem that affects only GET is not seen.
 - A check sends up to five requests to the endpoint: two plain probes, two repeats and one preflight. A rate limit that answers the repeat with 429 shows up as `cors-origin-refused`.
+- Repeated `Access-Control-Allow-Credentials` headers arrive joined (`true, true`); such a value is neither credentialed nor reported by `cors-allow-credentials`, although browsers refuse it too.
 - All requests are unpaid and carry no credentials or payment headers; the preflight only asks which headers are allowed.
 - `cors-client-retry` exists only because of an SDK bug (x402-foundation/x402#3478); it should be removed once a fixed SDK version is released.
 - The scheme defaults for `payment-flow` are a copy of the scheme specs at x402 commit `4241d56` and must be updated when those change.
