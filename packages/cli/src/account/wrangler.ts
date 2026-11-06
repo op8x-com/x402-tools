@@ -146,9 +146,17 @@ const ALLOWED_EXACT: ReadonlySet<string> = new Set(ALLOWED_ENV);
 const ALLOWED_LOWER: ReadonlySet<string> = new Set(ALLOWED_ENV.map((n) => n.toLowerCase()));
 
 /**
- * The child environment: only the allowlist (A39; WRANGLER_LOG, WRANGLER_LOG_PATH, DEBUG,
- * NODE_OPTIONS and everything else stay out). Under win32 names match without regard to case and
- * keep their spelling (`Path` stays `Path`; the first of two spellings wins); under POSIX exactly.
+ * Always set for the child. wrangler loads the project's dotenv files itself, but a value already in
+ * its process environment wins over them, so a dotenv file cannot switch off log sanitizing (which
+ * would put the `secret put` body, the server key, into wrangler's log) or turn the log file on.
+ */
+const FIXED_ENV = { WRANGLER_LOG_SANITIZE: "true", WRANGLER_WRITE_LOGS: "false" } as const;
+
+/**
+ * The child environment: only the allowlist (WRANGLER_LOG, WRANGLER_LOG_PATH, DEBUG, NODE_OPTIONS
+ * and everything else stay out), plus the fixed log settings. Under win32 names match without
+ * regard to case and keep their spelling (`Path` stays `Path`; the first of two spellings wins);
+ * under POSIX exactly.
  */
 export function wranglerEnv(env: Readonly<Record<string, string | undefined>>, platform: NodeJS.Platform): Record<string, string> {
   const out: Record<string, string> = {};
@@ -162,7 +170,8 @@ export function wranglerEnv(env: Readonly<Record<string, string | undefined>>, p
     } else if (!ALLOWED_EXACT.has(name)) continue;
     out[name] = value;
   }
-  return out;
+  // Neither name is on the allowlist, so no other spelling of them is in `out`.
+  return { ...out, ...FIXED_ENV };
 }
 
 type RunDeps = Pick<Deps, "exec" | "env" | "platform">;

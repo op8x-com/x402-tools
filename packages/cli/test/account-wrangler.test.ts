@@ -149,7 +149,7 @@ test("findWrangler: Node below 22 -> wrangler_too_old", async () => {
 
 // --- start and environment -----------------------------------------------------------------------
 
-test("wranglerEnv (POSIX): exactly the allowlist, exact spelling, log and debug names dropped (A39)", () => {
+test("wranglerEnv (POSIX): exactly the allowlist plus the fixed log settings, exact spelling, log and debug names dropped", () => {
   const env = wranglerEnv(
     {
       PATH: "/usr/bin",
@@ -179,6 +179,8 @@ test("wranglerEnv (POSIX): exactly the allowlist, exact spelling, log and debug 
       NODE_OPTIONS: "--x",
       OP8X_TEST_TOKEN: "secret",
       CI: "1",
+      WRANGLER_LOG_SANITIZE: "false",
+      WRANGLER_WRITE_LOGS: "true",
       EMPTY: undefined,
       TMPDIR: undefined,
     },
@@ -203,6 +205,8 @@ test("wranglerEnv (POSIX): exactly the allowlist, exact spelling, log and debug 
     NODE_EXTRA_CA_CERTS: "ca",
     TEMP: "t",
     TMP: "t2",
+    WRANGLER_LOG_SANITIZE: "true",
+    WRANGLER_WRITE_LOGS: "false",
   });
   assert.equal(Object.getPrototypeOf(env), Object.prototype);
 });
@@ -220,10 +224,20 @@ test("wranglerEnv (win32): names compared without case, original spelling kept",
       Wrangler_Log_Path: "C:\\l",
       node_options: "--x",
       ComSpec: "C:\\Windows\\cmd.exe",
+      wrangler_log_sanitize: "false",
+      Wrangler_Write_Logs: "1",
     },
     "win32",
   );
-  assert.deepEqual(env, { Path: "C:\\Windows", SYSTEMROOT: "C:\\Windows", userprofile: "C:\\Users\\s", Temp: "C:\\t", https_proxy: "hp" });
+  assert.deepEqual(env, {
+    Path: "C:\\Windows",
+    SYSTEMROOT: "C:\\Windows",
+    userprofile: "C:\\Users\\s",
+    Temp: "C:\\t",
+    https_proxy: "hp",
+    WRANGLER_LOG_SANITIZE: "true",
+    WRANGLER_WRITE_LOGS: "false",
+  });
 });
 
 test("whoami through the real exec: argv, empty stdin pipe, worker folder, exact environment", async () => {
@@ -243,6 +257,8 @@ test("whoami through the real exec: argv, empty stdin pipe, worker folder, exact
     CLOUDFLARE_API_TOKEN: "cf-test-token-value",
     https_proxy: "http://proxy.example:3128",
     NODE_EXTRA_CA_CERTS: "/etc/ca.pem",
+    WRANGLER_LOG_SANITIZE: "true",
+    WRANGLER_WRITE_LOGS: "false",
   };
   if (win && process.env.SystemRoot) expected.SystemRoot = process.env.SystemRoot;
   assert.deepEqual(childEnv(call.env, expected), expected);
@@ -264,7 +280,7 @@ test("whoami through the real exec under win32: Path and SYSTEMROOT keep their s
   const deps = realDeps(env, fake);
   const bin = await found(fake, deps);
   assert.equal(await cloudflareLoggedIn(deps, bin), true);
-  const want = { Path: env.Path, SYSTEMROOT: env.SYSTEMROOT, https_proxy: env.https_proxy };
+  const want = { Path: env.Path, SYSTEMROOT: env.SYSTEMROOT, https_proxy: env.https_proxy, WRANGLER_LOG_SANITIZE: "true", WRANGLER_WRITE_LOGS: "false" };
   const seen = fake.calls()[0]!.env;
   assert.deepEqual(childEnv(seen, want), want);
   assert.ok(!Object.keys(seen).some((k) => /^(wrangler_log|debug)$/i.test(k)));
@@ -280,7 +296,7 @@ test("start: node itself with wrangler.js, timeout 120 s, no shell, no npx", asy
   const c = rec.calls[0]!;
   assert.equal(c.file, process.execPath);
   assert.deepEqual(c.args, [realpathSync.native(fake.script), "whoami", "--json"]);
-  assert.deepEqual(c.opts, { cwd: resolve(fake.dir), env: { PATH: "/usr/bin" }, timeoutMs: 120_000 });
+  assert.deepEqual(c.opts, { cwd: resolve(fake.dir), env: { PATH: "/usr/bin", WRANGLER_LOG_SANITIZE: "true", WRANGLER_WRITE_LOGS: "false" }, timeoutMs: 120_000 });
   assert.equal(WRANGLER_TIMEOUT_MS, 120_000);
   assert.ok(!c.args.some((a) => /npx|shell/i.test(a)));
 });
@@ -687,6 +703,29 @@ test("secret put: argv after the table, K only on stdin without line end, never 
   assert.ok(!deps.stdout().includes("wrangler says"));
   assert.ok(!deps.stdout().includes(k));
   assert.equal(deps.stderr(), "");
+});
+
+test("secret put: the child always gets WRANGLER_LOG_SANITIZE=true and WRANGLER_WRITE_LOGS=false, whatever the parent sets", async () => {
+  const fake = createFakeWrangler();
+  fake.file("wrangler.toml", `name = "api"`);
+  const parent = { ...baseEnv(), WRANGLER_LOG_SANITIZE: "false", WRANGLER_WRITE_LOGS: "true" };
+  const deps = realDeps(parent, fake);
+  const bin = await found(fake, deps);
+  const secrets = createSecrets(deps, output(deps));
+  assert.equal(await secrets.put(bin, { dir: fake.dir, name: "api", env: null }, generateKey("w")), "ok");
+  const seen = fake.calls().at(-1)!.env;
+  const expected: Record<string, string> = {
+    HOME: "/home/seller",
+    CLOUDFLARE_API_TOKEN: "cf-test-token-value",
+    https_proxy: "http://proxy.example:3128",
+    NODE_EXTRA_CA_CERTS: "/etc/ca.pem",
+    WRANGLER_LOG_SANITIZE: "true",
+    WRANGLER_WRITE_LOGS: "false",
+  };
+  if (win && process.env.SystemRoot) expected.SystemRoot = process.env.SystemRoot;
+  assert.deepEqual(childEnv(seen, expected), expected);
+  // The API base stays wrangler's own choice (it depends on the configuration's compliance region).
+  assert.ok(!Object.keys(seen).some((k) => /^(CLOUDFLARE|CF)_API_BASE_URL$/i.test(k)));
 });
 
 test("secret put with an environment: --name <name> --env <X> so that wrangler builds <name>-<X>", async () => {

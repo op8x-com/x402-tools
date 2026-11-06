@@ -458,6 +458,14 @@ never runs a program by name from it.
     `HTTP_PROXY`, `NO_PROXY` (also lowercase), `NODE_EXTRA_CA_CERTS`, `TEMP`,
     `TMP`. Logging variables such as `WRANGLER_LOG`, `WRANGLER_LOG_PATH` and
     `DEBUG` are left out. On Windows names are compared without case.
+*   The CLI always adds `WRANGLER_LOG_SANITIZE=true` and
+    `WRANGLER_WRITE_LOGS=false` to that environment. wrangler reads the
+    project's dotenv files itself, but a value already in its environment wins,
+    so a dotenv file can neither turn off log sanitizing nor turn on the log
+    file, either of which could record the key sent with `secret put`.
+    `CLOUDFLARE_API_BASE_URL` is not pinned: wrangler's default depends on the
+    configuration's `compliance_region`, so a fixed value would be wrong for
+    some workers.
 *   wrangler's output is never shown. The CLI reads only exit codes, from
     `whoami --json` only the field `loggedIn`, and from `secret list` only the
     secret names; account names and mail addresses are never read.
