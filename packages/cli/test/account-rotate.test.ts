@@ -371,7 +371,7 @@ test("rotate: the output guard stops after the step line, before POST rotate", a
   assert.equal(s.file().write_key_next, null);
 });
 
-test("rotate clears a waiting step of rotate at the end state, not before", async (t) => {
+test("a fresh run clears the waiting rotate step at its start (also when it ends with network_error)", async (t) => {
   const pending: PendingStepUp = {
     purpose: "rotate_now",
     command: "rotate",
@@ -392,10 +392,11 @@ test("rotate clears a waiting step of rotate at the end state, not before", asyn
       },
     },
   });
-  // network_error is no end state of the list: the step stays.
+  // A new run without --code-stdin starts over: the old step goes, whatever the end.
   assert.equal(await s.rotate(), 2);
   assert.equal(s.final().state, "network_error");
-  assert.deepEqual(s.file().pending_step_up, pending);
+  assert.equal(s.file().pending_step_up, null);
+  await writeAccount(s.deps, { ...s.file(), pending_step_up: pending });
   failRotate = false;
   assert.equal(await s.rotate(), 0);
   assert.equal(s.final().state, "key_rotated");
@@ -1284,4 +1285,67 @@ test("--now: waiting gives up after at most 10 polls even if the local clock doe
   assert.equal(await s.rotate("--now"), 2);
   assert.equal(s.final().state, "network_error");
   assert.equal(polls, 10);
+});
+
+// --- Fixrunde 2 ------------------------------------------------------------------------------------------
+
+test("key_rotated with no known worker and no old key: no 24-hour clause", async (t) => {
+  const s = await setup(t, { workers: 0, local: "none" });
+  s.tenant.write = null;
+  assert.equal(await s.rotate(), 0);
+  assert.equal(s.final().state, "key_rotated");
+  assert.equal(s.final().agent_hint, "No worker is known on this computer. Run op8x init in every worker folder.");
+});
+
+test("stop: the local K must be the current key; else key_mismatch, no request with the code, the step stays", async (t) => {
+  const s = await setup(t, { workers: 1 });
+  assert.equal(await s.rotate("--now"), 1);
+  assert.equal(s.final().state, "step_up_needed");
+  const ours = s.file().write_key!;
+  const stored = s.file().pending_step_up;
+  // Another computer stopped the predecessor; then a plain rotate swapped at the collector and its
+  // answer was lost: the local K is now the previous key, the collector's current key is another.
+  const other = generateKey("w");
+  s.tenant.prev = keyHash(ours);
+  s.tenant.prevUntil = s.fake.now() + 24 * HOUR;
+  s.tenant.prevLastSeenAt = null;
+  s.tenant.write = keyHash(other);
+  await writeAccount(s.deps, { ...s.file(), write_key_next: other });
+  s.deps.readStdin = async () => mailCode(s, "rotate_now");
+  assert.equal(await s.rotate("--now", "--code-stdin"), 1);
+  assert.equal(s.final().state, "key_mismatch");
+  assert.equal(routes(s).includes("revoke_previous"), false);
+  assert.equal(s.tenant.prev, keyHash(ours), "the local key was not stopped");
+  assert.equal(s.tenant.codes.get("rotate_now")?.used, false);
+  assert.deepEqual(s.file().pending_step_up, stored);
+});
+
+test("login keeps a waiting replace_current and its next K when GET /tenant fails", async (t) => {
+  const s = await setup(t, { local: "previous", workers: 1 });
+  const next = generateKey("w");
+  const pending: PendingStepUp = {
+    purpose: "replace_current",
+    command: "rotate",
+    case: "c",
+    phase: "replace",
+    force_stop: false,
+    t_check: null,
+    expires_at: "2026-11-03T14:15:00.000Z",
+  };
+  await writeAccount(s.deps, { ...s.file(), write_key_next: next, pending_step_up: pending });
+  s.fake.respond("tenant", "server_error", 1);
+  let granted = false;
+  s.fake.onRequest = (req) => {
+    if (req.route === "device_token" && !granted) {
+      granted = true;
+      s.fake.grant({ tenant: s.tenant.name });
+    }
+  };
+  assert.equal(await run(["login", "--json"], s.deps), 0);
+  const f = s.file();
+  assert.ok(s.fake.requests.some((r) => r.route === "tenant"), "login tried to settle the next K");
+  assert.deepEqual(f.pending_step_up, pending);
+  assert.equal(f.write_key_next, next);
+  assert.equal(f.write_key, s.oldKey);
+  assert.notEqual(f.read_token, s.read, "the new R is stored");
 });

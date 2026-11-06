@@ -142,19 +142,23 @@ type Started = { ok: true; view: TenantView; stored: PendingStepUp | null } | { 
 
 /**
  * A run without --code-stdin starts over: write_key_next is resumed (GET /tenant first; a next K
- * of a waiting replace_current that is already current becomes write_key). A waiting
- * replace_current then goes with its next K (never sent without its code); a waiting rotate_now
- * stays until an end state or a new step-up replaces it. `stored` is the step as found, for the
- * notice code_already_sent.
+ * of a waiting replace_current that is already current becomes write_key). Then every waiting
+ * step of rotate goes, a replace_current with its next K (never sent without its code); a step of
+ * delete stays. `stored` is the step as found, for the notice code_already_sent.
  */
 async function freshStart(ctx: Ctx): Promise<Started> {
   const stored = ctx.file.pending_step_up;
   const resumed = await resumeNextKey(ctx.api, ctx.out, ctx.file, ctx.save);
   if (!resumed.ok) return resumed;
   const p = ctx.file.pending_step_up;
-  if (p !== null && p.purpose === "replace_current") {
-    // resumeNextKey just saw that the next K is not the current key: it is discarded.
-    const failed = await ctx.save({ ...ctx.file, pending_step_up: null, write_key_next: null });
+  if (p !== null && p.command === "rotate") {
+    // A replace_current still waiting: resumeNextKey just saw that its next K is not the current
+    // key, so it is discarded. A rotate_now simply goes. A step of delete stays.
+    const failed = await ctx.save({
+      ...ctx.file,
+      pending_step_up: null,
+      write_key_next: p.purpose === "replace_current" ? null : ctx.file.write_key_next,
+    });
     if (failed !== null) return { ok: false, exit: ctx.out.final(failed) };
   }
   return { ok: true, view: resumed.view, stored };
@@ -612,7 +616,8 @@ async function waitStep(ctx: Ctx, tCheck: string): Promise<number | null> {
 }
 
 /**
- * Step stop (5): GET /tenant again; without force_stop the old key must still be quiet since
+ * Step stop (5): GET /tenant again; the local K must be the current key (else key_mismatch, the
+ * step stays); without force_stop the old key must still be quiet since
  * T_check, else old_key_still_used and the code is not sent. Then POST revoke-previous {code}.
  */
 async function stopStep(ctx: Ctx, code: string, run: NowRun, tCheck: string | null, key: string): Promise<number> {
@@ -621,6 +626,10 @@ async function stopStep(ctx: Ctx, code: string, run: NowRun, tCheck: string | nu
   const view = await ctx.api.tenant(ctx.file.read_token);
   if (!view.ok) return finishApi(ctx, view.error);
   if (writeSlot(view.value, "previous") === undefined) return finish(ctx, "nothing_to_stop");
+  // Only the key before this computer's current K may be stopped: if the local K is no longer the
+  // current key (another rotation happened), the previous slot may hold this very K.
+  const local = ctx.file.write_key;
+  if (local === null || writeSlot(view.value, "current")?.fingerprint !== keyFingerprint(local)) return finish(ctx, "key_mismatch", { keep: true });
   const lastSeen = view.value.write_key_prev_last_seen_at;
   if (!run.forceStop && (tCheck === null || seenAfter(lastSeen, tCheck))) return finish(ctx, "old_key_still_used", { extra: { last_seen: lastSeen } });
   if (ctx.out.stopped) return guarded(ctx);

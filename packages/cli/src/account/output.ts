@@ -134,7 +134,9 @@ const HINTS: Record<FinalState | "waiting_for_human", ((v: HintVars, mode: Mode)
       : `op8x is connected to account ${text(v.account)} (${text(v.contact_hint)}). Tell your human which address this account belongs to; if it is not theirs, run op8x logout.`,
   key_rotated: (v, m) =>
     v.n === 0
-      ? "No worker is known on this computer. Run op8x init in every worker folder within 24 hours."
+      ? v.time === null || v.time === undefined
+        ? "No worker is known on this computer. Run op8x init in every worker folder."
+        : "No worker is known on this computer. Run op8x init in every worker folder within 24 hours."
       : v.time === null || v.time === undefined
         ? `The new server key is in ${text(v.n)} workers.`
         : `The new server key is in ${text(v.n)} workers; the old key works until ${time(v.time, m)}.`,
