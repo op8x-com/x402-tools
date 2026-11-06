@@ -522,7 +522,21 @@ test("Windows for real: icacls and whoami protect the file, and the saved SDDL h
   const { exec } = await import("../src/account/system.ts");
   const env = { SystemRoot: systemRootOf(process.env) ?? "" };
   const deps = testDeps({ platform: "win32", env, exec });
-  await writeAccount(deps, full());
+  try {
+    await writeAccount(deps, full());
+  } catch (e) {
+    // Show what icacls really produced, so a failure on another Windows setup is explainable.
+    const root = env.SystemRoot;
+    const probe = join(deps.configDir, "probe.txt");
+    writeFileSync(probe, "");
+    const who = await exec(win32.join(root, "System32", "whoami.exe"), ["/user", "/fo", "csv", "/nh"], { cwd: deps.configDir, env, timeoutMs: 10_000 });
+    const sid = /"(S-1-[0-9-]+)"\s*$/.exec(who.stdout)?.[1] ?? "?";
+    const grant = await exec(win32.join(root, "System32", "icacls.exe"), [probe, "/inheritance:r", "/grant:r", `*${sid}:F`], { cwd: deps.configDir, env, timeoutMs: 10_000 });
+    const saved = join(deps.configDir, "probe.acl");
+    const save = await exec(win32.join(root, "System32", "icacls.exe"), [probe, "/save", saved], { cwd: deps.configDir, env, timeoutMs: 10_000 });
+    const sddl = save.code === 0 ? JSON.stringify(readFileSync(saved).toString("utf16le")) : "(no save)";
+    assert.fail(`writeAccount failed (${String(e)}); whoami exit ${who.code}, sid ${sid}, grant exit ${grant.code}, save exit ${save.code}, saved ${sddl}`);
+  }
   assert.deepEqual(parseAccount(readFileSync(accountPath(deps), "utf8")), full());
   assert.deepEqual(readdirSync(deps.configDir), ["account.json"]);
 
