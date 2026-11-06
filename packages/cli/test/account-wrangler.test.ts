@@ -74,7 +74,7 @@ function output(deps: TestDeps, secrets: () => string[] = () => []) {
 test("findWrangler: the project's own wrangler is found, with the real path of wrangler.js", async () => {
   const fake = createFakeWrangler();
   const r = await findWrangler(realDeps(), fake.dir);
-  assert.deepEqual(r, { ok: true, bin: { dir: resolve(fake.dir), script: realpathSync(fake.script), version: "4.152.0" } });
+  assert.deepEqual(r, { ok: true, bin: { dir: resolve(fake.dir), script: realpathSync.native(fake.script), version: "4.152.0" } });
 });
 
 test("findWrangler: no node_modules/wrangler in the folder -> wrangler_missing", async () => {
@@ -279,7 +279,7 @@ test("start: node itself with wrangler.js, timeout 120 s, no shell, no npx", asy
   assert.equal(rec.calls.length, 1);
   const c = rec.calls[0]!;
   assert.equal(c.file, process.execPath);
-  assert.deepEqual(c.args, [realpathSync(fake.script), "whoami", "--json"]);
+  assert.deepEqual(c.args, [realpathSync.native(fake.script), "whoami", "--json"]);
   assert.deepEqual(c.opts, { cwd: resolve(fake.dir), env: { PATH: "/usr/bin" }, timeoutMs: 120_000 });
   assert.equal(WRANGLER_TIMEOUT_MS, 120_000);
   assert.ok(!c.args.some((a) => /npx|shell/i.test(a)));
