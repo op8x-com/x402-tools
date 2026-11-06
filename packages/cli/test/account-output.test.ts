@@ -242,8 +242,9 @@ test("text mode: Step n of N, the link with words and time, the hint as the last
   s.out.final("url_required", { extra: { workers: [{ name: "api", env: "staging", env_file: null, status: "no_url" }] } });
   assert.deepEqual(s.lines(), [
     "Step 1 of 2: browser",
-    "Ask your human to open the link and click Allow. Their screen shows amber tiger 42.",
-    "Link: https://analytics.op8x.com/link/" + "a".repeat(32),
+    // Words and link escaped and quoted in text (look-alike characters stay visible).
+    'Ask your human to open the link and click Allow. Their screen shows "amber tiger 42".',
+    'Link: "https://analytics.op8x.com/link/' + "a".repeat(32) + '"',
     "The link is valid until 2026-11-03 14:10 UTC.",
     "Step 1 of 2: browser ok (1500 ms)",
     "Step 2 of 2: test skipped",

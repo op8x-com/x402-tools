@@ -128,3 +128,23 @@ test("init with an incomplete Deps ends with internal_error (exit 2)", async () 
   assert.equal(final.state, "internal_error");
   assert.equal(final.exit_code, 2);
 });
+
+test("the global help lists the account commands built so far", async () => {
+  const deps = testDeps();
+  assert.equal(await run(["--help"], deps), 0);
+  const help = deps.stdout();
+  assert.ok(help.includes("\n  op8x login "), help);
+  assert.ok(help.includes("\n  op8x logout "), help);
+  assert.ok(help.includes("\n  op8x import-key <path> "), help);
+  assert.ok(help.includes("\n  --payer <address>      your own paying wallet; warns if it is a payTo\n"));
+  // init is still a placeholder.
+  assert.equal(help.includes("op8x init"), false);
+});
+
+test("login, logout and import-key reach their commands (options before the word too)", async () => {
+  for (const argv of [["--json", "login", "extra"], ["--json", "logout", "x"], ["--json", "import-key"]]) {
+    const deps = testDeps();
+    assert.equal(await run(argv, deps), 4, argv.join(" "));
+    assert.equal(lastLine(deps.stdout()).command, argv[1]);
+  }
+});

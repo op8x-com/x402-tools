@@ -1,5 +1,5 @@
 import type { Deps } from "../cli.ts";
-import { cleanText } from "../extract.ts";
+import { cleanText, printEscaped } from "../extract.ts";
 import type { ApiError } from "./api.ts";
 
 // Output of the account commands. Without --json: text lines with "Step n of N". With --json:
@@ -12,7 +12,7 @@ import type { ApiError } from "./api.ts";
 export const CLI_SCHEMA = "op8x.cli/1";
 
 /** The account commands registered so far (the dispatcher's table grows per task). */
-export type AccountCommand = "init";
+export type AccountCommand = "init" | "login" | "logout" | "import-key";
 
 /** Every account command, for the output envelope. */
 export type CommandName = "init" | "login" | "logout" | "import-key" | "rotate" | "delete" | "report";
@@ -383,7 +383,10 @@ export function createOutput(o: OutputOptions): Output {
         event({ event: "link", state: "waiting_for_human", agent_hint: hint, link: clean(v.link), words, expires_at: clean(v.expires_at) });
         return;
       }
-      write(`${hint}\nLink: ${clean(v.link)}\nThe link is valid until ${textTime(v.expires_at)}.\n`);
+      // The human compares the words with their screen: printed escaped and quoted, so a look-alike
+      // character (U+00A0, U+200B, ...) shows as an escape instead of passing for a plain one.
+      const shown = agentHint("waiting_for_human", { words: printEscaped(v.words) }, mode);
+      write(`${shown}\nLink: ${printEscaped(v.link)}\nThe link is valid until ${textTime(v.expires_at)}.\n`);
     },
     notice: (id, vars = {}) => {
       const host = vars.host === undefined ? "" : clean(vars.host);
