@@ -450,6 +450,9 @@ test("signed in with a K that is not the account's current key: key_mismatch, no
   await signedIn(s, { file: { write_key: generateKey("w") } });
   assert.equal(await run(["init", "--json", "--url", s.url], s.deps), 1);
   assert.equal(s.final().state, "key_mismatch");
+  // The step that was running ends as failed and is listed in the final line.
+  assert.deepEqual(steps(s.lines()), [["key", "failed"]]);
+  assert.deepEqual((s.final().steps as Line[]).map((x) => [x.name, x.status]), [["key", "failed"]]);
   assert.equal(s.wrangler.calls().length, 0);
 });
 

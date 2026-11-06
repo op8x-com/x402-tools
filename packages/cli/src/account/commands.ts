@@ -323,11 +323,9 @@ async function init(json: boolean, deps: Deps, o: InitOptions): Promise<number> 
     file = signed;
     out.start("key");
     if (out.stopped) return stopped();
+    // On failure currentKey has written the final line, which ended step key as failed.
     const current = await currentKey(deps, api, out, signed, save);
-    if (!current.ok) {
-      out.end("failed");
-      return current.exit;
-    }
+    if (!current.ok) return current.exit;
     key = current.key;
     if (place === null) {
       const found = await findPlace(deps, o);

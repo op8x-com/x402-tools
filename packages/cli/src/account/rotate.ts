@@ -111,13 +111,12 @@ export async function rotate(json: boolean, deps: Deps, o: RotateOptions): Promi
 // --- shared pieces ------------------------------------------------------------------------------
 
 /**
- * The end of the run: a running step ends as failed, an end state of the list clears a waiting
- * step of rotate (a step of delete is never touched; `keep` leaves the step when the run ended
- * before its code could be sent), then the final line. A cleared replace_current step settles
- * its next K first.
+ * The end of the run: an end state of the list clears a waiting step of rotate (a step of delete
+ * is never touched; `keep` leaves the step when the run ended before its code could be sent),
+ * then the final line (which ends a running step as failed). A cleared replace_current step
+ * settles its next K first.
  */
 async function finish(ctx: Ctx, state: FinalState, o: { extra?: Record<string, unknown>; hint?: HintVars; keep?: boolean } = {}): Promise<number> {
-  ctx.out.end("failed");
   const p = ctx.file.pending_step_up;
   if (o.keep !== true && clearsPending(state) && p !== null && p.command === "rotate") {
     const next = p.purpose === "replace_current" ? await settleReplacedNext(ctx.api, ctx.file) : { ...ctx.file, pending_step_up: null };

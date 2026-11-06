@@ -237,7 +237,7 @@ export interface Output {
   readonly stopped: boolean;
   /** Starts the next step (n counts up from 1). */
   start: (name: string) => void;
-  /** Ends the running step. */
+  /** Ends the running step; throws if no step is running (a programming error). */
   end: (status: "ok" | "failed") => void;
   /** A step that does not run this time (status skipped, elapsed_ms 0). */
   skip: (name: string) => void;
@@ -246,8 +246,9 @@ export interface Output {
   notice: (id: NoticeId, vars?: { host?: string }) => void;
   /**
    * The final line. `extra` holds the state's fields (workers, last_seen, retry_at, receipt,
-   * attempts_left, status/code, ...); the hint takes its values from `extra` and `hint`.
-   * Returns the exit code (2 if the guard replaced a line of this run).
+   * attempts_left, status/code, ...); the hint takes its values from `extra` and `hint`. A step
+   * still running ends as failed first. Returns the exit code (2 if the guard replaced a line of
+   * this run).
    */
   final: (state: FinalState, o?: { extra?: Record<string, unknown>; hint?: HintVars }) => number;
   /** The final line of an API error, with the fields its state carries. */
@@ -345,8 +346,21 @@ export function createOutput(o: OutputOptions): Output {
     else write(`${head} ${status} (${elapsed} ms)\n`);
   }
 
+  function endStep(status: "ok" | "failed"): void {
+    if (running === null) throw new Error("output: end() without a running step");
+    const elapsed = Math.max(0, Math.round(deps.now() - running.started));
+    done.push({ n: running.n, name: running.name, status, elapsed_ms: elapsed });
+    stepLine(running.n, running.name, status, elapsed);
+    running = null;
+  }
+
   function final(state: FinalState, f: { extra?: Record<string, unknown>; hint?: HintVars } = {}): number {
     if (stopped) return finalExit ?? 2;
+    // A step still running when the run ends did not finish: it ends as failed and is listed.
+    if (running !== null) {
+      endStep("failed");
+      if (stopped) return finalExit ?? 2;
+    }
     const extra = cleanDeep(f.extra ?? {}) as Record<string, unknown>;
     const exit = EXIT_CODES[state];
     const hint = agentHint(state, hintVars(state, extra, f.hint ?? {}), mode);
@@ -377,13 +391,7 @@ export function createOutput(o: OutputOptions): Output {
       running = { n, name, started: deps.now() };
       stepLine(n, name, "start", 0);
     },
-    end: (status) => {
-      if (running === null) return;
-      const elapsed = Math.max(0, Math.round(deps.now() - running.started));
-      done.push({ n: running.n, name: running.name, status, elapsed_ms: elapsed });
-      stepLine(running.n, running.name, status, elapsed);
-      running = null;
-    },
+    end: endStep,
     skip: (name) => {
       n += 1;
       done.push({ n, name, status: "skipped", elapsed_ms: 0 });

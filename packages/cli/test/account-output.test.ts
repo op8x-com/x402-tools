@@ -364,3 +364,29 @@ test("after the final line nothing more is written", () => {
   assert.equal(s.out.final("busy"), 0);
   assert.equal(s.lines().length, 1);
 });
+
+test("final() ends a step that is still running as failed, so it appears in steps", () => {
+  const s = setup({ steps: 2 });
+  s.out.start("key");
+  s.tick(25);
+  assert.equal(s.out.final("network_error"), 2);
+  const [start, end, last] = s.parsed();
+  const base = { schema: CLI_SCHEMA, command: "init", final: false };
+  assert.deepEqual(start, { ...base, event: "step", n: 1, of: 2, name: "key", status: "start" });
+  assert.deepEqual(end, { ...base, event: "step", n: 1, of: 2, name: "key", status: "failed", elapsed_ms: 25 });
+  assert.deepEqual(last?.steps, [{ n: 1, name: "key", status: "failed", elapsed_ms: 25 }]);
+  assert.equal(s.parsed().length, 3);
+
+  const text = setup({ json: false, steps: 1 });
+  text.out.start("browser");
+  text.out.final("denied");
+  assert.deepEqual(text.lines(), ["Step 1 of 1: browser", "Step 1 of 1: browser failed (0 ms)", "The request was denied. Run op8x init again when your human is ready."]);
+});
+
+test("end() without a running step is a programming error", () => {
+  const s = setup({ steps: 1 });
+  assert.throws(() => s.out.end("ok"));
+  s.out.start("key");
+  s.out.end("ok");
+  assert.throws(() => s.out.end("failed"));
+});
