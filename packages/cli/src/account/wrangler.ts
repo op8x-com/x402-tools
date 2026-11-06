@@ -352,6 +352,14 @@ function parseJsonc(text: string): ConfigValue {
   return v;
 }
 
+const TARGET_KEYS: ReadonlySet<string> = new Set(["name", "workers_dev", "route", "routes"]);
+
+/** True for a key path at or below a field op8x reads (top level or env.X), or env / env.X itself. */
+function touchesTarget(path: string[]): boolean {
+  if (TARGET_KEYS.has(path[0]!)) return true;
+  return path[0] === "env" && (path.length <= 2 || TARGET_KEYS.has(path[2]!));
+}
+
 const TOML_BARE = /[A-Za-z0-9_-]+/y;
 const TOML_INT = /[+-]?(?:0|[1-9](?:_?\d)*)/y;
 const DELIM = new Set([" ", "\t", "\r", "\n", ",", "]", "}", "#", undefined]);
@@ -368,6 +376,7 @@ function parseToml(text: string): ConfigTable {
   const root = newTable();
   let current = root;
   let currentDepth = 1;
+  let currentPath: string[] = [];
 
   const spaces = (): void => {
     while (text[i] === " " || text[i] === "\t") i += 1;
@@ -447,6 +456,9 @@ function parseToml(text: string): ConfigTable {
       if (text[i] === '"') {
         if (text.startsWith('"""', i)) return null;
         path.push(basic());
+      } else if (text[i] === "'") {
+        if (text.startsWith("'''", i)) return null;
+        path.push(literal());
       } else {
         TOML_BARE.lastIndex = i;
         const m = TOML_BARE.exec(text);
@@ -643,6 +655,7 @@ function parseToml(text: string): ConfigTable {
       });
       current = table;
       currentDepth = d;
+      currentPath = path;
       continue;
     }
     const path = keyPath();
@@ -665,6 +678,8 @@ function parseToml(text: string): ConfigTable {
       ok = false;
     }
     if (!ok) {
+      // A skipped value must not silently move the target: wrangler would read it.
+      if (touchesTarget([...currentPath, ...path])) fail();
       i = valueStart;
       skipLine();
       continue;
@@ -803,13 +818,18 @@ function firstFixedRoute(candidates: ConfigValue[]): { route: WranglerRoute; url
  * route/routes, else the top-level ones (like wrangler).
  */
 export async function resolveTarget(dir: string, o: { env?: string; name?: string }): Promise<TargetResult> {
+  if (o.env !== undefined && !isWranglerName(o.env)) return { ok: false, state: "usage_error" };
+  if (o.name !== undefined && !isWranglerName(o.name)) return { ok: false, state: "usage_error" };
+  const read = await readWranglerConfig(dir);
+  if (!read.ok) return { ok: false, state: "config_unreadable" };
+  return targetFrom(read.config, dir, o);
+}
+
+function targetFrom(c: WranglerConfig, dir: string, o: { env?: string; name?: string }): TargetResult {
   const usage = { ok: false, state: "usage_error" } as const;
   const unreadable = { ok: false, state: "config_unreadable" } as const;
   if (o.env !== undefined && !isWranglerName(o.env)) return usage;
   if (o.name !== undefined && !isWranglerName(o.name)) return usage;
-  const read = await readWranglerConfig(dir);
-  if (!read.ok) return unreadable;
-  const c = read.config;
   let s: WranglerSection = c;
   if (o.env === undefined) {
     if (Object.keys(c.env).length >= 2) return { ok: false, state: "env_required" };
@@ -863,18 +883,25 @@ export interface Secrets {
  * ?? config.name` (wrangler 4.152.0, getLegacyScriptName), so `--name <name> --env <X>` would give
  * <name>-<X>-<X>. Hence: no env → `--name <name>`; <base>-<X> → `--name <base> --env <X>`; a name
  * from env.X.name → only `--env <X>`, after checking that the configuration still gives this name.
- * null: the target is refused (no start).
+ * wrangler looks for its configuration upwards per file type (wrangler.json in every parent folder
+ * before wrangler.jsonc, before wrangler.toml), so it could pick a parent's file over the one op8x
+ * read: when the worker folder has a configuration, `--config <its absolute path>` pins exactly
+ * that file. Without one, the name is pinned by `--name`. An unreadable configuration refuses the
+ * target. null: the target is refused (no start).
  */
 async function secretArgs(verb: "put" | "delete", t: SecretTarget): Promise<string[] | null> {
   if (!isWranglerName(t.name) || (t.env !== null && !isWranglerName(t.env))) return null;
+  const read = await readWranglerConfig(t.dir);
+  if (!read.ok) return null;
+  const pin = read.file === null ? [] : ["--config", read.file];
   const head = ["secret", verb, WRANGLER_SECRET];
-  if (t.env === null) return [...head, "--name", t.name];
+  if (t.env === null) return [...head, "--name", t.name, ...pin];
   const suffix = `-${t.env}`;
   const base = t.name.slice(0, -suffix.length);
-  if (t.name.endsWith(suffix) && isWranglerName(base)) return [...head, "--name", base, "--env", t.env];
-  const r = await resolveTarget(t.dir, { env: t.env });
-  if (!r.ok || r.target.name !== t.name) return null;
-  return [...head, "--env", t.env];
+  if (t.name.endsWith(suffix) && isWranglerName(base)) return [...head, "--name", base, "--env", t.env, ...pin];
+  const r = targetFrom(read.config, t.dir, { env: t.env });
+  if (!r.ok || r.target.name !== t.name || read.file === null) return null;
+  return [...head, "--env", t.env, ...pin];
 }
 
 /**

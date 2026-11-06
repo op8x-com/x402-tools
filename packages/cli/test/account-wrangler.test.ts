@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { generateKey } from "../src/account/keys.ts";
@@ -660,6 +660,9 @@ async function secretSetup(toml = `name = "api"\n[env.staging]\n[env.prod]\nname
   return { fake, deps, bin };
 }
 
+/** --config with the absolute path of the worker folder's own wrangler.toml. */
+const cfg = (fake: FakeWrangler, file = "wrangler.toml") => ["--config", join(resolve(fake.dir), file)];
+
 function jsonLines(deps: TestDeps): Record<string, unknown>[] {
   return deps
     .stdout()
@@ -675,7 +678,7 @@ test("secret put: argv after the table, K only on stdin without line end, never 
   const secrets = createSecrets(deps, output(deps));
   assert.equal(await secrets.put(bin, { dir: fake.dir, name: "api", env: null }, k), "ok");
   const call = fake.calls().at(-1)!;
-  assert.deepEqual(call.argv, ["secret", "put", "OP8X_KEY", "--name", "api"]);
+  assert.deepEqual(call.argv, ["secret", "put", "OP8X_KEY", "--name", "api", ...cfg(fake)]);
   assert.equal(call.stdin, k);
   assert.equal(call.stdinIsTTY, false);
   assert.ok(!call.argv.some((a) => a.includes(k)));
@@ -690,14 +693,14 @@ test("secret put with an environment: --name <name> --env <X> so that wrangler b
   const { fake, deps, bin } = await secretSetup();
   const secrets = createSecrets(deps, output(deps));
   assert.equal(await secrets.put(bin, { dir: fake.dir, name: "api-staging", env: "staging" }, generateKey("w")), "ok");
-  assert.deepEqual(fake.calls().at(-1)!.argv, ["secret", "put", "OP8X_KEY", "--name", "api", "--env", "staging"]);
+  assert.deepEqual(fake.calls().at(-1)!.argv, ["secret", "put", "OP8X_KEY", "--name", "api", "--env", "staging", ...cfg(fake)]);
 });
 
 test("secret put with env.X.name: only --env <X>, after checking the configuration still names it", async () => {
   const { fake, deps, bin } = await secretSetup();
   const secrets = createSecrets(deps, output(deps));
   assert.equal(await secrets.put(bin, { dir: fake.dir, name: "custom", env: "prod" }, generateKey("w")), "ok");
-  assert.deepEqual(fake.calls().at(-1)!.argv, ["secret", "put", "OP8X_KEY", "--env", "prod"]);
+  assert.deepEqual(fake.calls().at(-1)!.argv, ["secret", "put", "OP8X_KEY", "--env", "prod", ...cfg(fake)]);
   const n = fake.calls().length;
   fake.file("wrangler.toml", `name = "api"\n[env.prod]\nname = "renamed"`);
   assert.equal(await secrets.put(bin, { dir: fake.dir, name: "custom", env: "prod" }, generateKey("w")), "failed");
@@ -764,9 +767,9 @@ test("secret delete: argv after the table, no stdin data, exit code decides", as
   assert.deepEqual(
     calls.map((c) => c.argv),
     [
-      ["secret", "delete", "OP8X_KEY", "--name", "api"],
-      ["secret", "delete", "OP8X_KEY", "--name", "api", "--env", "staging"],
-      ["secret", "delete", "OP8X_KEY", "--env", "prod"],
+      ["secret", "delete", "OP8X_KEY", "--name", "api", ...cfg(fake)],
+      ["secret", "delete", "OP8X_KEY", "--name", "api", "--env", "staging", ...cfg(fake)],
+      ["secret", "delete", "OP8X_KEY", "--env", "prod", ...cfg(fake)],
     ],
   );
   assert.ok(calls.every((c) => c.stdin === "" && !c.stdinIsTTY));
@@ -777,3 +780,100 @@ test("secret delete: argv after the table, no stdin data, exit code decides", as
   await createSecrets(d2, output(d2)).remove(bin, { dir: fake.dir, name: "api", env: null });
   assert.equal(rec.calls[0]!.opts.input, undefined);
 });
+
+// --- fixes after review: pinned configuration file, skipped target keys, linked single files -----
+
+test("secret put/delete: --config pins the folder's own file although a parent folder has a wrangler.json", async () => {
+  const parent = tempDir();
+  writeFileSync(join(parent, "wrangler.json"), `{"name":"parent","env":{"prod":{"name":"parent-prod"}}}`);
+  const child = join(parent, "worker");
+  mkdirSync(child);
+  const fake = createFakeWrangler({ dir: child });
+  fake.file("wrangler.toml", `name = "api"\n[env.prod]\nname = "custom"\n[env.staging]`);
+  const deps = realDeps(baseEnv(), fake);
+  const bin = await found(fake, deps);
+  const secrets = createSecrets(deps, output(deps));
+  assert.equal(await secrets.put(bin, { dir: fake.dir, name: "custom", env: "prod" }, generateKey("w")), "ok");
+  assert.equal(await secrets.remove(bin, { dir: fake.dir, name: "api-staging", env: "staging" }), "ok");
+  assert.deepEqual(
+    fake.calls().map((c) => c.argv),
+    [
+      ["secret", "put", "OP8X_KEY", "--env", "prod", "--config", join(resolve(child), "wrangler.toml")],
+      ["secret", "delete", "OP8X_KEY", "--name", "api", "--env", "staging", "--config", join(resolve(child), "wrangler.toml")],
+    ],
+  );
+});
+
+test("secret put: without a configuration in the folder no --config (the name is pinned by --name)", async () => {
+  const parent = tempDir();
+  writeFileSync(join(parent, "wrangler.json"), `{"name":"parent"}`);
+  const child = join(parent, "worker");
+  mkdirSync(child);
+  const fake = createFakeWrangler({ dir: child });
+  const deps = realDeps(baseEnv(), fake);
+  const bin = await found(fake, deps);
+  const secrets = createSecrets(deps, output(deps));
+  assert.equal(await secrets.put(bin, { dir: fake.dir, name: "api", env: null }, generateKey("w")), "ok");
+  assert.deepEqual(fake.calls().at(-1)!.argv, ["secret", "put", "OP8X_KEY", "--name", "api"]);
+});
+
+test("secret put/delete: an unreadable configuration in the folder -> failed without a start", async () => {
+  const { fake, deps, bin } = await secretSetup();
+  fake.file("wrangler.toml", `name = "open`);
+  const secrets = createSecrets(deps, output(deps));
+  assert.equal(await secrets.put(bin, { dir: fake.dir, name: "api", env: null }, generateKey("w")), "failed");
+  assert.equal(await secrets.remove(bin, { dir: fake.dir, name: "api-staging", env: "staging" }), "failed");
+  assert.equal(fake.calls().length, 0);
+});
+
+test("config: a skipped TOML line that holds a key op8x reads -> config_unreadable", async () => {
+  const bad = [
+    `name = "api"\n[env.prod]\nname = """custom"""`,
+    `name = 1979-05-27`,
+    `name = "api"\nworkers_dev = 0.5`,
+    `name = "api"\nroutes = [ "a.example/*", 0.5 ]`,
+    `name = "api"\nroute = '''a.example/*'''`,
+    `name = "api"\n[[routes]]\npattern = """a.example/*"""`,
+    `name = "api"\nenv.staging.route = 1979-05-27`,
+    `name = "api"\n[env]\nstaging = 1979-05-27`,
+    `name = "api"\n[env.staging.routes]\nx = 0.5`,
+  ];
+  for (const toml of bad) {
+    assert.deepEqual(await readWranglerConfig(project({ "wrangler.toml": toml })), { ok: false, state: "config_unreadable" }, toml);
+  }
+  // Other keys may still be skipped.
+  const ok = await readWranglerConfig(project({ "wrangler.toml": `name = "api"\nnotes = """x"""\n[env.prod]\nmain = 1979-05-27\n[vars]\nname = 0.5` }));
+  assert.ok(ok.ok && ok.config.name === "api" && Object.keys(ok.config.env).join() === "prod");
+});
+
+test("config: TOML literal keys ('…') are read like wrangler reads them", async () => {
+  const r = await readWranglerConfig(project({ "wrangler.toml": `'name' = "api"\n[env.'prod']\n'name' = "custom"` }));
+  assert.ok(r.ok);
+  if (!r.ok) return;
+  assert.equal(r.config.name, "api");
+  assert.equal(r.config.env.prod!.name, "custom");
+});
+
+/** A file symlink, or false where the platform refuses it (Windows without the privilege). */
+function trySymlink(target: string, path: string): boolean {
+  try {
+    symlinkSync(target, path, "file");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+for (const which of ["bin/wrangler.js", "package.json"] as const) {
+  test(`findWrangler: only ${which} linked to a file outside the project -> wrangler_missing (A42)`, async (t) => {
+    const outside = createFakeWrangler();
+    const inner = createFakeWrangler();
+    const path = join(inner.dir, "node_modules", "wrangler", ...which.split("/"));
+    rmSync(path);
+    if (!trySymlink(join(outside.dir, "node_modules", "wrangler", ...which.split("/")), path)) {
+      t.skip("file symlinks are not allowed here");
+      return;
+    }
+    assert.deepEqual(await findWrangler(realDeps(), inner.dir), { ok: false, state: "wrangler_missing" });
+  });
+}
