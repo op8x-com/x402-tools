@@ -342,9 +342,23 @@ async function checkAcl(
     .replace(/^\uFEFF/, "")
     .split(/\r?\n/)
     .filter((l) => l !== "");
-  if (lines.length !== 2 || !new RegExp(`^D:P[A-Z]*\\(A;;FA;;;${sid}\\)$`).test(lines[1])) {
+  const trustee = lines.length === 2 ? /^D:P[A-Z]*\(A;;FA;;;([^;()]+)\)$/.exec(lines[1])?.[1] : undefined;
+  if (trustee === undefined || !sddlTrusteeIsSid(trustee, sid)) {
     throw new Error("the ACL is not limited to the current user");
   }
+}
+
+/**
+ * SDDL prints some well-known trustees as aliases instead of the literal SID. True if `trustee` is
+ * `sid` itself or the alias of exactly that SID: LA (built-in Administrator, RID 500), LG (built-in
+ * Guest, RID 501) or SY (S-1-5-18). Any other alias (BA, WD, ...) is a different, broader trustee.
+ */
+export function sddlTrusteeIsSid(trustee: string, sid: string): boolean {
+  if (trustee === sid) return true;
+  if (trustee === "LA") return /^S-1-5-21-\d+-\d+-\d+-500$/.test(sid);
+  if (trustee === "LG") return /^S-1-5-21-\d+-\d+-\d+-501$/.test(sid);
+  if (trustee === "SY") return sid === "S-1-5-18";
+  return false;
 }
 
 function errno(e: unknown): string | undefined {

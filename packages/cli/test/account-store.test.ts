@@ -7,6 +7,7 @@ import {
   deleteAccount,
   parseAccount,
   readAccount,
+  sddlTrusteeIsSid,
   StoreError,
   systemRootOf,
   workerId,
@@ -414,6 +415,56 @@ test("Windows: every failure of a helper or the ACL check is permissions_failed,
   }
 });
 
+const ADMIN_SID = "S-1-5-21-1111111111-2222222222-3333333333-500";
+
+function aliasRun(sid: string, trustee: string) {
+  const w = windowsExec({
+    whoami: { code: 0, stdout: `"desktop-x\\anna","${sid}"\r\n`, stderr: "" },
+    sddl: `D:PAI(A;;FA;;;${trustee})`,
+  });
+  return testDeps({ platform: "win32", env: { SystemRoot: "C:\\Windows" }, exec: w.exec });
+}
+
+test("Windows: the SDDL alias of the user's own SID is accepted (LA for -500, SY for S-1-5-18)", async () => {
+  const cases: [string, string, string][] = [
+    ["literal SID", SID, SID],
+    ["LA for a -500 SID", ADMIN_SID, "LA"],
+    ["SY for S-1-5-18", "S-1-5-18", "SY"],
+  ];
+  for (const [name, sid, trustee] of cases) {
+    const deps = aliasRun(sid, trustee);
+    await writeAccount(deps, full());
+    assert.deepEqual(readdirSync(deps.configDir), ["account.json"], name);
+  }
+});
+
+test("Windows: an alias that does not stand for the user's own SID is permissions_failed", async () => {
+  const cases: [string, string, string][] = [
+    ["LA for a -1001 SID", SID, "LA"],
+    ["LG for a -500 SID", ADMIN_SID, "LG"],
+    ["SY for a normal user", SID, "SY"],
+    ["BA", ADMIN_SID, "BA"],
+    ["WD", SID, "WD"],
+  ];
+  for (const [name, sid, trustee] of cases) {
+    const deps = aliasRun(sid, trustee);
+    assert.equal(await storeCodeAsync(writeAccount(deps, full())), "permissions_failed", name);
+    assert.deepEqual(existsSync(deps.configDir) ? readdirSync(deps.configDir) : [], [], name);
+  }
+});
+
+test("sddlTrusteeIsSid: exact mapping only", () => {
+  assert.equal(sddlTrusteeIsSid(SID, SID), true);
+  assert.equal(sddlTrusteeIsSid("LA", ADMIN_SID), true);
+  assert.equal(sddlTrusteeIsSid("LG", "S-1-5-21-1-2-3-501"), true);
+  assert.equal(sddlTrusteeIsSid("SY", "S-1-5-18"), true);
+  assert.equal(sddlTrusteeIsSid("LA", SID), false);
+  assert.equal(sddlTrusteeIsSid("LA", "S-1-5-32-500"), false);
+  assert.equal(sddlTrusteeIsSid("SY", ADMIN_SID), false);
+  assert.equal(sddlTrusteeIsSid("BA", "S-1-5-32-544"), false);
+  assert.equal(sddlTrusteeIsSid("WD", "S-1-1-0"), false);
+});
+
 test("Windows: rename with EPERM or EBUSY is retried three times with 200 ms pauses", async () => {
   for (const code of ["EPERM", "EBUSY"]) {
     const { deps } = windowsDeps();
@@ -486,5 +537,7 @@ test("Windows for real: icacls and whoami protect the file, and the saved SDDL h
   assert.equal(save.code, 0);
   const lines = readFileSync(saved).toString("utf16le").split(/\r?\n/).filter((l) => l !== "");
   assert.equal(lines.length, 2);
-  assert.match(lines[1], new RegExp(`^D:P[A-Z]*\\(A;;FA;;;${sid}\\)$`));
+  const trustee = /^D:P[A-Z]*\(A;;FA;;;([^;()]+)\)$/.exec(lines[1])?.[1];
+  assert.ok(trustee, `unexpected SDDL: ${lines[1]}`);
+  assert.ok(sddlTrusteeIsSid(trustee, sid), `trustee ${trustee} is not ${sid}`);
 });
