@@ -243,7 +243,7 @@ special case, listed after the first.
 | `not_available_yet` | `report` | 1 | Numbers are not available in this version yet. |
 | `network_error` | network, timeout, redirect, any 5xx except `503 busy`; waiting longer than 90 seconds | 2 | Check the connection and run the command again. |
 | `busy` | `503 busy` for longer than 2 minutes (retried every 10 seconds) | 2 | The service is busy; try again in a minute. |
-| `unexpected_response` | any other status or code, a body that is not JSON or has the wrong shape, a link that is not on the fixed host | 2 | op8x got an answer it does not expect (status {status}, code {code}). Update op8x and run the command again; if it stays, please report it. |
+| `unexpected_response` | any other status or code, a body that is not JSON or has the wrong shape, a `retry_after_s` over one day (86400), a link that is not on the fixed host | 2 | op8x got an answer it does not expect (status {status}, code {code}). Update op8x and run the command again; if it stays, please report it. |
 | `internal_error` | the output guard found a secret in a line, or a programming error | 2 | op8x stopped because of an internal error. Please report this. |
 | `usage_error` | unknown word or wrong option | 4 | (none; the help goes to stderr) |
 | `invalid_input` | the code is not 8 letters or digits | 4 | The code must be 8 letters or digits. Ask your human for the code from the mail and pass it again. |
@@ -382,10 +382,19 @@ address. A code is never taken from argv.
     removed, it is upper-cased, `I` and `L` become `1` and `O` becomes `0`; the
     result must be 8 characters of `0-9A-Z` without `I`, `L`, `O` and `U`, else
     `invalid_input`.
-*   A waiting step is kept on `code_invalid`, `invalid_input`,
-    `no_pending_step`, `network_error`, `busy` and `unexpected_response`, and
-    cleared by every other final state. A run without `--code-stdin` starts
-    over.
+*   A waiting step is cleared when the run of its command ends with one of
+    these states: `old_key_stopped`, `key_rotated`, `deleted`,
+    `deleted_partial`, `code_exhausted`, `code_expired`, `nothing_to_stop`,
+    `old_key_still_used` and `partial`. Every other final state keeps it, for
+    example `code_invalid`, `invalid_input`, `no_pending_step`,
+    `network_error`, `busy`, `unexpected_response` and `key_mismatch`. One
+    exception: when `rotate --now` ends with `old_key_still_used` because no
+    known worker can be tested, before any code was sent, the step stays.
+*   A run without `--code-stdin` starts over for its own command: it drops a
+    waiting step of that command (`rotate` or `delete`) and requests a new
+    code if it needs one. A waiting step of the other command stays until this
+    run stores its own waiting step, which replaces it (only one step waits at
+    a time).
 
 ## Rotating the key
 
