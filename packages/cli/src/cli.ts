@@ -84,6 +84,7 @@ Account commands (each takes --json for JSON Lines):
   op8x login            sign this computer in to your op8x account
   op8x logout              sign this computer out and remove its op8x file
   op8x import-key <path>   take the server key from the op8x file of your other computer
+  op8x rotate [--now]      replace the server key in every worker this computer knows
 `;
 
 function parse(argv: string[]) {

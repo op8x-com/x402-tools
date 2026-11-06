@@ -5,14 +5,17 @@ import { parseArgs } from "node:util";
 import type { ParseArgsOptionsConfig } from "node:util";
 import type { Deps, Io } from "../cli.ts";
 import { collectorBase, collectorMismatch, createApi } from "./api.ts";
-import type { Api, TenantView } from "./api.ts";
+import type { Api } from "./api.ts";
+import { fileSecrets, loadFile, resumeNextKey, signedIn, storeState, workerName, writeSlot } from "./common.ts";
+import type { Save } from "./common.ts";
 import { envFileAllowed, isoNow, upsertWorker, verifyWorker, workerLine, writeEnvKey } from "./connect.ts";
 import { deviceKeys, deviceLogin } from "./device.ts";
 import type { DeviceFailure, DeviceKeys } from "./device.ts";
-import { keyFingerprint, keyHash } from "./keys.ts";
+import { keyFingerprint } from "./keys.ts";
 import { createOutput, finalLine } from "./output.ts";
+import { ROTATE_USAGE, rotate } from "./rotate.ts";
 import type { AccountCommand, FinalState, Output } from "./output.ts";
-import { ACCOUNT_SCHEMA, StoreError, accountPath, deleteAccount, parseAccount, readAccount, writeAccount } from "./store.ts";
+import { ACCOUNT_SCHEMA, accountPath, deleteAccount, parseAccount, writeAccount } from "./store.ts";
 import type { AccountFile, ActiveAccount, WorkerEntry } from "./store.ts";
 import { cloudflareLoggedIn, createSecrets, findWrangler, isWranglerName, resolveTarget } from "./wrangler.ts";
 import type { SecretResult, WranglerBin, WranglerTarget } from "./wrangler.ts";
@@ -125,6 +128,20 @@ const COMMANDS: Record<AccountCommand, CommandSpec> = {
     valid: () => true,
     run: (v, deps, args) => importKey(v.json === true, deps, args[0] ?? ""),
   },
+  rotate: {
+    usage: ROTATE_USAGE,
+    options: {
+      json: { type: "boolean" },
+      now: { type: "boolean" },
+      "force-stop": { type: "boolean" },
+      "code-stdin": { type: "boolean" },
+    },
+    positionals: 0,
+    // --force-stop and --code-stdin only with --now.
+    valid: (v) => v.now === true || (v["force-stop"] === undefined && v["code-stdin"] === undefined),
+    run: (v, deps) =>
+      rotate(v.json === true, deps, { now: v.now === true, forceStop: v["force-stop"] === true, codeStdin: v["code-stdin"] === true }),
+  },
 };
 
 export function accountCommand(word: string): AccountCommand | undefined {
@@ -168,50 +185,6 @@ function usageError(command: AccountCommand, io: Io, json: boolean): number {
 function failWith(out: Output, failure: DeviceFailure): number {
   const { state, ...fields } = failure;
   return out.final(state, { extra: fields });
-}
-
-/** The secrets of an op8x file, for the output guard. */
-function fileSecrets(file: AccountFile | null): (string | null)[] {
-  return file === null ? [] : [file.read_token, file.write_key, file.write_key_next];
-}
-
-type Loaded = { ok: true; file: AccountFile | null } | { ok: false; state: FinalState };
-
-/**
- * The op8x file of this computer. A file that cannot be read or parsed stops the command with
- * import_failed (the fixed sentence "could not be read as an op8x file"); its content and the
- * parser's message are never shown (A16), and it is left as it is.
- */
-async function loadFile(deps: Deps): Promise<Loaded> {
-  try {
-    return { ok: true, file: await readAccount(deps) };
-  } catch (e) {
-    return { ok: false, state: e instanceof StoreError && e.code === "permissions_failed" ? "permissions_failed" : "import_failed" };
-  }
-}
-
-type SignedIn = { ok: true; base: string; file: ActiveAccount } | { ok: false; exit: number };
-
-/**
- * For commands that need a signed-in computer: the collector base, then the file. No file or a
- * remainder file → not_logged_in; a file made for another base → collector_mismatch. Nothing is sent.
- */
-async function signedIn(deps: Deps, out: Output, hold: (f: AccountFile | null) => void): Promise<SignedIn> {
-  const base = collectorBase(deps.env);
-  if (base === null) return { ok: false, exit: out.final("collector_url_not_allowed") };
-  const loaded = await loadFile(deps);
-  if (!loaded.ok) return { ok: false, exit: out.final(loaded.state) };
-  hold(loaded.file);
-  const file = loaded.file;
-  if (file === null || file.deleted !== null) return { ok: false, exit: out.final("not_logged_in") };
-  if (collectorMismatch(file, base)) return { ok: false, exit: out.final("collector_mismatch") };
-  return { ok: true, base, file };
-}
-
-/** A StoreError while writing or removing the op8x file. */
-function storeState(e: unknown): FinalState {
-  if (e instanceof StoreError) return e.code === "permissions_failed" ? "permissions_failed" : "internal_error";
-  return "permissions_failed";
 }
 
 // --- init -------------------------------------------------------------------------------------
@@ -392,11 +365,6 @@ async function init(json: boolean, deps: Deps, o: InitOptions): Promise<number> 
   });
 }
 
-/** The name of a worker in a hint: wrangler name (with env), or the env file. */
-function workerName(w: Pick<WorkerEntry, "name" | "env" | "env_file">): string {
-  return w.env_file ?? `${w.name ?? ""}${w.env === null ? "" : ` (env ${w.env})`}`;
-}
-
 type FoundPlace =
   | { ok: true; place: Place }
   | { ok: false; state: "wrangler_missing" | "wrangler_too_old" | "cloudflare_login_needed" | "config_unreadable" | "env_required" | "usage_error" };
@@ -426,45 +394,20 @@ async function putKey(deps: Deps, out: Output, place: Place, key: string): Promi
 type CurrentKey = { ok: true; key: string } | { ok: false; exit: number };
 
 /**
- * K of a signed-in computer, checked against the account (E1). write_key_next first: is it the
- * current key, it becomes write_key; else the same POST rotate again (409 key_conflict drops it and
- * ends with key_conflict). Then: no K → server_key_missing (a running rotation gives the rotate --now
- * variant); K not the current key → key_mismatch.
+ * K of a signed-in computer, checked against the account (E1), after the resumption of
+ * write_key_next. No K → server_key_missing (a running rotation gives the rotate --now variant);
+ * K not the current key → key_mismatch.
  */
-async function currentKey(
-  deps: Deps,
-  api: Api,
-  out: Output,
-  file: ActiveAccount,
-  save: (next: ActiveAccount) => Promise<FinalState | null>,
-): Promise<CurrentKey> {
+async function currentKey(deps: Deps, api: Api, out: Output, file: ActiveAccount, save: Save): Promise<CurrentKey> {
   const fail = (exit: number): CurrentKey => ({ ok: false, exit });
-  let view = await api.tenant(file.read_token);
-  if (!view.ok) return fail(out.error(view.error));
-  let now = file;
-  const currentFp = (v: TenantView) => v.keys.find((k) => k.kind === "write" && k.slot === "current")?.fingerprint;
-  if (now.write_key_next !== null) {
-    const next = now.write_key_next;
-    if (currentFp(view.value) !== keyFingerprint(next)) {
-      const rotated = await api.rotate(now.read_token, { newHash: keyHash(next) });
-      if (!rotated.ok) {
-        if (rotated.error.state !== "key_conflict") return fail(out.error(rotated.error));
-        const dropped = await save({ ...now, write_key_next: null });
-        return fail(out.final(dropped ?? "key_conflict"));
-      }
-    }
-    const promoted = { ...now, write_key: next, write_key_next: null };
-    const failed = await save(promoted);
-    if (failed !== null) return fail(out.final(failed));
-    now = promoted;
-    view = await api.tenant(now.read_token);
-    if (!view.ok) return fail(out.error(view.error));
-  }
+  const resumed = await resumeNextKey(api, out, file, save);
+  if (!resumed.ok) return fail(resumed.exit);
+  const { file: now, view } = resumed;
   if (now.write_key === null) {
-    const rotating = view.value.keys.some((k) => k.kind === "write" && k.slot === "previous");
+    const rotating = writeSlot(view, "previous") !== undefined;
     return fail(out.final("server_key_missing", { extra: { path: accountPath(deps) }, hint: { rotation_running: rotating } }));
   }
-  if (currentFp(view.value) !== keyFingerprint(now.write_key)) return fail(out.final("key_mismatch"));
+  if (writeSlot(view, "current")?.fingerprint !== keyFingerprint(now.write_key)) return fail(out.final("key_mismatch"));
   return { ok: true, key: now.write_key };
 }
 
