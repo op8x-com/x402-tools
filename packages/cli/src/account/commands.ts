@@ -6,7 +6,7 @@ import type { ParseArgsOptionsConfig } from "node:util";
 import type { Deps, Io } from "../cli.ts";
 import { collectorBase, collectorMismatch, createApi } from "./api.ts";
 import type { Api } from "./api.ts";
-import { fileSecrets, loadFile, resumeNextKey, settleReplacedNext, signedIn, storeState, workerName, writeSlot } from "./common.ts";
+import { fileSecrets, loadFile, resumeNextKey, settleReplacedNext, settledNext, signedIn, storeState, workerName, writeSlot } from "./common.ts";
 import type { Save } from "./common.ts";
 import { envFileAllowed, isoNow, upsertWorker, verifyWorker, workerLine, writeEnvKey } from "./connect.ts";
 import { deviceKeys, deviceLogin } from "./device.ts";
@@ -420,13 +420,14 @@ async function putKey(deps: Deps, out: Output, place: Place, key: string): Promi
 type CurrentKey = { ok: true; key: string } | { ok: false; exit: number };
 
 /**
- * K of a signed-in computer, checked against the account (E1), after the resumption of
- * write_key_next. No K → server_key_missing (a running rotation gives the rotate --now variant);
- * K not the current key → key_mismatch.
+ * K of a signed-in computer, checked against the account's current key, after write_key_next is
+ * settled (promoted if it is the current key, else dropped without a request). No K →
+ * server_key_missing (a running rotation gives the rotate --now variant); K not the current key →
+ * key_mismatch.
  */
 async function currentKey(deps: Deps, api: Api, out: Output, file: ActiveAccount, save: Save): Promise<CurrentKey> {
   const fail = (exit: number): CurrentKey => ({ ok: false, exit });
-  const resumed = await resumeNextKey(api, out, file, save);
+  const resumed = await resumeNextKey(api, out, file, save, { resend: false });
   if (!resumed.ok) return fail(resumed.exit);
   const { file: now, view } = resumed;
   if (now.write_key === null) {
@@ -601,8 +602,11 @@ async function importKey(json: boolean, deps: Deps, path: string): Promise<numbe
     return out.final(slot === "previous" ? "key_previous" : "key_mismatch");
   }
   if (out.stopped) return out.final("internal_error");
+  // The imported K is the current key: a next K of this computer is obsolete (it must never be
+  // sent later), and a waiting replace_current step is settled with it. Other waiting steps stay.
+  const settled = s.file.pending_step_up?.purpose === "replace_current" ? settledNext(s.file, r.value) : s.file;
   try {
-    await writeAccount(deps, { ...s.file, write_key: imported });
+    await writeAccount(deps, { ...settled, write_key: imported, write_key_next: null });
   } catch (e) {
     out.end("failed");
     return out.final(storeState(e));

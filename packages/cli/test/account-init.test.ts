@@ -477,24 +477,73 @@ test("write_key_next that is already current becomes write_key, then init goes o
   assert.equal(s.fake.requests.some((r) => r.route === "rotate"), false);
 });
 
-test("write_key_next not yet current: the same POST rotate again, then init goes on with the new key", async (t) => {
+test("init after a rotate whose request was lost: the next K is discarded without POST rotate, known workers keep working", async (t) => {
   const s = await setup(t);
-  const read = generateKey("r");
-  const old = generateKey("w");
-  const next = generateKey("w");
-  const tenant = s.fake.addTenant({ readKey: read, writeKey: old, contactHint: CONTACT });
-  await writeAccount(s.deps, active(s.fake.url, { account: tenant.name, read_token: read, write_key: old, write_key_next: next }));
+  const elsewhere = tempDir();
+  const envFile = join(elsewhere, "op8x-secrets");
+  const a = await signedIn(s);
+  writeFileSync(envFile, `OP8X_KEY=${a.write}\n`);
+  const known: WorkerEntry = {
+    dir: elsewhere,
+    name: null,
+    env: null,
+    env_file: envFile,
+    url: null,
+    deployed_at: "2026-11-01T00:00:00Z",
+    verified_at: null,
+    key_fingerprint: keyFingerprint(a.write),
+  };
+  await writeAccount(s.deps, { ...a.file, workers: [known] });
+  // rotate: the request never reaches the collector, so the next K stays in the file.
+  s.fake.respond("rotate", "drop");
+  assert.equal(await run(["rotate", "--json"], s.deps), 2);
+  const orphan = s.file().write_key_next;
+  assert.notEqual(orphan, null);
+  assert.equal(a.tenant.write, keyHash(a.write));
+
+  const before = s.fake.requests.length;
   assert.equal(await run(["init", "--json", "--url", s.url], s.deps), 0);
-  const rotate = s.fake.requests.filter((r) => r.route === "rotate");
-  assert.equal(rotate.length, 1);
-  assert.deepEqual(JSON.parse(rotate[0]!.body), { kind: "write", new_sha256: keyHash(next) });
+  assert.equal(s.final().state, "connected");
+  assert.equal(s.fake.requests.slice(before).some((r) => r.route === "rotate"), false);
   const f = s.file();
-  assert.equal(f.write_key, next);
+  assert.equal(f.write_key, a.write);
   assert.equal(f.write_key_next, null);
-  assert.equal(s.putKey(), next);
+  assert.equal(s.putKey(), a.write);
+  // The server still has K as its only key, and the known worker still holds it.
+  assert.equal(a.tenant.write, keyHash(a.write));
+  assert.equal(a.tenant.prev, null);
+  assert.equal(f.workers.find((w) => w.env_file === envFile)?.key_fingerprint, keyFingerprint(a.write));
+  assert.equal(readFileSync(envFile, "utf8"), `OP8X_KEY=${a.write}\n`);
+  assertNoSecret(s, [a.read, a.write, orphan]);
 });
 
-test("write_key_next whose rotate repeat hits 409 key_conflict is dropped, init ends with key_conflict", async (t) => {
+test("two computers: import-key of the other's current K, then init sends no POST rotate for an old next K", async (t) => {
+  const s = await setup(t);
+  // This computer: an old K and a next K whose rotate never reached the collector; the other
+  // computer rotated meanwhile, so the account's current key is the other computer's K.
+  const staleKey = generateKey("w");
+  const orphan = generateKey("w");
+  const a = await signedIn(s, { file: { write_key: staleKey, write_key_next: orphan } });
+  const otherDir = tempDir();
+  const otherFile = join(otherDir, "other.json");
+  writeFileSync(otherFile, JSON.stringify({ ...a.file, collector: "https://analytics.op8x.com", read_token: generateKey("r"), write_key: a.write, write_key_next: null }));
+
+  assert.equal(await run(["import-key", otherFile, "--json"], s.deps), 0);
+  assert.equal(s.final().state, "imported");
+  assert.equal(s.file().write_key, a.write);
+  assert.equal(s.file().write_key_next, null);
+
+  const before = s.fake.requests.length;
+  assert.equal(await run(["init", "--json", "--url", s.url], s.deps), 0);
+  assert.equal(s.final().state, "connected");
+  assert.equal(s.fake.requests.slice(before).some((r) => r.route === "rotate"), false);
+  assert.equal(s.putKey(), a.write);
+  assert.equal(a.tenant.write, keyHash(a.write));
+  assert.equal(a.tenant.prev, null);
+  assertNoSecret(s, [a.read, a.write, staleKey, orphan]);
+});
+
+test("init with a next K that is not current: discarded without any request, even when a rotate would conflict", async (t) => {
   const s = await setup(t);
   const read = generateKey("r");
   const old = generateKey("w");
@@ -502,12 +551,13 @@ test("write_key_next whose rotate repeat hits 409 key_conflict is dropped, init 
   const next = generateKey("w");
   await writeAccount(s.deps, active(s.fake.url, { account: tenant.name, read_token: read, write_key: old, write_key_next: next }));
   s.fake.respond("rotate", { status: 409, headers: { "content-type": "application/problem+json" }, body: JSON.stringify({ type: "https://op8x.com/errors/key_conflict", title: "x", status: 409, code: "key_conflict" }) });
-  assert.equal(await run(["init", "--json", "--url", s.url], s.deps), 1);
-  assert.equal(s.final().state, "key_conflict");
+  assert.equal(await run(["init", "--json", "--url", s.url], s.deps), 0);
+  assert.equal(s.final().state, "connected");
+  assert.equal(s.fake.requests.some((r) => r.route === "rotate"), false);
   const f = s.file();
   assert.equal(f.write_key, old);
   assert.equal(f.write_key_next, null);
-  assert.equal(s.wrangler.calls().length, 0);
+  assert.equal(s.putKey(), old);
 });
 
 // --- output guard ----------------------------------------------------------------------------------

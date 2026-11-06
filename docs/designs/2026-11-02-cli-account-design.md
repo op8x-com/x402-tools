@@ -310,8 +310,13 @@ Schema `op8x.account/1`, with every secret value replaced here:
     names. (`init` and `login` replace the rest file of an interrupted delete
     without this check.)
 *   `write_key_next` holds a new server key before op8x has accepted it. A run
-    that finds it first asks op8x whether it became current, else repeats the
-    exact same request; so an interrupted rotation never loses a key.
+    that finds it first asks op8x whether it became current; if so, it becomes
+    `write_key`. Otherwise only `rotate` repeats the exact same request, because
+    it then puts the key into every known worker; so an interrupted rotation
+    never loses a key. `init` drops it without sending anything, so an `init`
+    after a lost rotation never makes a key current that the known workers do
+    not hold. `import-key` drops it too once the imported key is the current
+    one, and settles a waiting `replace_current` step.
 *   `pending_step_up` is `{purpose, command, case, phase, force_stop, t_check,
     expires_at}` while a step waits for a mail code, else null.
 *   A worker is identified by `dir`, `name` and `env`, or by `env_file` alone.

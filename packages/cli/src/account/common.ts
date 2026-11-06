@@ -90,15 +90,17 @@ export function settledNext(file: ActiveAccount, view: TenantView): ActiveAccoun
 export type Resumed = { ok: true; file: ActiveAccount; view: TenantView } | { ok: false; exit: number };
 
 /**
- * GET /tenant, with the resumption of write_key_next first: is it the
- * account's current key, it becomes write_key (a waiting step replace_current is then done and
- * goes too); else the exact same POST rotate again (idempotent at the collector). 409 key_conflict
- * drops it and ends the command with key_conflict; rotation_pending (the collector never took it)
- * drops it and the command goes on.
+ * GET /tenant, with the resumption of write_key_next first: is it the account's current key, it
+ * becomes write_key (a waiting step replace_current is then done and goes too). Otherwise:
+ * - `resend` (rotate, which then puts the key into every known worker): the exact same POST rotate
+ *   again (idempotent at the collector). 409 key_conflict drops it and ends the command with
+ *   key_conflict; rotation_pending (the collector never took it) drops it and the command goes on.
+ * - without `resend` (init): it is dropped without any request. Sending it here would make it the
+ *   current key while the known workers still hold the old one.
  * A next K of a waiting step replace_current is left for the continuation (it was never sent
  * without its code).
  */
-export async function resumeNextKey(api: Api, out: Output, file: ActiveAccount, save: Save): Promise<Resumed> {
+export async function resumeNextKey(api: Api, out: Output, file: ActiveAccount, save: Save, o: { resend: boolean }): Promise<Resumed> {
   const fail = (exit: number): Resumed => ({ ok: false, exit });
   const view = await api.tenant(file.read_token);
   if (!view.ok) return fail(out.error(view.error));
@@ -108,6 +110,12 @@ export async function resumeNextKey(api: Api, out: Output, file: ActiveAccount, 
   const waitingReplace = file.pending_step_up?.purpose === "replace_current";
   if (!isCurrent) {
     if (waitingReplace) return { ok: true, file, view: view.value };
+    if (!o.resend) {
+      const discarded: ActiveAccount = { ...file, write_key_next: null };
+      const failed = await save(discarded);
+      if (failed !== null) return fail(out.final(failed));
+      return { ok: true, file: discarded, view: view.value };
+    }
     const rotated = await api.rotate(file.read_token, { newHash: keyHash(next) });
     if (!rotated.ok) {
       const e = rotated.error;

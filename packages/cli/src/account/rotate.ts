@@ -148,7 +148,7 @@ type Started = { ok: true; view: TenantView; stored: PendingStepUp | null } | { 
  */
 async function freshStart(ctx: Ctx): Promise<Started> {
   const stored = ctx.file.pending_step_up;
-  const resumed = await resumeNextKey(ctx.api, ctx.out, ctx.file, ctx.save);
+  const resumed = await resumeNextKey(ctx.api, ctx.out, ctx.file, ctx.save, { resend: true });
   if (!resumed.ok) return resumed;
   const p = ctx.file.pending_step_up;
   if (p !== null && p.command === "rotate") {

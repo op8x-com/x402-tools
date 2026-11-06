@@ -5,7 +5,7 @@ import { test } from "node:test";
 import type { TestContext } from "node:test";
 import { generateKey } from "../src/account/keys.ts";
 import { accountPath, writeAccount } from "../src/account/store.ts";
-import type { AccountFile, ActiveAccount } from "../src/account/store.ts";
+import type { AccountFile, ActiveAccount, PendingStepUp } from "../src/account/store.ts";
 import { run } from "../src/cli.ts";
 import { tempDir, testDeps } from "./account-deps.ts";
 import { startFakeCollector } from "./fake-collector.ts";
@@ -203,6 +203,47 @@ test("import-key replaces a different local K only when the imported one is curr
   assert.equal(await run(["import-key", s.other(s.current), "--json"], s.deps), 0);
   assert.equal((JSON.parse(s.read()) as ActiveAccount).write_key, s.current);
   for (const k of [stale, s.current]) assert.equal(s.deps.stdout().includes(k), false);
+});
+
+test("import-key drops a next K of this computer once the imported K is the current key", async (t) => {
+  const s = await setup(t);
+  const orphan = generateKey("w");
+  await writeAccount(s.deps, { ...s.local, write_key: generateKey("w"), write_key_next: orphan });
+  assert.equal(await run(["import-key", s.other(s.current), "--json"], s.deps), 0);
+  const f = JSON.parse(s.read()) as ActiveAccount;
+  assert.equal(f.write_key, s.current);
+  assert.equal(f.write_key_next, null);
+  assert.equal(f.pending_step_up, null);
+  assert.equal(s.fake.requests.length, 1);
+  assert.equal(s.deps.stdout().includes(orphan), false);
+});
+
+test("import-key settles a waiting replace_current step with its next K; a waiting delete step stays", async (t) => {
+  const pending = (purpose: "replace_current" | "delete"): PendingStepUp => ({
+    purpose,
+    command: purpose === "delete" ? "delete" : "rotate",
+    case: purpose === "delete" ? null : "c",
+    phase: purpose === "delete" ? "delete" : "replace",
+    force_stop: false,
+    t_check: null,
+    expires_at: "2099-01-01T00:00:00Z",
+  });
+  const s = await setup(t);
+  await writeAccount(s.deps, { ...s.local, write_key: s.previous, write_key_next: generateKey("w"), pending_step_up: pending("replace_current") });
+  assert.equal(await run(["import-key", s.other(s.current), "--json"], s.deps), 0);
+  let f = JSON.parse(s.read()) as ActiveAccount;
+  assert.equal(f.write_key, s.current);
+  assert.equal(f.write_key_next, null);
+  assert.equal(f.pending_step_up, null);
+  assert.equal(s.fake.requests.length, 1);
+
+  const d = await setup(t);
+  const waiting = pending("delete");
+  await writeAccount(d.deps, { ...d.local, pending_step_up: waiting });
+  assert.equal(await run(["import-key", d.other(d.current), "--json"], d.deps), 0);
+  f = JSON.parse(d.read()) as ActiveAccount;
+  assert.equal(f.write_key, d.current);
+  assert.deepEqual(f.pending_step_up, waiting);
 });
 
 test("import-key needs exactly one path", async (t) => {
