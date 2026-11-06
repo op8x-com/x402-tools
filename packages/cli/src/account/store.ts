@@ -261,7 +261,7 @@ const RENAME_PAUSE_MS = 200;
 export async function writeSecureFile(
   deps: Pick<Deps, "platform" | "env" | "exec" | "sleep">,
   target: string,
-  content: string,
+  content: string | Uint8Array,
   options: WriteOptions & { ownDir: boolean },
 ): Promise<void> {
   const dir = dirname(target);
