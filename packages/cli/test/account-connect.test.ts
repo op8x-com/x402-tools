@@ -30,7 +30,7 @@ import type { WorkerMode } from "./fake-worker.ts";
 
 type Line = Record<string, unknown>;
 
-// --- host guard (A41) ----------------------------------------------------------------------------
+// --- host guard ----------------------------------------------------------------------------
 
 test("isBlockedAddress: private, loopback, link-local, ULA, CGNAT, unspecified, multicast and mapped addresses", () => {
   const blocked = [
@@ -246,7 +246,7 @@ test("withEnvKey: appends or replaces OP8X_KEY and keeps every other byte", () =
   assert.equal(result.subarray(raw.length).toString(), `OP8X_KEY=${key}\n`);
 });
 
-// --- git check (A46), recorded exec ------------------------------------------------------------------
+// --- git check, recorded exec ------------------------------------------------------------------
 
 /** A folder with an empty file named like git, for PATH. */
 function fakeGitDir(platform: NodeJS.Platform): { dir: string; git: string } {

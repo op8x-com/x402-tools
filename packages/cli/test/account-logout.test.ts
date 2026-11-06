@@ -71,7 +71,7 @@ test("logout revokes R with POST sign-out {} and Bearer R, then deletes the file
   assert.deepEqual(s.fake.violations, []);
 });
 
-test("logout with a local K: notice logout_removes_key before the file goes (A11)", async (t) => {
+test("logout with a local K: notice logout_removes_key before the file goes", async (t) => {
   for (const o of [{ key: true }, { next: true }]) {
     const s = await setup(t, o);
     assert.equal(await run(["logout", "--json"], s.deps), 0);

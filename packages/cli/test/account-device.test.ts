@@ -112,7 +112,7 @@ test("openerFor: macOS runs /usr/bin/open; Linux runs xdg-open from PATH with on
   assert.equal(openerFor(testDeps({ platform: "linux", env: {} }), LINK), null);
 });
 
-test("openerFor opens only the collector's checked link (A43)", () => {
+test("openerFor opens only the collector's checked link", () => {
   const deps = testDeps({ platform: "win32", env: { SystemRoot: "C:\\Windows" } });
   for (const url of [
     "https://analytics.op8x.com/link/short",
@@ -401,7 +401,7 @@ test("device/start errors end the flow before any link or browser", async (t) =>
     assert.equal(s.deps.stdout(), "");
     assert.equal(s.exec.calls.length, 0);
   }
-  // A link from another host is unexpected_response (A43), nothing is opened.
+  // A link from another host is unexpected_response, nothing is opened.
   const s = await session(t);
   s.fake.respond("device_start", {
     status: 201,

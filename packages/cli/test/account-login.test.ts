@@ -74,7 +74,7 @@ const worker = {
   key_fingerprint: "1a2b3c4d",
 };
 
-test("login without a file: device login with mode login, writes a new op8x file, connected with contact_hint (A1)", async (t) => {
+test("login without a file: device login with mode login, writes a new op8x file, connected with contact_hint", async (t) => {
   const s = await setup(t);
   const t0 = s.fake.addTenant({ readKey: generateKey("r"), contactHint: "a***@acme.example" });
   onFirstPoll(s.fake, () => s.fake.grant({ tenant: t0.name }));

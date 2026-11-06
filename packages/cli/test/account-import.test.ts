@@ -111,7 +111,7 @@ test("import-key with the previous key: key_previous; with an unknown key: key_m
   }
 });
 
-test("import-key on broken or foreign files: import_failed, nothing sent, no byte of the file printed (A16)", async (t) => {
+test("import-key on broken or foreign files: import_failed, nothing sent, no byte of the file printed", async (t) => {
   const fakeSecret = "op8x_w_" + "Z".repeat(43);
   const other = "sk_live_" + "Q".repeat(24);
   const dir = tempDir();

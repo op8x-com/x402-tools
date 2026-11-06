@@ -19,7 +19,7 @@ type Loaded = { ok: true; file: AccountFile | null } | { ok: false; state: Final
 /**
  * The op8x file of this computer. A file that cannot be read or parsed stops the command with
  * import_failed (the fixed sentence "could not be read as an op8x file"); its content and the
- * parser's message are never shown (A16), and it is left as it is.
+ * parser's message are never shown (they may hold a secret), and it is left as it is.
  */
 export async function loadFile(deps: Deps): Promise<Loaded> {
   try {

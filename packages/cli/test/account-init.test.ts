@@ -21,7 +21,7 @@ import type { FakeWorker, WorkerMode } from "./fake-worker.ts";
 type Line = Record<string, unknown>;
 
 const CONTACT = "a***@acme.example";
-const A1 = "Tell your human which address this account belongs to; if it is not theirs, run op8x logout.";
+const CHECK_ADDRESS = "Tell your human which address this account belongs to; if it is not theirs, run op8x logout.";
 
 interface Setup {
   fake: FakeCollector;
@@ -126,7 +126,7 @@ const sameDir = (a: string, b: string) => realpathSync.native(a) === realpathSyn
 
 // --- first init ---------------------------------------------------------------------------------
 
-test("first init: cloudflare, browser, key, test until connected with contact_hint and the A1 sentence", async (t) => {
+test("first init: cloudflare, browser, key, test until connected with contact_hint and the sentence that asks to check the address", async (t) => {
   const s = await setup(t);
   onFirstPoll(s.fake, () => s.fake.grant({ contactHint: CONTACT }));
   assert.equal(await run(["init", "--json", "--url", s.url], s.deps), 0);
@@ -155,7 +155,7 @@ test("first init: cloudflare, browser, key, test until connected with contact_hi
   assert.equal(final.exit_code, 0);
   assert.equal(final.account, f.account);
   assert.equal(final.contact_hint, CONTACT);
-  assert.equal(final.agent_hint, `op8x is connected to account ${f.account} (${CONTACT}). ${A1}`);
+  assert.equal(final.agent_hint, `op8x is connected to account ${f.account} (${CONTACT}). ${CHECK_ADDRESS}`);
   assert.deepEqual(final.workers, [{ name: "api", env: null, env_file: null, status: "verified" }]);
   assert.deepEqual((final.steps as Line[]).map((x) => x.name), ["cloudflare", "browser", "key", "test"]);
 
@@ -187,7 +187,7 @@ test("first init in text mode shows Step n of 4 and the connected sentence", asy
   assert.match(out, /^Step 1 of 4: cloudflare\n/);
   assert.match(out, /Step 4 of 4: test ok \(\d+ ms\)\n/);
   assert.match(out, /Worker api: verified\n/);
-  assert.ok(out.endsWith(`${A1}\n`));
+  assert.ok(out.endsWith(`${CHECK_ADDRESS}\n`));
 });
 
 test("first init writes the op8x file after granted and before wrangler (put fails → partial, file holds K)", async (t) => {
@@ -351,7 +351,7 @@ test("no --url and no fixed-domain route: K is put, the worker stored with url n
   assert.equal(s.fake.requests.some((r) => r.route === "test_nonce"), false);
 });
 
-test("a route whose host resolves to a private address is not tested (A41): url_required, no nonce, no request", async (t) => {
+test("a route whose host resolves to a private address is not tested: url_required, no nonce, no request", async (t) => {
   const s = await setup(t, { config: 'name = "api"\nroute = "api.example/paid*"\n', deps: { lookup: async () => ["93.184.216.34", "10.0.0.8"] } });
   let fetched = 0;
   s.deps.fetchImpl = async (input, init) => {
@@ -390,7 +390,7 @@ test("409 no_write_key at test-nonce ends with server_key_missing and the catalo
   assert.equal(s.worker.requests.length, 0);
 });
 
-// --- signed in (CUJ 2) -------------------------------------------------------------------------------
+// --- signed in -------------------------------------------------------------------------------
 
 test("second init on a signed-in computer: no browser, steps key and test; the same folder updates its entry", async (t) => {
   const s = await setup(t);

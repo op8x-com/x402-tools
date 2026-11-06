@@ -6,7 +6,7 @@ import { generateKey, keyFingerprint, keyHash } from "./keys.ts";
 import type { Output } from "./output.ts";
 import { systemRootOf } from "./store.ts";
 
-// The device login (data flow 2-6): make D, R (and K for init), POST device/start, show the link
+// The device login: make D, R (and K for init), POST device/start, show the link
 // and the words, open the browser, then poll device/token with Bearer D at the server's interval
 // until the human allows or denies, the server says expired, or 20 minutes pass. The collector
 // extends a flow to 15 minutes once the code mail is out, so the start answer's expires_at is never

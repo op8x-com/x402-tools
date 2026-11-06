@@ -105,7 +105,7 @@ test("findWrangler: package.json that is not JSON or is too big -> wrangler_miss
   assert.deepEqual(await findWrangler(realDeps(), fake.dir), { ok: false, state: "wrangler_missing" });
 });
 
-test("findWrangler: node_modules/wrangler linked to a folder outside the project -> wrangler_missing (A42)", async () => {
+test("findWrangler: node_modules/wrangler linked to a folder outside the project -> wrangler_missing", async () => {
   const outside = createFakeWrangler();
   const project = tempDir();
   mkdirSync(join(project, "node_modules"));
@@ -904,7 +904,7 @@ function trySymlink(target: string, path: string): boolean {
 }
 
 for (const which of ["bin/wrangler.js", "package.json"] as const) {
-  test(`findWrangler: only ${which} linked to a file outside the project -> wrangler_missing (A42)`, async (t) => {
+  test(`findWrangler: only ${which} linked to a file outside the project -> wrangler_missing`, async (t) => {
     const outside = createFakeWrangler();
     const inner = createFakeWrangler();
     const path = join(inner.dir, "node_modules", "wrangler", ...which.split("/"));

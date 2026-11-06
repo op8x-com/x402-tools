@@ -84,8 +84,8 @@ function tooOld(version: RegExpExecArray): boolean {
 
 /**
  * The wrangler of the project in `dir`: only `<dir>/node_modules/wrangler/bin/wrangler.js`, whose
- * real path lies inside the real path of `dir`, in a package named `wrangler` (A42). No search in
- * parent folders. Version ≥ 4.152.0 and Node ≥ 22, else wrangler_too_old.
+ * real path lies inside the real path of `dir`, in a package named `wrangler`, so a link
+ * cannot run a program from elsewhere. No search in parent folders. Version ≥ 4.152.0 and Node ≥ 22, else wrangler_too_old.
  */
 export async function findWrangler(deps: Pick<Deps, "nodeVersion">, dir: string): Promise<FindResult> {
   const missing = { ok: false, state: "wrangler_missing" } as const;

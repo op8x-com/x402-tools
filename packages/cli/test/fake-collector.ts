@@ -5,8 +5,8 @@ import type { AddressInfo } from "node:net";
 import { TEST_NOW } from "./account-deps.ts";
 
 // A fake op8x collector for the account commands: a real HTTP server on 127.0.0.1 that answers
-// like the collector's /api/v1 device and tenant routes (contract in the plan, amended by the
-// real collector code). Not a test file itself, like server.ts.
+// like the collector's /api/v1 device and tenant routes (the contract of the
+// real collector). Not a test file itself, like server.ts.
 //
 // Clock: the fake has its own virtual clock (`now()`, start TEST_NOW), moved only by `advance(ms)`
 // or `setNow(ms)`. Tests usually wire `deps.now = fake.now` and `deps.sleep = async (ms) => fake.advance(ms)`.

@@ -228,13 +228,14 @@ type Place =
   | { kind: "env_file"; path: string };
 
 /**
- * op8x init (data flow 1-9). Without an op8x file (a remainder file counts as none): step
- * cloudflare (the project's wrangler, the Cloudflare login, the worker), step browser (device login
- * with mode init and write_sha256), the op8x file is written right after granted and before
- * wrangler; server_key ignored ends with server_key_missing (E1). On a signed-in computer (CUJ 2)
- * only key and test: write_key_next is resumed first, then K must be the account's current key.
- * Step key puts K (wrangler secret put, or the line OP8X_KEY=… in the --env-file); step test sends
- * one test request with a nonce and waits for the collector to see it (connected, A1).
+ * op8x init. Without an op8x file (a remainder file counts as none): step cloudflare (the
+ * project's wrangler, the Cloudflare login, the worker), step browser (device login with mode init
+ * and write_sha256), the op8x file is written right after granted and before wrangler; server_key
+ * ignored ends with server_key_missing (only a key the collector accepted is ever used). On a
+ * signed-in computer only key and test: write_key_next is settled first, then K must be the
+ * account's current key. Step key puts K (wrangler secret put, or the line OP8X_KEY=… in the
+ * --env-file); step test sends one test request with a nonce and waits for the collector to see it
+ * (connected, whose hint names the account's address so the human can check it is theirs).
  */
 async function init(json: boolean, deps: Deps, o: InitOptions): Promise<number> {
   let keys: DeviceKeys | null = null;
@@ -393,7 +394,7 @@ type FoundPlace =
   | { ok: true; place: Place }
   | { ok: false; state: "wrangler_missing" | "wrangler_too_old" | "cloudflare_login_needed" | "config_unreadable" | "env_required" | "usage_error" };
 
-/** The project's wrangler, the Cloudflare login and the worker of the current folder (data flow 1). */
+/** The project's wrangler, the Cloudflare login and the worker of the current folder. */
 async function findPlace(deps: Deps, o: InitOptions): Promise<FoundPlace> {
   const found = await findWrangler(deps, deps.cwd);
   if (!found.ok) return found;
@@ -443,7 +444,8 @@ async function currentKey(deps: Deps, api: Api, out: Output, file: ActiveAccount
  * of the same account R and the contact are replaced and a waiting step is cleared; K, the next K
  * and the workers stay. Granted for another account, the file is replaced as if there was none.
  * A remainder file (deleted) counts as no file and is replaced, without the
- * collector check. Ends with connected, which names the account's address (A1).
+ * collector check. Ends with connected, which names the account's address so the human can check
+ * that it is theirs.
  */
 async function login(json: boolean, deps: Deps): Promise<number> {
   const keys = deviceKeys(false);
@@ -503,7 +505,7 @@ async function login(json: boolean, deps: Deps): Promise<number> {
 // --- logout -----------------------------------------------------------------------------------
 
 /**
- * op8x logout: POST sign-out {} with R, then the op8x file is removed (A11). Offline, on a 5xx,
+ * op8x logout: POST sign-out {} with R, then the op8x file is removed, so the read token is revoked before it is forgotten. Offline, on a 5xx,
  * busy or any other unexpected answer the file stays, so a later logout can still revoke R; a 401
  * (R already invalid) removes it. With a local K the notice logout_removes_key comes first.
  */
@@ -540,7 +542,7 @@ const MAX_IMPORT_BYTES = 1024 * 1024;
 /**
  * K from the op8x file at `path`, or null if the file is missing, not a regular file, too big,
  * not a valid op8x file, or has no K. Nothing about the file (content, parser message) leaves
- * this function (A16). Opened without blocking, so a FIFO cannot hang the command.
+ * this function, since the file may hold other secrets. Opened without blocking, so a FIFO cannot hang the command.
  */
 async function readKeyFile(path: string): Promise<string | null> {
   let handle;
@@ -571,7 +573,7 @@ async function readKeyFile(path: string): Promise<string | null> {
 }
 
 /**
- * op8x import-key <path>: takes only K from the op8x file of another computer (E1). K never leaves
+ * op8x import-key <path>: takes only K from the op8x file of another computer, and only if it is the account's current key. K never leaves
  * this computer: GET /tenant with R, then K's fingerprint is compared with the account's keys.
  * Current → stored (imported); previous → key_previous; else key_mismatch.
  */

@@ -23,7 +23,7 @@ function setup(opts: { json?: boolean; command?: CommandName; steps?: number; en
   return { out, deps, lines, parsed, secrets, tick: (ms: number) => (clock += ms) };
 }
 
-// The catalog, verbatim (spec "Zustandskatalog"; worker_not_deployed dropped).
+// The catalog, verbatim (worker_not_deployed is no state).
 const CATALOG: [FinalState, number, string | null, Parameters<typeof agentHint>[1]?][] = [
   [
     "connected",
@@ -253,7 +253,7 @@ test("text mode: Step n of N, the link with words and time, the hint as the last
   ]);
 });
 
-test("control characters are removed from server fields in JSON and in text (A17)", () => {
+test("control characters are removed from server fields in JSON and in text", () => {
   const hostile = "a***@acme.example\u001b]0;pwned\u0007\u202e\r\n";
   const j = setup();
   j.out.link({ link: "https://analytics.op8x.com/link/" + "a".repeat(32), words: "amber\u0000 tiger\u2028 42", expires_at: "2026-11-03T14:10:00.000Z" });

@@ -12,16 +12,17 @@ import type { WorkerEntry } from "./store.ts";
 import { findWrangler } from "./wrangler.ts";
 import type { SecretResult, Secrets } from "./wrangler.ts";
 
-// Connecting a worker (data flow 7-9): K into the worker (wrangler secret put, or a line in a
-// git-ignored env file), then one test request with a nonce from the collector, and polling the
-// collector until it saw the nonce. Shared by init (Task 5) and rotate (Task 6).
+// Connecting a worker: K into the worker (wrangler secret put, or a line in a git-ignored env
+// file), then one test request with a nonce from the collector, and polling the collector until it
+// saw the nonce. Shared by init and rotate.
 
 // --- the test address -----------------------------------------------------------------------------
 
 const LOOPBACK_NAMES = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
 /**
- * Addresses a test request must not reach unless the human typed the URL (A41): unspecified,
+ * Addresses a test request must not reach unless the human typed the URL (a route in the project
+ * could otherwise aim it at the seller's own network): unspecified,
  * loopback, private, CGNAT, link-local, benchmark, IETF, multicast and reserved IPv4; unspecified,
  * loopback, IPv4-mapped and -compatible, ULA, link-local and multicast IPv6.
  */
@@ -116,7 +117,7 @@ export async function sendTestRequest(deps: Pick<Deps, "fetchImpl">, url: string
 
 export type VerifyResult =
   | { ok: true; seenAt: string }
-  /** host_refused: the address may not be tested (A41); the caller asks for --url. */
+  /** host_refused: the address may not be tested (not public); the caller asks for --url. */
   | { ok: false; state: "host_refused" | "deployed_unverified" | "stopped" }
   | { ok: false; state: "api"; error: ApiError };
 
@@ -203,8 +204,8 @@ export async function gitOnPath(deps: Pick<Deps, "env" | "platform">): Promise<s
 }
 
 /**
- * May K go into the env file at `path` (absolute)? Only if git ignores it and does not track it
- * (A46): `git check-ignore -q -- <path>` must exit 0 and `git ls-files --error-unmatch -- <path>`
+ * May K go into the env file at `path` (absolute)? Only if git ignores it and does not track it,
+ * so the key cannot be committed: `git check-ignore -q -- <path>` must exit 0 and `git ls-files --error-unmatch -- <path>`
  * must exit 1, both run without a shell from the file's folder. No repo, no git, a tracked file,
  * any git error, or a file named .dev.vars (wrangler dev reads it) → false.
  */
