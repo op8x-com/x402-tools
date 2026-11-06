@@ -8,6 +8,8 @@ npx @op8x/cli check https://api.example.com/weather
 
 Or install it once and use the short command: `npm install -g @op8x/cli`, then `op8x check <url>`.
 
+The same CLI also connects your worker to op8x analytics, see "Analytics account".
+
 `op8x check` makes two unpaid requests (GET and POST), repeats each 402 once with an `Origin` header as a browser would, sends a CORS preflight (`OPTIONS`) when the 402 is CORS-enabled, and reports problems that make paying clients fail silently:
 
 - v2 challenge only in the body (the official v2 client reads the `PAYMENT-REQUIRED` header only)
@@ -30,7 +32,7 @@ Or install it once and use the short command: `npm install -g @op8x/cli`, then `
 - your own wallet is the `payTo` (a warning, `self-payment`, only with `--payer`): some facilitators reject a payment from an address to itself
 - a POST that answers 400, 409 or 422 to the empty JSON body before it asks for payment (a hint, `post-needs-body`): buyers that send no body or an empty one likely never see the price
 
-The plain requests carry no `Origin`, so a server that refuses browsers is still checked correctly; the repeat and the preflight send `Origin: https://op8x.com`. It never pays, needs no wallet and sends no telemetry. It only talks to the URL you give it.
+The plain requests carry no `Origin`, so a server that refuses browsers is still checked correctly; the repeat and the preflight send `Origin: https://op8x.com`. `op8x check` never pays, needs no wallet and sends no telemetry. It only talks to the URL you give it.
 
 ## Options
 
@@ -47,7 +49,7 @@ Agents that read `--json` should act on `id`, `level`, `method` and `summary`. `
 
 At most 10 findings with the same `id`, `level` and `method` are listed. If there are more, a later finding with the same `id` and `level` says how many, with a title that matches `^\d+ more '[a-z0-9-]+' (errors?|warnings?|notes?|pass(es)?) not shown$`, for example `64990 more 'v2-legacy-network' errors not shown`. This title is fixed text of `op8x check`, never server text, so agents may read the number from it. Other findings may stand in between. `summary` counts the findings listed, this one included.
 
-Exit codes: `0` no errors, `1` errors found, `2` usage error, a URL with a user name, a password, `'` or `"`, or the URL was unreachable.
+Exit codes of `op8x check`: `0` no errors, `1` errors found, `2` usage error, a URL with a user name, a password, `'` or `"`, or the URL was unreachable. The account commands (see "Analytics account") use `0` success, `1` a state that needs an action (the `agent_hint` says which), `2` network, server or internal error, `4` usage error or refused input; an unknown command word such as `op8x frobnicate` also exits with `4`.
 
 ## Copyable commands
 
@@ -138,6 +140,80 @@ The text report ends with the block "Not checked by op8x check"; the JSON report
 - Delivery after a real payment: use a tool that pays the endpoint once and checks the response.
 - Facilitator limits such as minimum prices: see your facilitator's documentation.
 - MCP payments (only for MCP endpoints, listed first): `npx x402-listing-check@latest '<url>' --mcp-tool YOUR_TOOL`.
+
+## Analytics account
+
+The account commands connect a worker that runs [`@op8x/analytics`](https://github.com/op8x-com/x402-tools/tree/main/packages/analytics) to op8x. `op8x init` creates the server key `OP8X_KEY` on your computer, asks you to allow the sign-in in your browser, puts the key into the worker with your project's own wrangler, and sends one test request to prove that records arrive. Nobody copies the key by hand, and the CLI never prints it.
+
+Before the first run, in the worker's project folder:
+
+```sh
+npm i -D wrangler          # 4.152.0 or later, in this project's node_modules
+npx wrangler login         # Node.js 22 or later
+```
+
+Then:
+
+```sh
+npx @op8x/cli init --url https://api.example.com/paid
+```
+
+`--url` is the address of the test request. It must hit a path that the `@op8x/analytics` module handles, with the `endpoint` option set; the module must be 0.0.2 or later (older versions do not send the test event). Without `--url` the CLI uses the first route with a fixed domain from the wrangler configuration; with neither it stores the key and ends with `url_required`. `--url` takes `https://`, or `http://` on `127.0.0.1`, `localhost` or `[::1]`.
+
+More forms:
+
+```sh
+npx @op8x/cli init --env staging --url https://staging.example.com/paid   # one wrangler environment
+npx @op8x/cli init --name my-worker --url https://api.example.com/paid    # a worker name not in the configuration
+npx @op8x/cli rotate                                                       # new key in every known worker; the old one works 24 more hours
+npx @op8x/cli rotate --now                                                 # stop the old key now (asks for a code from a mail)
+npx @op8x/cli rotate --now --force-stop                                    # stop it even if a worker may still use it (a leaked key)
+npx @op8x/cli login                                                        # sign this computer in to an existing account
+npx @op8x/cli import-key <path>                                            # take the key from the op8x file of your other computer
+npx @op8x/cli logout                                                       # sign this computer out and delete its op8x file
+npx @op8x/cli delete                                                       # delete the account and remove OP8X_KEY from every known worker
+```
+
+`op8x report` exists but answers `not_available_yet` in this version.
+
+### Node hosts
+
+For a server that is not a Cloudflare worker, write the key to a file that git ignores instead of wrangler:
+
+```sh
+echo ".env.op8x" >> .gitignore
+npx @op8x/cli init --env-file .env.op8x --url http://127.0.0.1:3000/paid
+```
+
+The CLI refuses a file that git does not ignore, a tracked file, a file outside a git repository and `.dev.vars`. It adds or replaces the line `OP8X_KEY=…` and leaves every other line as it is. Load the file as the environment and pass the key to the module as the `key` option (outside Workers the module does not read `OP8X_KEY` itself):
+
+```sh
+node --env-file=.env.op8x server.js
+```
+
+```ts
+app.use(analytics({ endpoint: "https://ingest.op8x.com/v1/events", key: process.env.OP8X_KEY }));
+```
+
+`rotate` rewrites the line, and `delete` removes it.
+
+### For agents
+
+Every account command takes `--json` and then prints JSON Lines on stdout, errors included: lines with `"final": false` (`step`, `link`, `notice`) and one last line with `"final": true`, `state`, `exit_code` and `agent_hint`. Only a usage error writes the command's help to stderr. Put a line like this into the project's `AGENTS.md`:
+
+```
+To connect this worker to op8x analytics, run `npx @op8x/cli init --json --url <paid URL>` and read the JSON Lines on stdout. Pass the `link` and the `words` of the `link` line to the human and wait. On `step_up_needed`, ask the human for the code from the mail and run the same command again with `--code-stdin`, writing the code to stdin. Never put a code or a key in a command line. Act on `state` and `exit_code`; `agent_hint` says the next step.
+```
+
+A code is never read from argv: with a terminal the CLI asks for it without echo, without one the run ends with `step_up_needed` and the next run takes it on stdin (`--code-stdin`). For example in bash: `printf '%s' "$CODE" | npx @op8x/cli rotate --now --code-stdin --json`.
+
+### CI and containers
+
+The op8x file is not in the project. It lives in your user's config folder: `$XDG_CONFIG_HOME/op8x/account.json` or `~/.config/op8x/account.json`, on Windows `%APPDATA%\op8x\account.json`, readable only by your user. A fresh container or CI runner has none. There, sign in with `op8x login` and then either take the key with `op8x import-key <path to the op8x file of the computer that has it>`, or run `op8x rotate` and then `op8x init` in every worker folder within 24 hours. Do not bake the op8x file into an image or commit it.
+
+### What the CLI trusts and sends
+
+The CLI uses only `node_modules/wrangler` of the folder it runs in, starts it with its own Node.js without a shell, passes it a fixed list of environment variables and never shows its output. Helper programs on Windows (`icacls.exe`, `whoami.exe`, `rundll32.exe`) run by absolute path from `System32`. To op8x it sends only the hashes of the keys it creates and its name and version; after the sign-in it authenticates with the read token from the op8x file and sends the codes you enter and the requests for test nonces. It never sends the server key itself and never the bodies of your traffic. The test request is one `GET` to your `--url` with the header `op8x-test: <nonce>` and nothing secret. The full contract (states, exit codes, file schema, requests) is in [docs/designs/2026-11-02-cli-account-design.md](https://github.com/op8x-com/x402-tools/blob/main/docs/designs/2026-11-02-cli-account-design.md).
 
 ## Related
 
