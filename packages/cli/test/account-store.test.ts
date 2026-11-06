@@ -239,6 +239,14 @@ test("readAccount: no file is null; a broken file is schema_invalid; deleteAccou
   assert.equal(existsSync(accountPath(deps)), false);
 });
 
+test("readAccount: a file where a parent folder should be means there is no op8x file", async () => {
+  const base = testDeps();
+  mkdirSync(dirname(base.configDir), { recursive: true });
+  const blocker = join(dirname(base.configDir), "blocker");
+  writeFileSync(blocker, "x");
+  assert.equal(await readAccount({ configDir: join(blocker, "op8x") }), null);
+});
+
 test("writeAccount refuses an invalid account and writes nothing", async () => {
   const deps = testDeps();
   const bad = { ...full(), read_token: K } as AccountFile;

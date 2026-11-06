@@ -199,7 +199,9 @@ export async function readAccount(deps: Pick<Deps, "configDir">): Promise<Accoun
   try {
     text = await readFile(accountPath(deps), "utf8");
   } catch (e) {
-    if (errno(e) === "ENOENT") return null;
+    // ENOTDIR (POSIX): a file stands where a parent folder of the op8x file should be, so there is none.
+    const code = errno(e);
+    if (code === "ENOENT" || code === "ENOTDIR") return null;
     throw new StoreError("read_failed", "The op8x file could not be read.", { cause: e });
   }
   return parseAccount(text);
