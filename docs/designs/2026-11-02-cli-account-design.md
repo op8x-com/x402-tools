@@ -166,7 +166,8 @@ and may show `agent_hint`. Times are ISO 8601 in UTC in JSON and
     `deleted_partial` (`tenant` and `ended_at` are null when a later run
     finishes an interrupted delete).
 *   `attempts_left`: in `code_invalid`.
-*   `path` (where the op8x file is): in `server_key_missing`.
+*   `path` (where the op8x file is): in `server_key_missing`, and with
+    `receipt` in `permissions_failed` after the account was deleted.
 *   `status`, `code` (`code` null without a problem document): in
     `unexpected_response`.
 
@@ -423,10 +424,15 @@ for the second code, the third takes the second code.
 
 `delete` asks for a code, sends `POST delete` with it, writes the rest file
 right away (no account fields, all workers), runs `secret delete` per wrangler
-worker and removes the `OP8X_KEY` line from each env file, then deletes the op8x
-file. If a removal fails, the account is still deleted, the rest file keeps the
-failed workers and the run ends with `deleted_partial`; the next `delete` only
-retries those workers and sends nothing to op8x.
+worker and removes the `OP8X_KEY` line from each env file, saving the rest file
+after each worker, then deletes the op8x file. If a removal fails, the account
+is still deleted, the rest file keeps the failed workers and the run ends with
+`deleted_partial`; the next `delete` only retries those workers and sends
+nothing to op8x. On that retry a failed `secret delete` is followed by a
+read-only `secret list`: if `OP8X_KEY` is no longer there, the worker counts as
+done. If the op8x file cannot be removed or updated after the account is gone,
+the run ends with the `permissions_failed` variant that names the receipt and
+the file to delete by hand.
 
 ## Trust in the project folder
 
@@ -452,15 +458,16 @@ never runs a program by name from it.
     `HTTP_PROXY`, `NO_PROXY` (also lowercase), `NODE_EXTRA_CA_CERTS`, `TEMP`,
     `TMP`. Logging variables such as `WRANGLER_LOG`, `WRANGLER_LOG_PATH` and
     `DEBUG` are left out. On Windows names are compared without case.
-*   wrangler's output is never shown. The CLI reads only exit codes, and from
-    `whoami --json` only the field `loggedIn`; account names and mail
-    addresses are never read.
+*   wrangler's output is never shown. The CLI reads only exit codes, from
+    `whoami --json` only the field `loggedIn`, and from `secret list` only the
+    secret names; account names and mail addresses are never read.
 
 | Action | argv after `wrangler.js` | stdin |
 | --- | --- | --- |
 | check the login | `whoami --json` | empty |
 | put the key | `secret put OP8X_KEY` plus the target | the key, without a newline |
 | remove the key | `secret delete OP8X_KEY` plus the target | empty |
+| check for the key (only when a later `delete` finishes an interrupted one and `secret delete` failed) | `secret list` plus the target, then `--format json` | empty |
 
 The target is `--name <name>` without an environment; `--name <base> --env <X>`
 when the worker name is `<base>-<X>`; `--env <X>` alone when the name comes
