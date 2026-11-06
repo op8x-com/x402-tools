@@ -23,6 +23,9 @@ export interface ExecOptions {
   env: Record<string, string>; // complete child environment, never process.env
   input?: string; // written to a stdin pipe; without input stdin is closed at once
   timeoutMs: number;
+  // Start the child on its own and never wait for it: code 0 once it started, null if it could
+  // not start within timeoutMs; no stdio, so no output and no input.
+  detach?: boolean;
 }
 
 export interface ExecResult {

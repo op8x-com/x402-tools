@@ -510,6 +510,10 @@ route with a fixed domain (`route` before `routes`; a custom domain gives
     is in the output).
 *   macOS: `/usr/bin/open`. Linux: `xdg-open`, found only in absolute `PATH`
     entries.
+*   The browser opener is started detached, without stdin, stdout or stderr.
+    The CLI waits only until it has started (at most 5 seconds), never for it
+    to exit, so an opener that waits for the browser does not hold up the
+    sign-in.
 *   `git` (for `--env-file`): found only in absolute `PATH` entries, run with
     `-c core.fsmonitor=false` and a small environment allowlist. The file must
     be ignored (`git check-ignore`) and not tracked (`git ls-files`). Files

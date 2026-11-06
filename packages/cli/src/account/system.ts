@@ -13,8 +13,10 @@ const MAX_STDIN = 4 * 1024;
  * Runs a program without a shell, hidden on Windows, with exactly `opts.env` as its environment.
  * stdin is a pipe: `input` is written to it, otherwise it is closed at once. stdout and stderr keep
  * at most 1 MiB each. A timeout kills the child and gives code null; a start failure gives code null too.
+ * With `detach` the child runs on its own (see launch).
  */
 export function exec(file: string, args: readonly string[], opts: ExecOptions): Promise<ExecResult> {
+  if (opts.detach === true) return launch(file, args, opts);
   return new Promise((resolve) => {
     const child = spawn(file, args, {
       cwd: opts.cwd,
@@ -58,6 +60,35 @@ export function exec(file: string, args: readonly string[], opts: ExecOptions): 
     child.stdin.on("error", () => {});
     if (opts.input !== undefined) child.stdin.end(opts.input);
     else child.stdin.end();
+  });
+}
+
+/**
+ * Starts a program that is never waited for (a browser opener: xdg-open, for example, may wait
+ * until the browser closes): detached, no stdio, unref'd, without a shell, hidden on Windows, with
+ * exactly `opts.env`. Code 0 once it has started; null if it could not start, or if neither
+ * happened within `opts.timeoutMs`. Its output and exit code are never seen.
+ */
+function launch(file: string, args: readonly string[], opts: ExecOptions): Promise<ExecResult> {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (code: number | null) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve({ code, stdout: "", stderr: "" });
+    };
+    const timer = setTimeout(() => finish(null), opts.timeoutMs);
+    let child;
+    try {
+      child = spawn(file, args, { cwd: opts.cwd, env: opts.env, shell: false, windowsHide: true, detached: true, stdio: "ignore" });
+    } catch {
+      finish(null);
+      return;
+    }
+    child.once("spawn", () => finish(0));
+    child.once("error", () => finish(null));
+    child.unref();
   });
 }
 

@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { chmodSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import type { TestContext } from "node:test";
 import { createApi } from "../src/account/api.ts";
@@ -6,8 +9,9 @@ import { deviceKeys, deviceLogin, openBrowser, openerFor } from "../src/account/
 import type { DeviceKeys, DeviceOutcome } from "../src/account/device.ts";
 import { generateKey, keyFingerprint, keyHash } from "../src/account/keys.ts";
 import { createOutput } from "../src/account/output.ts";
+import { exec as realExec } from "../src/account/system.ts";
 import type { Deps } from "../src/cli.ts";
-import { recordingExec, testDeps } from "./account-deps.ts";
+import { recordingExec, tempDir, testDeps } from "./account-deps.ts";
 import type { RecordingExec } from "./account-deps.ts";
 import { startFakeCollector } from "./fake-collector.ts";
 import type { FakeCollector } from "./fake-collector.ts";
@@ -119,6 +123,79 @@ test("openerFor opens only the collector's checked link (A43)", () => {
   ]) {
     assert.equal(openerFor(deps, url), null, url);
   }
+});
+
+test("openerFor: every opener is started detached (the login never waits for the browser)", () => {
+  const openers = [
+    openerFor(testDeps({ platform: "win32", env: { SystemRoot: "C:\\Windows" } }), LINK),
+    openerFor(testDeps({ platform: "darwin", env: { HOME: "/Users/a" } }), LINK),
+    openerFor(testDeps({ platform: "linux", env: { PATH: "/usr/bin" } }), LINK),
+  ];
+  for (const o of openers) {
+    assert.ok(o);
+    assert.equal(o.opts.detach, true, o.file);
+    assert.equal(o.opts.input, undefined, o.file);
+  }
+});
+
+/** A program that runs for `seconds` and then exits, like a browser opener that waits for the browser. */
+function sleeper(seconds: number): string {
+  const dir = tempDir();
+  const script = join(dir, "sleeper.cjs");
+  writeFileSync(script, `setTimeout(() => {}, ${seconds * 1000});\n`);
+  return script;
+}
+
+test("exec with detach: resolves once the child has started, without waiting for it to exit; a missing program gives null", async () => {
+  const script = sleeper(20);
+  const started = Date.now();
+  const r = await realExec(process.execPath, [script], { cwd: tmpdir(), env: {}, timeoutMs: 10_000, detach: true });
+  assert.equal(r.code, 0);
+  assert.ok(Date.now() - started < 5_000, `took ${Date.now() - started} ms`);
+  const missing = await realExec(join(tempDir(), "no-such-program"), [], { cwd: tmpdir(), env: {}, timeoutMs: 10_000, detach: true });
+  assert.equal(missing.code, null);
+});
+
+test("login: polling starts right away although the browser opener keeps running", async (t) => {
+  const script = sleeper(20);
+  const spawned: string[] = [];
+  // The opener the CLI chose, started for real as a program that does not exit for 20 s.
+  const exec: Deps["exec"] = (file, args, opts) => {
+    spawned.push(file);
+    return realExec(process.execPath, [script], opts);
+  };
+  const s = await session(t, { deps: { platform: "darwin", exec, now: () => Date.now(), sleep: async () => {} } });
+  const t0 = s.fake.addTenant({ readKey: generateKey("r"), contactHint: "a***@acme.example" });
+  let firstPoll: number | null = null;
+  s.fake.onRequest = (req) => {
+    if (req.route !== "device_token") return;
+    firstPoll ??= Date.now();
+    s.fake.grant({ tenant: t0.name });
+  };
+  const started = Date.now();
+  expectOk(await s.login());
+  assert.deepEqual(spawned, ["/usr/bin/open"]);
+  assert.ok(firstPoll !== null);
+  assert.ok(firstPoll - started < 5_000, `first poll after ${firstPoll - started} ms`);
+});
+
+test("login on Linux: an xdg-open that waits for the browser does not hold up the polling", { skip: process.platform === "win32" }, async (t) => {
+  const bin = tempDir();
+  const xdg = join(bin, "xdg-open");
+  writeFileSync(xdg, "#!/bin/sh\nsleep 20\n");
+  chmodSync(xdg, 0o755);
+  const s = await session(t, { env: { PATH: bin }, deps: { platform: "linux", exec: realExec, now: () => Date.now(), sleep: async () => {} } });
+  const t0 = s.fake.addTenant({ readKey: generateKey("r"), contactHint: "a***@acme.example" });
+  let firstPoll: number | null = null;
+  s.fake.onRequest = (req) => {
+    if (req.route !== "device_token") return;
+    firstPoll ??= Date.now();
+    s.fake.grant({ tenant: t0.name });
+  };
+  const started = Date.now();
+  expectOk(await s.login());
+  assert.ok(firstPoll !== null);
+  assert.ok(firstPoll - started < 5_000, `first poll after ${firstPoll - started} ms`);
 });
 
 test("openBrowser: true on exit 0; false on another exit, a timeout, a throw or no opener", async () => {

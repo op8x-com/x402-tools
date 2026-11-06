@@ -50,7 +50,8 @@ export interface DeviceOptions {
 const MAX_POLL_MS = 20 * 60_000;
 /** Network errors in a row that the polling sits out before it ends with network_error. */
 const MAX_NETWORK_ERRORS = 3;
-const OPEN_TIMEOUT_MS = 10_000;
+/** How long the opener may take to start; its exit is never awaited. */
+const OPEN_TIMEOUT_MS = 5_000;
 
 /** Environment names xdg-open needs to find the desktop session; nothing of op8x. */
 const XDG_ENV = [
@@ -80,10 +81,12 @@ export interface Opener {
 
 /**
  * How to open `url` in the browser without a shell, or null (then the link stays in the terminal
- * only). Only the collector's checked link is opened (A43). Windows: rundll32 by absolute path from
- * SystemRoot (a bare name is looked up in the current folder first, the seller's project); macOS:
- * /usr/bin/open; else xdg-open from PATH, with only the absolute PATH entries, so an empty or
- * relative entry cannot pick a program from the project. The child gets a minimal environment.
+ * only). Only the collector's checked link is opened, so no other address or file can be handed
+ * to the system's opener. Windows: rundll32 by absolute path from SystemRoot (a bare name is
+ * looked up in the current folder first, the seller's project); macOS: /usr/bin/open; else
+ * xdg-open from PATH, with only the absolute PATH entries, so an empty or relative entry cannot
+ * pick a program from the project. The child gets a minimal environment and is started detached:
+ * xdg-open may wait until the browser closes, and the login must not wait for that.
  */
 export function openerFor(deps: Pick<Deps, "platform" | "env">, url: string): Opener | null {
   if (!isCollectorLink(url)) return null;
@@ -93,13 +96,13 @@ export function openerFor(deps: Pick<Deps, "platform" | "env">, url: string): Op
     return {
       file: win32.join(root, "System32", "rundll32.exe"),
       args: ["url.dll,FileProtocolHandler", url],
-      opts: { cwd: root, env: { SystemRoot: root }, timeoutMs: OPEN_TIMEOUT_MS },
+      opts: { cwd: root, env: { SystemRoot: root }, timeoutMs: OPEN_TIMEOUT_MS, detach: true },
     };
   }
   if (deps.platform === "darwin") {
     const env: Record<string, string> = {};
     if (deps.env.HOME !== undefined) env.HOME = deps.env.HOME;
-    return { file: "/usr/bin/open", args: [url], opts: { cwd: "/", env, timeoutMs: OPEN_TIMEOUT_MS } };
+    return { file: "/usr/bin/open", args: [url], opts: { cwd: "/", env, timeoutMs: OPEN_TIMEOUT_MS, detach: true } };
   }
   const path = (deps.env.PATH ?? "")
     .split(":")
@@ -111,10 +114,10 @@ export function openerFor(deps: Pick<Deps, "platform" | "env">, url: string): Op
     const v = deps.env[name];
     if (v !== undefined) env[name] = v;
   }
-  return { file: "xdg-open", args: [url], opts: { cwd: "/", env, timeoutMs: OPEN_TIMEOUT_MS } };
+  return { file: "xdg-open", args: [url], opts: { cwd: "/", env, timeoutMs: OPEN_TIMEOUT_MS, detach: true } };
 }
 
-/** Opens the link; false if there is no opener or it failed (never an error of the command). */
+/** Starts the opener; false if there is none or it could not start (never an error of the command). */
 export async function openBrowser(deps: Pick<Deps, "platform" | "env" | "exec">, url: string): Promise<boolean> {
   const o = openerFor(deps, url);
   if (o === null) return false;
