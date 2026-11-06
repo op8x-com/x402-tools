@@ -19,6 +19,7 @@ import type { AccountFile } from "../src/account/store.ts";
 import type { Deps, ExecOptions, ExecResult } from "../src/cli.ts";
 import { recordingExec, tempDir, testDeps } from "./account-deps.ts";
 import type { ExecHandler } from "./account-deps.ts";
+import { configDirFor } from "../src/account/system.ts";
 
 // Keys are built at runtime, never written out in a file.
 const R = "op8x_r_" + "R".repeat(43);
@@ -671,4 +672,14 @@ test("Windows for real: in a folder that passes no entries on, the file still en
   assert.equal(readFileSync(target, "utf8"), "OP8X_KEY=x\n");
   assert.deepEqual(readdirSync(dir), ["secret.txt"]);
   await assertOnlyUser(exec, root, target);
+});
+
+test("configDirFor: an absolute XDG_CONFIG_HOME is used; a relative or empty one is ignored (~/.config)", () => {
+  const home = "/home/seller";
+  assert.equal(configDirFor("linux", { XDG_CONFIG_HOME: "/cfg" }, home), join("/cfg", "op8x"));
+  for (const value of ["cfg", "./cfg", "../cfg", "", undefined]) {
+    assert.equal(configDirFor("linux", { XDG_CONFIG_HOME: value }, home), join(home, ".config", "op8x"), String(value));
+    assert.equal(configDirFor("darwin", { XDG_CONFIG_HOME: value }, home), join(home, ".config", "op8x"), String(value));
+  }
+  assert.equal(configDirFor("win32", { APPDATA: "C:\Users\s\AppData\Roaming", XDG_CONFIG_HOME: "/cfg" }, "C:\Users\s"), join("C:\Users\s\AppData\Roaming", "op8x"));
 });

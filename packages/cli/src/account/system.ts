@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { lookup as dnsLookup } from "node:dns/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { createInterface } from "node:readline";
 import { Writable } from "node:stream";
 import type { Deps, ExecOptions, ExecResult, Io } from "../cli.ts";
@@ -141,10 +141,15 @@ export function readHidden(prompt: string): Promise<string> {
   return readHiddenFrom(prompt, process.stdin, process.stderr);
 }
 
-/** The op8x config folder: %APPDATA%\op8x on Windows, else $XDG_CONFIG_HOME/op8x or ~/.config/op8x. */
+/**
+ * The op8x config folder: %APPDATA%\op8x on Windows, else $XDG_CONFIG_HOME/op8x or ~/.config/op8x.
+ * A relative XDG_CONFIG_HOME is ignored, as the XDG Base Directory spec says (it would put the op8x
+ * file into whatever folder the command runs in).
+ */
 export function configDirFor(platform: NodeJS.Platform, env: Readonly<Record<string, string | undefined>>, home: string): string {
   if (platform === "win32") return join(env.APPDATA || join(home, "AppData", "Roaming"), "op8x");
-  return join(env.XDG_CONFIG_HOME || join(home, ".config"), "op8x");
+  const xdg = env.XDG_CONFIG_HOME;
+  return join(xdg !== undefined && posix.isAbsolute(xdg) ? xdg : join(home, ".config"), "op8x");
 }
 
 /** The real side effects, wired in bin.ts. */

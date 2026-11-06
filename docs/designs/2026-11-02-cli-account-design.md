@@ -273,8 +273,9 @@ on wrangler's stdin, or as the line `OP8X_KEY=…` in the `--env-file`.
 
 ## The op8x file
 
-Location: `$XDG_CONFIG_HOME/op8x/account.json`, else
-`~/.config/op8x/account.json`; on Windows `%APPDATA%\op8x\account.json`.
+Location: `$XDG_CONFIG_HOME/op8x/account.json` when `XDG_CONFIG_HOME` is an
+absolute path, else `~/.config/op8x/account.json`; on Windows
+`%APPDATA%\op8x\account.json`.
 
 Protection: on POSIX the folder is set to `0700` and the file to `0600`. On
 Windows the file gets an access list with exactly one entry, full control for
