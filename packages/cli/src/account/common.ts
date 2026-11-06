@@ -66,6 +66,21 @@ export function writeSlot(view: TenantView, slot: "current" | "previous"): Tenan
   return view.keys.find((k) => k.kind === "write" && k.slot === slot);
 }
 
+/**
+ * A waiting step replace_current ends without its code being redeemed: its next K is settled.
+ * Is it the account's current key (the swap happened, the answer was lost), it becomes write_key;
+ * else it is discarded, never sent again as a plain rotation. The step goes in both cases. Null if
+ * GET /tenant failed: then nothing changes, and a later run settles it.
+ */
+export async function settleReplacedNext(api: Api, file: ActiveAccount): Promise<ActiveAccount | null> {
+  const next = file.write_key_next;
+  if (next === null) return { ...file, pending_step_up: null };
+  const view = await api.tenant(file.read_token);
+  if (!view.ok) return null;
+  const current = writeSlot(view.value, "current")?.fingerprint === keyFingerprint(next);
+  return { ...file, write_key: current ? next : file.write_key, write_key_next: null, pending_step_up: null };
+}
+
 export type Resumed = { ok: true; file: ActiveAccount; view: TenantView } | { ok: false; exit: number };
 
 /**

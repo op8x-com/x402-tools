@@ -1,6 +1,6 @@
 import type { Deps } from "../cli.ts";
 import { normalizeCode } from "./api.ts";
-import type { Api, ApiError, ApiResult, StepUpPurpose } from "./api.ts";
+import type { Api, ApiResult, StepUpPurpose } from "./api.ts";
 import type { FinalState, HintVars, Output } from "./output.ts";
 import type { ActiveAccount, PendingStepUp } from "./store.ts";
 
@@ -89,9 +89,4 @@ const CLEARS: ReadonlySet<FinalState> = new Set<FinalState>([
 /** True if `state` ends the waiting step (it is removed from the op8x file). */
 export function clearsPending(state: FinalState): boolean {
   return CLEARS.has(state);
-}
-
-/** True for an answer to a redeemed code that leaves the code unspent and the step worth retrying. */
-export function keepsCode(e: ApiError): boolean {
-  return !clearsPending(e.state);
 }

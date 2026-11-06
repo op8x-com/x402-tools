@@ -105,6 +105,8 @@ export interface HintVars {
   rotate_now?: boolean;
   /** server_key_missing: a rotation is running. */
   rotation_running?: boolean;
+  /** old_key_still_used: rotate --now knows no worker (no T_check). */
+  no_workers?: boolean;
 }
 
 type Mode = "json" | "text";
@@ -133,7 +135,9 @@ const HINTS: Record<FinalState | "waiting_for_human", ((v: HintVars, mode: Mode)
   key_rotated: (v, m) =>
     v.n === 0
       ? "No worker is known on this computer. Run op8x init in every worker folder within 24 hours."
-      : `The new server key is in ${text(v.n)} workers; the old key works until ${time(v.time, m)}.`,
+      : v.time === null || v.time === undefined
+        ? `The new server key is in ${text(v.n)} workers.`
+        : `The new server key is in ${text(v.n)} workers; the old key works until ${time(v.time, m)}.`,
   old_key_stopped: (v) => `The old server key is stopped. The new key is in ${text(v.n)} workers.`,
   deleted: (v) => `The account is deleted. Receipt: ${text(v.action_id)}.`,
   logged_out: (v) => (v.with_key === true ? "This computer is signed out. The server key on this computer is removed too." : "This computer is signed out."),
@@ -162,7 +166,9 @@ const HINTS: Record<FinalState | "waiting_for_human", ((v: HintVars, mode: Mode)
   key_previous: () => "This key is the old one. Run op8x rotate.",
   partial: (v) => `The new key is not in every worker: ${list(v.names)}. Fix them and run the command again; nothing was stopped.`,
   old_key_still_used: (v, m) =>
-    `A worker this computer does not know still uses the old key (last seen ${time(v.time, m)}). Run op8x init in its folder, then run op8x rotate --now again. If the key leaked, run op8x rotate --now --force-stop.`,
+    v.no_workers === true
+      ? "No worker is known on this computer. Run op8x init in every worker folder, then run op8x rotate --now again. If the key leaked, run op8x rotate --now --force-stop."
+      : `A worker this computer does not know still uses the old key (last seen ${time(v.time, m)}). Run op8x init in its folder, then run op8x rotate --now again. If the key leaked, run op8x rotate --now --force-stop.`,
   rotation_pending: (v, m) => `A rotation is still running until ${time(v.time, m)}. Run op8x rotate --now to finish it early.`,
   nothing_to_stop: () => "The old key is already stopped.",
   step_up_needed: () => "Ask your human for the code from the mail, then run the same command with --code-stdin and pass the code on stdin.",

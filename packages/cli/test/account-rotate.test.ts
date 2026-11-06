@@ -371,7 +371,7 @@ test("rotate: the output guard stops after the step line, before POST rotate", a
   assert.equal(s.file().write_key_next, null);
 });
 
-test("rotate clears a waiting step of rotate (key_rotated is an end state)", async (t) => {
+test("rotate clears a waiting step of rotate at the end state, not before", async (t) => {
   const pending: PendingStepUp = {
     purpose: "rotate_now",
     command: "rotate",
@@ -381,9 +381,61 @@ test("rotate clears a waiting step of rotate (key_rotated is an end state)", asy
     t_check: "2026-11-03T14:00:00.000Z",
     expires_at: "2026-11-03T14:10:00.000Z",
   };
-  const s = await setup(t, { workers: 1, file: { pending_step_up: pending } });
+  let failRotate = true;
+  const s = await setup(t, {
+    workers: 1,
+    file: { pending_step_up: pending },
+    deps: {
+      fetchImpl: async (input, init) => {
+        if (failRotate && String(input).endsWith("/tenant/rotate")) throw new TypeError("fetch failed");
+        return fetch(input, init);
+      },
+    },
+  });
+  // network_error is no end state of the list: the step stays.
+  assert.equal(await s.rotate(), 2);
+  assert.equal(s.final().state, "network_error");
+  assert.deepEqual(s.file().pending_step_up, pending);
+  failRotate = false;
   assert.equal(await s.rotate(), 0);
+  assert.equal(s.final().state, "key_rotated");
   assert.equal(s.file().pending_step_up, null);
+});
+
+test("a waiting step of delete survives rotate (also its end state key_rotated)", async (t) => {
+  const del: PendingStepUp = {
+    purpose: "delete",
+    command: "delete",
+    case: null,
+    phase: "delete",
+    force_stop: false,
+    t_check: null,
+    expires_at: "2026-11-03T14:10:00.000Z",
+  };
+  const s = await setup(t, { workers: 1, file: { pending_step_up: del } });
+  assert.equal(await s.rotate(), 0);
+  assert.equal(s.final().state, "key_rotated");
+  assert.deepEqual(s.file().pending_step_up, del);
+});
+
+test("key_rotated without an old key (previous_valid_until null) says only where the new key is", async (t) => {
+  const s = await setup(t, { workers: 1, local: "none" });
+  s.tenant.write = null;
+  assert.equal(await s.rotate(), 0);
+  assert.equal(s.final().state, "key_rotated");
+  assert.equal(s.final().agent_hint, "The new server key is in 1 workers.");
+});
+
+test("resumption: the repeated POST rotate answers rotation_pending → write_key_next goes, the run goes on", async (t) => {
+  const s = await setup(t, { previous: true });
+  const orphan = generateKey("w");
+  await writeAccount(s.deps, { ...s.file(), write_key_next: orphan });
+  assert.equal(await s.rotate(), 0);
+  const sent = s.runRequests().filter((r) => r.route === "rotate");
+  assert.deepEqual(sent.map((r) => JSON.parse(r.body)), [{ kind: "write", new_sha256: keyHash(orphan) }]);
+  assert.equal(s.final().state, "key_rotated");
+  assert.equal(s.file().write_key_next, null);
+  assert.equal(s.file().write_key, s.oldKey);
 });
 
 // --- env-file targets -------------------------------------------------------------------------------
@@ -537,21 +589,32 @@ test("--now: server_time stands still → network_error after 90 s, nothing stop
 });
 
 test("--now: traffic with the old K between swap and put, then quiet → stopped", async (t) => {
-  const s = await setup(t, { tty: true });
-  let once = false;
+  let afterSwap: (() => void) | null = null;
+  const s = await setup(t, {
+    tty: true,
+    deps: {
+      fetchImpl: async (input, init) => {
+        const r = await fetch(input, init);
+        // The swap is done at the collector; no worker has the new K yet.
+        if (String(input).endsWith("/tenant/rotate")) afterSwap?.();
+        return r;
+      },
+    },
+  });
+  let putsAtTraffic = -1;
+  afterSwap = () => {
+    putsAtTraffic = s.workers.reduce((n, w) => n + w.puts(), 0);
+    assert.equal(s.fake.ingest(s.oldKey), true);
+    s.fake.advance(1000);
+  };
   let seenAtStop: number | null = null;
   s.fake.onRequest = (req) => {
-    if (req.route === "test_nonce" && !once) {
-      once = true;
-      // The workers still run the old K for a moment after the swap.
-      assert.equal(s.fake.ingest(s.oldKey), true);
-      s.fake.advance(1000);
-    }
     if (req.route === "revoke_previous") seenAtStop = s.tenant.prevLastSeenAt;
   };
   assert.equal(await s.rotate("--now"), 0);
   assert.equal(s.final().state, "old_key_stopped");
   assert.ok(seenAtStop !== null && seenAtStop < latestVerified(s), "the old key was seen, but before T_check");
+  assert.equal(putsAtTraffic, 0, "the traffic came between swap and put");
 });
 
 test("--now: an unknown worker uses the old K after T_check → old_key_still_used naming --force-stop", async (t) => {
@@ -993,7 +1056,11 @@ test("--now without --force-stop: no known worker → old_key_still_used; nothin
   assert.equal(await s.rotate("--now"), 1);
   assert.equal(s.final().state, "old_key_still_used");
   assert.equal(s.final().last_seen, null);
-  assert.match(String(s.final().agent_hint), /\(last seen never\)\..*--force-stop\.$/);
+  assert.equal(s.final().exit_code, 1);
+  assert.equal(
+    s.final().agent_hint,
+    "No worker is known on this computer. Run op8x init in every worker folder, then run op8x rotate --now again. If the key leaked, run op8x rotate --now --force-stop.",
+  );
   assert.deepEqual(routes(s), ["tenant"]);
 });
 
@@ -1035,4 +1102,186 @@ test("readHidden settles with an empty answer when stdin ends, and never echoes"
   assert.equal(await answer, "ABCD1234");
   assert.equal(shown.includes("ABCD1234"), false);
   assert.ok(shown.startsWith("Code from the mail: "));
+});
+
+// --- a replace_current step that ends unredeemed -------------------------------------------------
+
+test("code_invalid in run 2, then expiry: code_expired settles write_key_next; init later sends no POST rotate", async (t) => {
+  const s = await setup(t, { local: "previous" });
+  assert.equal(await s.rotate("--now"), 1);
+  s.deps.readStdin = async () => "00000000";
+  assert.equal(await s.rotate("--now", "--code-stdin"), 1);
+  assert.equal(s.final().state, "code_invalid");
+  const orphan = s.file().write_key_next;
+  assert.ok(orphan !== null, "run 2 stored the next K before the refused request");
+  assert.equal(s.file().pending_step_up?.purpose, "replace_current");
+
+  s.fake.advance(11 * MINUTE);
+  assert.equal(await s.rotate("--now", "--code-stdin"), 1);
+  assert.equal(s.final().state, "code_expired");
+  assert.equal(s.file().pending_step_up, null);
+  assert.equal(s.file().write_key_next, null, "the next K is discarded, not left behind");
+
+  // The predecessor ends meanwhile: a plain POST rotate with the orphan would now really swap.
+  s.tenant.prev = null;
+  s.tenant.prevUntil = null;
+  s.deps.cwd = s.workers[0]!.wrangler.dir;
+  const before = s.fake.requests.length;
+  await run(["init", "--json", "--url", `${s.workers[0]!.worker.origin}/paid`], s.deps);
+  assert.ok(s.fake.requests.length > before, "init asked the collector");
+  assert.equal(s.fake.requests.slice(before).some((r) => r.route === "rotate"), false);
+  assert.equal(s.file().write_key_next, null);
+  assert.notEqual(s.tenant.write, keyHash(orphan));
+});
+
+test("login with a waiting replace_current settles its next K (discarded if not current, write_key if current)", async (t) => {
+  for (const current of [false, true]) {
+    const s = await setup(t, { local: "previous", workers: 1 });
+    const next = generateKey("w");
+    if (current) s.tenant.write = keyHash(next);
+    const pending: PendingStepUp = {
+      purpose: "replace_current",
+      command: "rotate",
+      case: "c",
+      phase: "replace",
+      force_stop: false,
+      t_check: null,
+      expires_at: "2026-11-03T14:15:00.000Z",
+    };
+    await writeAccount(s.deps, { ...s.file(), write_key_next: next, pending_step_up: pending });
+    let granted = false;
+    s.fake.onRequest = (req) => {
+      if (req.route === "device_token" && !granted) {
+        granted = true;
+        s.fake.grant({ tenant: s.tenant.name });
+      }
+    };
+    assert.equal(await run(["login", "--json"], s.deps), 0);
+    const f = s.file();
+    assert.equal(f.pending_step_up, null);
+    assert.equal(f.write_key_next, null);
+    assert.equal(f.write_key, current ? next : s.oldKey, String(current));
+    assert.equal(s.fake.requests.some((r) => r.route === "rotate"), false);
+  }
+});
+
+test("--code-stdin: the check before the code (no worker, no url) keeps the waiting step", async (t) => {
+  const s = await setup(t, { local: "previous", workers: 2 });
+  assert.equal(await s.rotate("--now"), 1);
+  const stored = s.file().pending_step_up;
+  const f = s.file();
+  await writeAccount(s.deps, { ...f, workers: [f.workers[0]!, { ...f.workers[1]!, url: null }] });
+  s.deps.readStdin = async () => mailCode(s, "replace_current");
+  assert.equal(await s.rotate("--now", "--code-stdin"), 1);
+  assert.equal(s.final().state, "url_required");
+  assert.deepEqual(s.file().pending_step_up, stored);
+
+  await writeAccount(s.deps, { ...s.file(), workers: [] });
+  assert.equal(await s.rotate("--now", "--code-stdin"), 1);
+  assert.equal(s.final().state, "old_key_still_used");
+  assert.deepEqual(s.file().pending_step_up, stored);
+  assert.equal(routes(s).includes("rotate"), false);
+  assert.equal(s.tenant.codes.get("replace_current")?.used, false);
+});
+
+test("replace_current: the answer is lost after the swap; the same code again → no second request, promotion", async (t) => {
+  let lose = false;
+  const s = await setup(t, {
+    local: "previous",
+    deps: {
+      fetchImpl: async (input, init) => {
+        const r = await fetch(input, init);
+        if (lose && String(input).endsWith("/tenant/rotate")) throw new TypeError("fetch failed");
+        return r;
+      },
+    },
+  });
+  assert.equal(await s.rotate("--now"), 1);
+  const code = mailCode(s, "replace_current");
+  s.deps.readStdin = async () => code;
+  lose = true;
+  assert.equal(await s.rotate("--now", "--code-stdin"), 2);
+  assert.equal(s.final().state, "network_error");
+  const next = s.file().write_key_next;
+  assert.ok(next !== null);
+  assert.equal(s.tenant.write, keyHash(next), "the collector swapped");
+  assert.equal(s.file().pending_step_up?.purpose, "replace_current");
+
+  lose = false;
+  assert.equal(await s.rotate("--now", "--code-stdin"), 1);
+  assert.equal(s.final().state, "step_up_needed");
+  assert.equal(routes(s).includes("rotate"), false, "no second request with the spent code");
+  assert.equal(s.file().write_key, next);
+  assert.equal(s.file().write_key_next, null);
+  assert.equal(s.file().pending_step_up?.purpose, "rotate_now");
+});
+
+test("a fresh run with a waiting replace_current: next K current → write_key; not current → discarded, never sent", async (t) => {
+  // current: the swap happened, the answer was lost.
+  const a = await setup(t, { local: "previous" });
+  assert.equal(await a.rotate("--now"), 1);
+  const next = generateKey("w");
+  a.tenant.write = keyHash(next);
+  await writeAccount(a.deps, { ...a.file(), write_key_next: next });
+  assert.equal(await a.rotate("--now"), 1);
+  assert.equal(a.file().write_key, next);
+  assert.equal(a.file().write_key_next, null);
+  assert.equal(routes(a).includes("rotate"), false);
+  assert.equal(a.final().state, "step_up_needed");
+  assert.equal(a.file().pending_step_up?.purpose, "rotate_now", "now case (b)");
+
+  // not current: never sent, the run starts over as (c).
+  const b = await setup(t, { local: "previous" });
+  assert.equal(await b.rotate("--now"), 1);
+  const orphan = generateKey("w");
+  await writeAccount(b.deps, { ...b.file(), write_key_next: orphan });
+  assert.equal(await b.rotate("--now"), 1);
+  assert.equal(routes(b).includes("rotate"), false);
+  assert.equal(b.file().write_key_next, null);
+  assert.equal(b.file().pending_step_up?.purpose, "replace_current");
+});
+
+// --- more runs without a TTY ----------------------------------------------------------------------------
+
+test("--now without a TTY, case (b): test, wait, code (of 3), then --code-stdin stops", async (t) => {
+  const s = await setup(t, { previous: true });
+  assert.equal(await s.rotate("--now"), 1);
+  assert.deepEqual(steps(s.lines()), [
+    ["test", "ok"],
+    ["wait", "ok"],
+    ["code", "ok"],
+  ]);
+  for (const l of s.lines().filter((x) => x.event === "step")) assert.equal(l.of, 3);
+  assert.equal(s.file().pending_step_up?.case, "b");
+  s.deps.readStdin = async () => mailCode(s, "rotate_now");
+  assert.equal(await s.rotate("--now", "--code-stdin"), 0);
+  assert.equal(s.final().state, "old_key_stopped");
+});
+
+test("--now without a TTY, case (e) with a previous key: three runs, K into all known workers", async (t) => {
+  const s = await setup(t, { local: "stale", previous: true });
+  assert.equal(await s.rotate("--now"), 1);
+  assert.deepEqual(steps(s.lines()), [["code", "ok"]]);
+  assert.equal(s.file().pending_step_up?.case, "e");
+  s.deps.readStdin = async () => mailCode(s, "replace_current");
+  assert.equal(await s.rotate("--now", "--code-stdin"), 1);
+  assert.deepEqual(steps(s.lines()).map((x) => x[0]), ["code", "new_key", "key", "test", "wait", "code"]);
+  for (const l of s.lines().filter((x) => x.event === "step")) assert.equal(l.of, 6);
+  for (const w of s.workers) assert.equal(w.puts(), 1);
+  assert.equal(s.file().pending_step_up?.case, "e");
+  s.deps.readStdin = async () => mailCode(s, "rotate_now");
+  assert.equal(await s.rotate("--now", "--code-stdin"), 0);
+  assert.equal(s.final().state, "old_key_stopped");
+  assert.equal(s.tenant.prev, null);
+});
+
+test("--now: waiting gives up after at most 10 polls even if the local clock does not move", async (t) => {
+  const s = await setup(t, { tty: true, workers: 1, deps: { now: () => 0, sleep: async () => {} } });
+  let polls = 0;
+  s.fake.onRequest = (req) => {
+    if (req.route === "tenant" && s.runRequests().some((r) => r.route === "test_nonce_status")) polls += 1;
+  };
+  assert.equal(await s.rotate("--now"), 2);
+  assert.equal(s.final().state, "network_error");
+  assert.equal(polls, 10);
 });

@@ -6,7 +6,7 @@ import type { ParseArgsOptionsConfig } from "node:util";
 import type { Deps, Io } from "../cli.ts";
 import { collectorBase, collectorMismatch, createApi } from "./api.ts";
 import type { Api } from "./api.ts";
-import { fileSecrets, loadFile, resumeNextKey, signedIn, storeState, workerName, writeSlot } from "./common.ts";
+import { fileSecrets, loadFile, resumeNextKey, settleReplacedNext, signedIn, storeState, workerName, writeSlot } from "./common.ts";
 import type { Save } from "./common.ts";
 import { envFileAllowed, isoNow, upsertWorker, verifyWorker, workerLine, writeEnvKey } from "./connect.ts";
 import { deviceKeys, deviceLogin } from "./device.ts";
@@ -433,7 +433,8 @@ async function login(json: boolean, deps: Deps): Promise<number> {
   if (kept !== null && collectorMismatch(kept, base)) return out.final("collector_mismatch");
 
   out.start("browser");
-  const r = await deviceLogin({ deps, api: createApi(deps, base), out, mode: "login", keys });
+  const api = createApi(deps, base);
+  const r = await deviceLogin({ deps, api, out, mode: "login", keys });
   if (!r.ok) {
     out.end("failed");
     return failWith(out, r.fail);
@@ -442,7 +443,7 @@ async function login(json: boolean, deps: Deps): Promise<number> {
   // Same account: K, the next K and the workers stay; a waiting step goes (its codes are bound to
   // the old R). Another account: the old K is not this account's, so the file starts over.
   const same = kept !== null && kept.account === r.account;
-  const next: ActiveAccount =
+  let next: ActiveAccount =
     same && kept !== null
       ? { ...kept, contact_hint: r.contactHint, read_token: keys.read, pending_step_up: null }
       : {
@@ -457,6 +458,13 @@ async function login(json: boolean, deps: Deps): Promise<number> {
           deleted: null,
           workers: [],
         };
+  // A waiting replace_current goes unredeemed: its next K is settled (current → write_key, else
+  // discarded), so it is never sent again as a plain rotation. Not settled (GET /tenant failed):
+  // the step and its next K stay for the next rotate.
+  if (same && kept !== null && kept.pending_step_up?.purpose === "replace_current" && kept.write_key_next !== null) {
+    const settled = await settleReplacedNext(api, next);
+    next = settled ?? { ...next, pending_step_up: kept.pending_step_up };
+  }
   try {
     await writeAccount(deps, next);
   } catch (e) {

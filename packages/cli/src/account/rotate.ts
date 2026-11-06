@@ -1,7 +1,7 @@
 import type { Deps } from "../cli.ts";
 import { createApi } from "./api.ts";
 import type { Api, ApiError, Rotated, TenantView } from "./api.ts";
-import { fileSecrets, resumeNextKey, signedIn, storeState, workerName, writeSlot } from "./common.ts";
+import { fileSecrets, resumeNextKey, settleReplacedNext, signedIn, storeState, workerName, writeSlot } from "./common.ts";
 import type { Save } from "./common.ts";
 import { isoNow, putIntoWorker, upsertWorker, verifyWorker, workerLine } from "./connect.ts";
 import type { WorkerStatus } from "./connect.ts";
@@ -111,16 +111,22 @@ export async function rotate(json: boolean, deps: Deps, o: RotateOptions): Promi
 // --- shared pieces ------------------------------------------------------------------------------
 
 /**
- * The end of the run: a running step ends as failed, an end state of the list clears the waiting
- * step, then the final line.
+ * The end of the run: a running step ends as failed, an end state of the list clears a waiting
+ * step of rotate (a step of delete is never touched; `keep` leaves the step when the run ended
+ * before its code could be sent), then the final line. A cleared replace_current step settles
+ * its next K first.
  */
-async function finish(ctx: Ctx, state: FinalState, o: { extra?: Record<string, unknown>; hint?: HintVars } = {}): Promise<number> {
+async function finish(ctx: Ctx, state: FinalState, o: { extra?: Record<string, unknown>; hint?: HintVars; keep?: boolean } = {}): Promise<number> {
   ctx.out.end("failed");
-  if (clearsPending(state) && ctx.file.pending_step_up !== null) {
-    const failed = await ctx.save({ ...ctx.file, pending_step_up: null });
-    if (failed !== null) return ctx.out.final(failed);
+  const p = ctx.file.pending_step_up;
+  if (o.keep !== true && clearsPending(state) && p !== null && p.command === "rotate") {
+    const next = p.purpose === "replace_current" ? await settleReplacedNext(ctx.api, ctx.file) : { ...ctx.file, pending_step_up: null };
+    if (next !== null) {
+      const failed = await ctx.save(next);
+      if (failed !== null) return ctx.out.final(failed);
+    }
   }
-  return ctx.out.final(state, o);
+  return ctx.out.final(state, { extra: o.extra, hint: o.hint });
 }
 
 /** The final line of an API error (409 no_write_key keeps the path of server_key_missing). */
@@ -135,21 +141,20 @@ const guarded = (ctx: Ctx) => ctx.out.final("internal_error");
 type Started = { ok: true; view: TenantView; stored: PendingStepUp | null } | { ok: false; exit: number };
 
 /**
- * A run without --code-stdin starts over: write_key_next is resumed (GET /tenant first), then a
- * waiting step of rotate goes, together with the next K of a waiting replace_current (it was never
- * sent without its code). `stored` is that step, for the notice code_already_sent.
+ * A run without --code-stdin starts over: write_key_next is resumed (GET /tenant first; a next K
+ * of a waiting replace_current that is already current becomes write_key). A waiting
+ * replace_current then goes with its next K (never sent without its code); a waiting rotate_now
+ * stays until an end state or a new step-up replaces it. `stored` is the step as found, for the
+ * notice code_already_sent.
  */
 async function freshStart(ctx: Ctx): Promise<Started> {
   const stored = ctx.file.pending_step_up;
   const resumed = await resumeNextKey(ctx.api, ctx.out, ctx.file, ctx.save);
   if (!resumed.ok) return resumed;
   const p = ctx.file.pending_step_up;
-  if (p !== null && p.command === "rotate") {
-    const failed = await ctx.save({
-      ...ctx.file,
-      pending_step_up: null,
-      write_key_next: p.purpose === "replace_current" ? null : ctx.file.write_key_next,
-    });
+  if (p !== null && p.purpose === "replace_current") {
+    // resumeNextKey just saw that the next K is not the current key: it is discarded.
+    const failed = await ctx.save({ ...ctx.file, pending_step_up: null, write_key_next: null });
     if (failed !== null) return { ok: false, exit: ctx.out.final(failed) };
   }
   return { ok: true, view: resumed.view, stored };
@@ -342,6 +347,8 @@ interface NowRun {
 
 const WAIT_EVERY_MS = 10_000;
 const WAIT_FOR_MS = 90_000;
+/** A second bound besides the clock: at most this many GET /tenant while waiting. */
+const WAIT_POLLS = WAIT_FOR_MS / WAIT_EVERY_MS + 1;
 /** The old key must have been quiet this long after T_check (covers the collector's one-minute throttle). */
 const QUIET_MS = 60_000;
 
@@ -441,15 +448,19 @@ async function continueStep(ctx: Ctx, forceStop: boolean): Promise<number> {
 
 /**
  * Without force_stop every known worker must be provable: no known worker gives no T_check
- * (old_key_still_used), a worker without url cannot be tested (url_required, naming them).
+ * (old_key_still_used, variant without a worker), a worker without url cannot be tested
+ * (url_required, naming them). No code was sent, so a waiting step stays.
  */
 async function unprovable(ctx: Ctx, view: TenantView): Promise<number | null> {
-  if (ctx.file.workers.length === 0) return finish(ctx, "old_key_still_used", { extra: { last_seen: view.write_key_prev_last_seen_at } });
+  if (ctx.file.workers.length === 0) {
+    return finish(ctx, "old_key_still_used", { extra: { last_seen: view.write_key_prev_last_seen_at }, hint: { no_workers: true }, keep: true });
+  }
   const noUrl = ctx.file.workers.filter((w) => w.url === null);
   if (noUrl.length === 0) return null;
   return finish(ctx, "url_required", {
     extra: { workers: noUrl.map((w) => workerLine(w, "no_url")) },
     hint: { rotate_now: true, names: noUrl.map(workerName) },
+    keep: true,
   });
 }
 
@@ -581,7 +592,7 @@ async function waitStep(ctx: Ctx, tCheck: string): Promise<number | null> {
   const started = deps.now();
   const until = Date.parse(tCheck) + QUIET_MS;
   let view: TenantView;
-  for (;;) {
+  for (let polls = 1; ; polls++) {
     const r = await ctx.api.tenant(ctx.file.read_token);
     if (!r.ok) return finishApi(ctx, r.error);
     if (Date.parse(r.value.server_time) >= until) {
@@ -589,7 +600,7 @@ async function waitStep(ctx: Ctx, tCheck: string): Promise<number | null> {
       break;
     }
     // The server's clock does not move on: give up after 90 s.
-    if (deps.now() - started + WAIT_EVERY_MS > WAIT_FOR_MS) return finish(ctx, "network_error");
+    if (polls >= WAIT_POLLS || deps.now() - started + WAIT_EVERY_MS > WAIT_FOR_MS) return finish(ctx, "network_error");
     await deps.sleep(WAIT_EVERY_MS);
     if (out.stopped) return guarded(ctx);
   }
