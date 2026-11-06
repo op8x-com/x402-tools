@@ -362,6 +362,23 @@ test("rotate sends {kind, new_sha256}, or with replace_current:true and code; an
   assert.deepEqual(fake.violations, []);
 });
 
+test("retry_after_s above one day (86400 s) is unexpected_response; one day exactly is taken", async () => {
+  const a = account();
+  const problem = (status: number, code: string, retry: number) => ({
+    status,
+    headers: { "content-type": "application/problem+json" },
+    body: JSON.stringify({ type: `https://op8x.com/errors/${code}`, title: "x", status, code, retry_after_s: retry }),
+  });
+  fake.respond("rotate", problem(409, "rotation_pending", 86_401));
+  expectError(await api.rotate(a.r, { newHash: keyHash(generateKey("w")) }), { state: "unexpected_response", status: 409, code: "rotation_pending" });
+  fake.respond("step_up", problem(429, "rate_limited", 9_007_199_254_740_991));
+  expectError(await api.stepUp(a.r, "delete"), { state: "unexpected_response", status: 429, code: "rate_limited" });
+  fake.respond("step_up", problem(429, "rate_limited", 86_400));
+  const day = await api.stepUp(a.r, "delete");
+  assert.equal(day.ok, false);
+  assert.equal(!day.ok && day.error.state, "rate_limited");
+});
+
 test("rotate: key_conflict, no_previous (nothing_to_stop), code_missing", async () => {
   const a = account();
   const b = account();

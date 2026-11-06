@@ -286,6 +286,8 @@ function nonceStatusShape(v: unknown): NonceStatus | null {
 const TIMEOUT_MS = 10_000;
 const BUSY_STEP_MS = 10_000;
 const BUSY_MAX_MS = 120_000;
+/** The longest retry_after_s taken from the collector: one day (a rotation's overlap). */
+const MAX_RETRY_AFTER_S = 86_400;
 /** A problem code is passed on only in this form; anything else is reported as null. */
 const PROBLEM_CODE = /^[a-z0-9_]{1,64}$/;
 
@@ -378,8 +380,9 @@ export function createApi(deps: Pick<Deps, "now" | "sleep" | "fetchImpl">, base:
   }
 
   const keyAuth: ErrorMap = (a) => (a.status === 401 && a.code === "key_auth" ? { state: "key_auth" } : null);
+  /** More than a day is no wait the CLI expects (and would make an absurd date): unexpected_response. */
   const withRetry = (state: "rotation_pending" | "rate_limited", p: Obj): ApiError | null =>
-    isCount(p.retry_after_s) ? { state, retry_after_s: p.retry_after_s, retry_at: retryAt(p.retry_after_s) } : null;
+    isCount(p.retry_after_s) && p.retry_after_s <= MAX_RETRY_AFTER_S ? { state, retry_after_s: p.retry_after_s, retry_at: retryAt(p.retry_after_s) } : null;
   /** The answers of a route that takes a step-up code. */
   const codeErrors: ErrorMap = (a, p) => {
     if (a.status === 422 && a.code === "code_invalid" && isCount(p.attempts_left) && p.attempts_left <= 5) return { state: "code_invalid", attempts_left: p.attempts_left };
