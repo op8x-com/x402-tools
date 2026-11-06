@@ -1,17 +1,21 @@
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import type { ParseArgsOptionsConfig } from "node:util";
 import type { Deps, Io } from "../cli.ts";
 import { collectorBase, collectorMismatch, createApi } from "./api.ts";
+import type { Api, TenantView } from "./api.ts";
+import { envFileAllowed, isoNow, upsertWorker, verifyWorker, workerLine, writeEnvKey } from "./connect.ts";
 import { deviceKeys, deviceLogin } from "./device.ts";
-import type { DeviceFailure } from "./device.ts";
-import { keyFingerprint } from "./keys.ts";
+import type { DeviceFailure, DeviceKeys } from "./device.ts";
+import { keyFingerprint, keyHash } from "./keys.ts";
 import { createOutput, finalLine } from "./output.ts";
 import type { AccountCommand, FinalState, Output } from "./output.ts";
-import { ACCOUNT_SCHEMA, StoreError, deleteAccount, parseAccount, readAccount, writeAccount } from "./store.ts";
-import type { AccountFile, ActiveAccount } from "./store.ts";
+import { ACCOUNT_SCHEMA, StoreError, accountPath, deleteAccount, parseAccount, readAccount, writeAccount } from "./store.ts";
+import type { AccountFile, ActiveAccount, WorkerEntry } from "./store.ts";
+import { cloudflareLoggedIn, createSecrets, findWrangler, isWranglerName, resolveTarget } from "./wrangler.ts";
+import type { SecretResult, WranglerBin, WranglerTarget } from "./wrangler.ts";
 
 type Value = string | boolean | (string | boolean)[] | undefined;
 type Values = Record<string, Value>;
@@ -26,14 +30,16 @@ interface CommandSpec {
   run: (values: Values, deps: Deps, args: string[]) => Promise<number>;
 }
 
-const WORD = /^[a-z0-9-]{1,63}$/;
 const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
-function word(v: Value): boolean {
-  return v === undefined || (typeof v === "string" && WORD.test(v));
+/** The pattern of the options table without a leading hyphen, which wrangler would read as a flag. */
+function wranglerWord(v: Value): boolean {
+  return v === undefined || isWranglerName(v);
 }
 
-/** https:, or http: on a loopback host only. */
+const str = (v: Value): string | undefined => (typeof v === "string" ? v : undefined);
+
+/** https:, or http: on a loopback host only; no user name or password in the URL. */
 function testUrl(v: Value): boolean {
   if (v === undefined) return true;
   if (typeof v !== "string") return false;
@@ -43,6 +49,7 @@ function testUrl(v: Value): boolean {
   } catch {
     return false;
   }
+  if (url.username !== "" || url.password !== "") return false;
   return url.protocol === "https:" || (url.protocol === "http:" && LOOPBACK.has(url.hostname));
 }
 
@@ -50,7 +57,7 @@ const INIT_USAGE = `Usage: op8x init [--env <name> | --env-file <path>] [--name 
 
 Options:
   --env <name>         the wrangler environment to set up
-  --name <worker>      the worker name, if the wrangler configuration has none
+  --name <worker>      the worker name, in place of the name in the wrangler configuration
   --url <url>          an https address the op8x module handles, for the test request
   --env-file <path>    write the server key to this git-ignored file instead of wrangler
   --json               print JSON Lines
@@ -83,8 +90,7 @@ Options:
 
 const JSON_ONLY: ParseArgsOptionsConfig = { json: { type: "boolean" } };
 
-// Registered are only the commands that exist. `init` is a placeholder for now: it checks its
-// options and ends with not_available_yet.
+// Registered are only the commands that exist.
 const COMMANDS: Record<AccountCommand, CommandSpec> = {
   init: {
     usage: INIT_USAGE,
@@ -97,12 +103,18 @@ const COMMANDS: Record<AccountCommand, CommandSpec> = {
     },
     positionals: 0,
     valid: (v) =>
-      word(v.env) &&
-      word(v.name) &&
+      wranglerWord(v.env) &&
+      wranglerWord(v.name) &&
       testUrl(v.url) &&
       (v["env-file"] === undefined || (typeof v["env-file"] === "string" && v["env-file"] !== "")) &&
       !(v["env-file"] !== undefined && (v.env !== undefined || v.name !== undefined)),
-    run: async (values, deps) => notAvailableYet("init", values.json === true, deps),
+    run: (values, deps) =>
+      init(values.json === true, deps, {
+        env: str(values.env),
+        name: str(values.name),
+        url: str(values.url),
+        envFile: str(values["env-file"]),
+      }),
   },
   login: { usage: LOGIN_USAGE, options: JSON_ONLY, positionals: 0, valid: () => true, run: (v, deps) => login(v.json === true, deps) },
   logout: { usage: LOGOUT_USAGE, options: JSON_ONLY, positionals: 0, valid: () => true, run: (v, deps) => logout(v.json === true, deps) },
@@ -149,10 +161,6 @@ function usageError(command: AccountCommand, io: Io, json: boolean): number {
   return 4;
 }
 
-function notAvailableYet(command: AccountCommand, json: boolean, deps: Deps): number {
-  deps.out(json ? finalLine(command, "not_available_yet", 1) : `op8x ${command} is not available in this version yet.\n`);
-  return 1;
-}
 
 // --- shared steps -----------------------------------------------------------------------------
 
@@ -204,6 +212,260 @@ async function signedIn(deps: Deps, out: Output, hold: (f: AccountFile | null) =
 function storeState(e: unknown): FinalState {
   if (e instanceof StoreError) return e.code === "permissions_failed" ? "permissions_failed" : "internal_error";
   return "permissions_failed";
+}
+
+// --- init -------------------------------------------------------------------------------------
+
+interface InitOptions {
+  env?: string;
+  name?: string;
+  url?: string;
+  envFile?: string;
+}
+
+/** Where K goes: a wrangler worker in the current folder, or a git-ignored env file. */
+type Place =
+  | { kind: "wrangler"; bin: WranglerBin; target: WranglerTarget }
+  | { kind: "env_file"; path: string };
+
+/**
+ * op8x init (data flow 1-9). Without an op8x file (a remainder file counts as none): step
+ * cloudflare (the project's wrangler, the Cloudflare login, the worker), step browser (device login
+ * with mode init and write_sha256), the op8x file is written right after granted and before
+ * wrangler; server_key ignored ends with server_key_missing (E1). On a signed-in computer (CUJ 2)
+ * only key and test: write_key_next is resumed first, then K must be the account's current key.
+ * Step key puts K (wrangler secret put, or the line OP8X_KEY=… in the --env-file); step test sends
+ * one test request with a nonce and waits for the collector to see it (connected, A1).
+ */
+async function init(json: boolean, deps: Deps, o: InitOptions): Promise<number> {
+  let keys: DeviceKeys | null = null;
+  let held: AccountFile | null = null;
+  const loaded = await loadFile(deps);
+  if (loaded.ok) held = loaded.file;
+  const signed = held !== null && held.deleted === null ? held : null;
+  const envFile = o.envFile === undefined ? null : resolve(deps.cwd, o.envFile);
+  const steps = envFile !== null ? (signed === null ? 3 : 2) : signed === null ? 4 : 2;
+  const out = createOutput({
+    command: "init",
+    json,
+    deps,
+    steps,
+    secrets: () => [keys?.device, keys?.read, keys?.write, ...fileSecrets(held)],
+  });
+  const stopped = () => out.final("internal_error");
+
+  const base = collectorBase(deps.env);
+  if (base === null) return out.final("collector_url_not_allowed");
+  if (!loaded.ok) return out.final(loaded.state);
+  if (signed !== null && collectorMismatch(signed, base)) return out.final("collector_mismatch");
+  if (envFile !== null && !(await envFileAllowed(deps, envFile))) return out.final("env_file_not_ignored");
+  const api = createApi(deps, base);
+
+  let file: ActiveAccount | null = null;
+  let key: string;
+  let place: Place | null = envFile === null ? null : { kind: "env_file", path: envFile };
+  const save = async (next: ActiveAccount): Promise<FinalState | null> => {
+    if (out.stopped) return "internal_error";
+    try {
+      await writeAccount(deps, next);
+    } catch (e) {
+      return storeState(e);
+    }
+    file = next;
+    held = next;
+    return null;
+  };
+
+  if (signed === null) {
+    // First time: the worker is checked before an account is made for it.
+    if (place === null) {
+      out.start("cloudflare");
+      if (out.stopped) return stopped();
+      const found = await findPlace(deps, o);
+      if (!found.ok) {
+        out.end("failed");
+        if (found.state === "usage_error") deps.err(INIT_USAGE);
+        return out.final(found.state);
+      }
+      out.end("ok");
+      place = found.place;
+    }
+    out.start("browser");
+    if (out.stopped) return stopped();
+    keys = deviceKeys(true);
+    const r = await deviceLogin({ deps, api, out, mode: "init", keys });
+    if (!r.ok) {
+      out.end("failed");
+      return failWith(out, r.fail);
+    }
+    const accepted = r.serverKey === "accepted" && keys.write !== null;
+    const failed = await save({
+      schema: ACCOUNT_SCHEMA,
+      collector: base,
+      account: r.account,
+      contact_hint: r.contactHint,
+      read_token: keys.read,
+      write_key: accepted ? keys.write : null,
+      write_key_next: null,
+      pending_step_up: null,
+      deleted: null,
+      workers: [],
+    });
+    if (failed !== null) {
+      out.end("failed");
+      return out.final(failed);
+    }
+    out.end("ok");
+    if (!accepted || keys.write === null) return out.final("server_key_missing", { extra: { path: accountPath(deps) } });
+    key = keys.write;
+    out.start("key");
+    if (out.stopped) return stopped();
+  } else {
+    file = signed;
+    out.start("key");
+    if (out.stopped) return stopped();
+    const current = await currentKey(deps, api, out, signed, save);
+    if (!current.ok) {
+      out.end("failed");
+      return current.exit;
+    }
+    key = current.key;
+    if (place === null) {
+      const found = await findPlace(deps, o);
+      if (!found.ok) {
+        out.end("failed");
+        if (found.state === "usage_error") deps.err(INIT_USAGE);
+        return out.final(found.state);
+      }
+      place = found.place;
+    }
+  }
+
+  // Step key: K into the worker.
+  const entry: WorkerEntry =
+    place.kind === "env_file"
+      ? { dir: dirname(place.path), name: null, env: null, env_file: place.path, url: o.url ?? null, deployed_at: "", verified_at: null, key_fingerprint: "" }
+      : { dir: place.target.dir, name: place.target.name, env: place.target.env, env_file: null, url: o.url ?? place.target.url, deployed_at: "", verified_at: null, key_fingerprint: "" };
+  const put = await putKey(deps, out, place, key);
+  if (put === "stopped") return stopped();
+  if (put === "failed") {
+    out.end("failed");
+    return place.kind === "env_file"
+      ? out.final("permissions_failed")
+      : out.final("partial", { extra: { workers: [workerLine(entry, "failed")] }, hint: { names: [workerName(entry)] } });
+  }
+  const stored: WorkerEntry = { ...entry, deployed_at: isoNow(deps), key_fingerprint: keyFingerprint(key) };
+  const savedPut = await save({ ...file!, workers: upsertWorker(file!.workers, stored) });
+  if (savedPut !== null) {
+    out.end("failed");
+    return out.final(savedPut);
+  }
+  out.end("ok");
+
+  // Step test: one test request with a nonce, then the collector must have seen it.
+  if (stored.url === null) {
+    out.skip("test");
+    return out.final("url_required", { extra: { workers: [workerLine(stored, "no_url")] } });
+  }
+  out.start("test");
+  if (out.stopped) return stopped();
+  const v = await verifyWorker({ deps, api, out, readToken: file!.read_token, url: stored.url, explicit: o.url !== undefined });
+  if (!v.ok) {
+    if (v.state === "stopped") return stopped();
+    out.end("failed");
+    const workers = [workerLine(stored, "unverified")];
+    if (v.state === "api") {
+      // 409 no_write_key keeps the catalog sentence of server_key_missing.
+      return out.error(v.error, v.error.state === "server_key_missing" ? { extra: { path: accountPath(deps) } } : {});
+    }
+    return out.final(v.state === "host_refused" ? "url_required" : "deployed_unverified", { extra: { workers } });
+  }
+  const verified: WorkerEntry = { ...stored, verified_at: v.seenAt };
+  const savedTest = await save({ ...file!, workers: upsertWorker(file!.workers, verified) });
+  if (savedTest !== null) {
+    out.end("failed");
+    return out.final(savedTest);
+  }
+  out.end("ok");
+  return out.final("connected", {
+    extra: { account: file!.account, contact_hint: file!.contact_hint, workers: [workerLine(verified, "verified")] },
+  });
+}
+
+/** The name of a worker in a hint: wrangler name (with env), or the env file. */
+function workerName(w: Pick<WorkerEntry, "name" | "env" | "env_file">): string {
+  return w.env_file ?? `${w.name ?? ""}${w.env === null ? "" : ` (env ${w.env})`}`;
+}
+
+type FoundPlace =
+  | { ok: true; place: Place }
+  | { ok: false; state: "wrangler_missing" | "wrangler_too_old" | "cloudflare_login_needed" | "config_unreadable" | "env_required" | "usage_error" };
+
+/** The project's wrangler, the Cloudflare login and the worker of the current folder (data flow 1). */
+async function findPlace(deps: Deps, o: InitOptions): Promise<FoundPlace> {
+  const found = await findWrangler(deps, deps.cwd);
+  if (!found.ok) return found;
+  if (!(await cloudflareLoggedIn(deps, found.bin))) return { ok: false, state: "cloudflare_login_needed" };
+  const target = await resolveTarget(deps.cwd, { env: o.env, name: o.name });
+  if (!target.ok) return target;
+  return { ok: true, place: { kind: "wrangler", bin: found.bin, target: target.target } };
+}
+
+/** K into the place: wrangler secret put (notice secret_put_deploys first), or the env file. */
+async function putKey(deps: Deps, out: Output, place: Place, key: string): Promise<SecretResult> {
+  if (out.stopped) return "stopped";
+  if (place.kind === "wrangler") return createSecrets(deps, out).put(place.bin, place.target, key);
+  try {
+    await writeEnvKey(deps, place.path, key);
+    return "ok";
+  } catch {
+    return "failed";
+  }
+}
+
+type CurrentKey = { ok: true; key: string } | { ok: false; exit: number };
+
+/**
+ * K of a signed-in computer, checked against the account (E1). write_key_next first: is it the
+ * current key, it becomes write_key; else the same POST rotate again (409 key_conflict drops it and
+ * ends with key_conflict). Then: no K → server_key_missing (a running rotation gives the rotate --now
+ * variant); K not the current key → key_mismatch.
+ */
+async function currentKey(
+  deps: Deps,
+  api: Api,
+  out: Output,
+  file: ActiveAccount,
+  save: (next: ActiveAccount) => Promise<FinalState | null>,
+): Promise<CurrentKey> {
+  const fail = (exit: number): CurrentKey => ({ ok: false, exit });
+  let view = await api.tenant(file.read_token);
+  if (!view.ok) return fail(out.error(view.error));
+  let now = file;
+  const currentFp = (v: TenantView) => v.keys.find((k) => k.kind === "write" && k.slot === "current")?.fingerprint;
+  if (now.write_key_next !== null) {
+    const next = now.write_key_next;
+    if (currentFp(view.value) !== keyFingerprint(next)) {
+      const rotated = await api.rotate(now.read_token, { newHash: keyHash(next) });
+      if (!rotated.ok) {
+        if (rotated.error.state !== "key_conflict") return fail(out.error(rotated.error));
+        const dropped = await save({ ...now, write_key_next: null });
+        return fail(out.final(dropped ?? "key_conflict"));
+      }
+    }
+    const promoted = { ...now, write_key: next, write_key_next: null };
+    const failed = await save(promoted);
+    if (failed !== null) return fail(out.final(failed));
+    now = promoted;
+    view = await api.tenant(now.read_token);
+    if (!view.ok) return fail(out.error(view.error));
+  }
+  if (now.write_key === null) {
+    const rotating = view.value.keys.some((k) => k.kind === "write" && k.slot === "previous");
+    return fail(out.final("server_key_missing", { extra: { path: accountPath(deps) }, hint: { rotation_running: rotating } }));
+  }
+  if (currentFp(view.value) !== keyFingerprint(now.write_key)) return fail(out.final("key_mismatch"));
+  return { ok: true, key: now.write_key };
 }
 
 // --- login ------------------------------------------------------------------------------------

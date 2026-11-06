@@ -18,7 +18,7 @@ test("testDeps is complete Deps; a plain Io is not", () => {
   assert.equal(isDeps(partial as never), false);
 });
 
-test("--json init reaches init (stub until the command is built)", async () => {
+test("--json init reaches init (here: no wrangler in the folder)", async () => {
   for (const argv of [["--json", "init"], ["init", "--json"]]) {
     const deps = testDeps();
     assert.equal(await run(argv, deps), 1, argv.join(" "));
@@ -26,7 +26,7 @@ test("--json init reaches init (stub until the command is built)", async () => {
     assert.equal(final.schema, "op8x.cli/1");
     assert.equal(final.command, "init");
     assert.equal(final.final, true);
-    assert.equal(final.state, "not_available_yet");
+    assert.equal(final.state, "wrangler_missing");
     assert.equal(final.exit_code, 1);
     assert.equal(deps.stderr(), "");
   }
@@ -35,7 +35,7 @@ test("--json init reaches init (stub until the command is built)", async () => {
 test("init without --json prints the state as text on stdout", async () => {
   const deps = testDeps();
   assert.equal(await run(["init"], deps), 1);
-  assert.match(deps.stdout(), /not available in this version yet/);
+  assert.match(deps.stdout(), /Run npm i -D wrangler in this project/);
   assert.equal(deps.stdout().includes("{"), false);
 });
 
@@ -51,9 +51,12 @@ test("init accepts every option of its table row", async () => {
     ["init", "--env-file", ENV_FILE, "--url", "https://api.example/paid"],
     ["init", "--env=prod"],
   ]) {
+    // Accepted options reach the command (no help on stderr); here it stops at the missing wrangler
+    // or, for --env-file, at the missing git (env_file_not_ignored).
     const deps = testDeps();
-    assert.equal(await run(argv, deps), 1, argv.join(" "));
+    await run(["--json", ...argv], deps);
     assert.equal(deps.stderr(), "", argv.join(" "));
+    assert.notEqual(lastLine(deps.stdout()).state, "usage_error", argv.join(" "));
   }
 });
 
@@ -71,6 +74,9 @@ const INIT_USAGE_ERRORS: string[][] = [
   ["init", "--env", "a".repeat(64)],
   ["init", "--name", "API"],
   ["init", "--name", "a.b"],
+  ["init", "--env=-x"], // flag form (isWranglerName)
+  ["init", "--name=-api"],
+  ["init", "--url", "https://user:pw@api.example/paid"], // no credentials in the URL
   ["init", "--url", "not a url"],
   ["init", "--url", "http://api.example/paid"], // http only on loopback
   ["init", "--url", "ftp://api.example/paid"],
@@ -136,9 +142,8 @@ test("the global help lists the account commands built so far", async () => {
   assert.ok(help.includes("\n  op8x login "), help);
   assert.ok(help.includes("\n  op8x logout "), help);
   assert.ok(help.includes("\n  op8x import-key <path> "), help);
+  assert.ok(help.includes("\n  op8x init "), help);
   assert.ok(help.includes("\n  --payer <address>      your own paying wallet; warns if it is a payTo\n"));
-  // init is still a placeholder.
-  assert.equal(help.includes("op8x init"), false);
 });
 
 test("login, logout and import-key reach their commands (options before the word too)", async () => {
