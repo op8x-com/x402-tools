@@ -1,7 +1,7 @@
 {
   "name": "@op8x/cli",
-  "version": "0.0.3",
-  "description": "Check an x402 endpoint from the outside: can real clients read its 402 challenge?",
+  "version": "0.1.0",
+  "description": "Checks x402 endpoints from the outside and connects them to op8x analytics.",
   "license": "MIT",
   "type": "module",
   "bin": {
