@@ -22,7 +22,7 @@ export interface FakeAnswer {
   stderr?: string;
 }
 
-export type FakeOp = "whoami" | "put" | "delete" | "other";
+export type FakeOp = "whoami" | "put" | "delete" | "list" | "other";
 
 export interface FakeWrangler {
   /** The project folder (the worker folder; cwd of the command). */
@@ -51,6 +51,8 @@ export const LOGGED_IN = `${JSON.stringify(
   null,
   4,
 )}\n`;
+/** The answer of secret list --format json for these secret names (pretty JSON, like wrangler). */
+export const secretList = (names: string[]) => `${JSON.stringify(names.map((name) => ({ name, type: "secret_text" })), null, "  ")}\n`;
 /** The answer of whoami --json when not logged in (wrangler writes an empty line first, then exits 1). */
 export const LOGGED_OUT = `\n{"loggedIn":false}\n`;
 
@@ -63,7 +65,7 @@ const chunks = [];
 process.stdin.on("data", (c) => chunks.push(c));
 process.stdin.on("end", () => {
   const argv = process.argv.slice(2);
-  const op = argv[0] === "whoami" ? "whoami" : argv[0] === "secret" && (argv[1] === "put" || argv[1] === "delete") ? argv[1] : "other";
+  const op = argv[0] === "whoami" ? "whoami" : argv[0] === "secret" && (argv[1] === "put" || argv[1] === "delete" || argv[1] === "list") ? argv[1] : "other";
   fs.appendFileSync(LOG, JSON.stringify({
     argv,
     stdin: Buffer.concat(chunks).toString("utf8"),
@@ -106,6 +108,8 @@ export function createFakeWrangler(o: FakeWranglerOptions = {}): FakeWrangler {
     whoami: { exit: 0, stdout: LOGGED_IN },
     put: { exit: 0 },
     delete: { exit: 0 },
+    // secret list: the worker still holds OP8X_KEY unless a test says otherwise.
+    list: { exit: 0, stdout: secretList(["OP8X_KEY"]) },
     other: { exit: 0 },
   };
   writeFileSync(answersPath, JSON.stringify(answers));

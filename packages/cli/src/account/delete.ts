@@ -5,7 +5,7 @@ import { removeEnvKey, workerLine } from "./connect.ts";
 import { createOutput } from "./output.ts";
 import type { FinalState, Output } from "./output.ts";
 import { clearsPending, matchPending, readCode, startStepUp } from "./stepup.ts";
-import { ACCOUNT_SCHEMA, deleteAccount as removeAccountFile, writeAccount } from "./store.ts";
+import { ACCOUNT_SCHEMA, accountPath, deleteAccount as removeAccountFile, writeAccount } from "./store.ts";
 import type { AccountFile, ActiveAccount, DeletedRemainder, PendingStepUp, WorkerEntry } from "./store.ts";
 import { createSecrets, findWrangler } from "./wrangler.ts";
 import type { SecretResult, Secrets } from "./wrangler.ts";
@@ -53,7 +53,8 @@ export async function deleteCommand(json: boolean, deps: Deps, o: { codeStdin: b
     // The remainder file: the account is gone already; only the secrets left are retried.
     out.skip("code");
     out.skip("delete_account");
-    return removeStage(deps, out, found.collector, found.workers, { action_id: found.deleted.action_id, tenant: null, ended_at: null });
+    const receipt = { action_id: found.deleted.action_id, tenant: null, ended_at: null };
+    return removeStage(deps, out, { collector: found.collector, workers: found.workers, receipt, again: true });
   }
 
   let file: ActiveAccount = found;
@@ -161,11 +162,24 @@ export async function deleteCommand(json: boolean, deps: Deps, o: { codeStdin: b
   }
   const receipt: Receipt = { action_id: d.value.action_id, tenant: d.value.tenant, ended_at: d.value.ended_at };
   // The account is gone: R and K leave the op8x file at once, every worker stays listed until its
-  // secret is removed, so a run that breaks off is finished by the next delete. If this write
-  // fails, step remove_file writes or removes the file again and reports a failure there.
-  await writeAccount(deps, remainder(file.collector, receipt.action_id, file.workers)).catch(() => {});
+  // secret is removed, so a run that breaks off is finished by the next delete. A failed write does
+  // not stop the run (removing the secrets matters more): step remove_file writes or removes the
+  // file once more, and if that fails too the run ends with the variant of permissions_failed that
+  // names the receipt and the file to delete by hand. Every other end before remove_file is the
+  // output guard, after which nothing may be printed.
+  await saveRemainder(deps, file.collector, receipt.action_id, file.workers);
   out.end("ok");
-  return removeStage(deps, out, file.collector, file.workers, receipt);
+  return removeStage(deps, out, { collector: file.collector, workers: file.workers, receipt, again: false });
+}
+
+/** Writes the remainder file; false if that failed (the caller goes on, see remove_file). */
+async function saveRemainder(deps: Deps, collector: string, actionId: string, workers: WorkerEntry[]): Promise<boolean> {
+  try {
+    await writeAccount(deps, remainder(collector, actionId, workers));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function remainder(collector: string, actionId: string, workers: WorkerEntry[]): DeletedRemainder {
@@ -183,19 +197,35 @@ function remainder(collector: string, actionId: string, workers: WorkerEntry[]):
   };
 }
 
+interface Stage {
+  collector: string;
+  workers: readonly WorkerEntry[];
+  receipt: Receipt;
+  /** A run on the remainder file: the secrets are removed again (see removeFromWorker). */
+  again: boolean;
+}
+
 /**
- * Steps remove_secrets and remove_file: OP8X_KEY out of every worker, then the op8x file goes, or
- * (some worker failed) the remainder file names only those workers: deleted_partial.
+ * Steps remove_secrets and remove_file: OP8X_KEY out of every worker, each success saved at once
+ * (the remainder file then names only the workers still to do), then the op8x file goes, or (some
+ * worker failed) the remainder file names only those workers: deleted_partial.
  */
-async function removeStage(deps: Deps, out: Output, collector: string, workers: readonly WorkerEntry[], receipt: Receipt): Promise<number> {
+async function removeStage(deps: Deps, out: Output, o: Stage): Promise<number> {
+  const { collector, workers, receipt } = o;
   out.start("remove_secrets");
   if (out.stopped) return out.final("internal_error");
   const secrets = createSecrets(deps, out);
   const left: WorkerEntry[] = [];
-  for (const w of workers) {
-    const r = await removeFromWorker(deps, secrets, out, w);
+  for (const [i, w] of workers.entries()) {
+    const r = await removeFromWorker(deps, secrets, out, w, o.again);
     if (r === "stopped") return out.final("internal_error");
-    if (r === "failed") left.push(w);
+    if (r === "failed") {
+      left.push(w);
+      continue;
+    }
+    // A failed save does not stop the run: remove_file writes the file again (see deleteCommand).
+    const rest = [...left, ...workers.slice(i + 1)];
+    if (rest.length > 0) await saveRemainder(deps, collector, receipt.action_id, rest);
   }
   out.end(left.length > 0 ? "failed" : "ok");
 
@@ -204,9 +234,12 @@ async function removeStage(deps: Deps, out: Output, collector: string, workers: 
   try {
     if (left.length === 0) await removeAccountFile(deps);
     else await writeAccount(deps, remainder(collector, receipt.action_id, left));
-  } catch (e) {
+  } catch {
+    // The account is gone either way: the variant of permissions_failed names the receipt and the
+    // file to delete by hand.
     out.end("failed");
-    return out.final(storeState(e), { extra: { receipt } });
+    const path = accountPath(deps);
+    return out.final("permissions_failed", { extra: { receipt, path }, hint: { after_delete_path: path } });
   }
   out.end("ok");
   if (left.length === 0) return out.final("deleted", { extra: { receipt } });
@@ -218,10 +251,13 @@ async function removeStage(deps: Deps, out: Output, collector: string, workers: 
 
 /**
  * OP8X_KEY out of one known worker: the line in an env file (a file that is gone counts as done),
- * or wrangler secret delete with the project's wrangler in the worker's folder. "stopped": the
+ * or wrangler secret delete with the project's wrangler in the worker's folder. wrangler fails on
+ * a secret that is not there (the API answers the DELETE with an error), so on the remainder file
+ * (`again`: an earlier run may have removed it already, or the human did) a failed secret delete
+ * is followed by the read-only secret list: OP8X_KEY absent counts as removed. "stopped": the
  * output guard hit.
  */
-async function removeFromWorker(deps: Deps, secrets: Secrets, out: Output, w: WorkerEntry): Promise<SecretResult> {
+async function removeFromWorker(deps: Deps, secrets: Secrets, out: Output, w: WorkerEntry, again: boolean): Promise<SecretResult> {
   if (out.stopped) return "stopped";
   if (w.env_file !== null) {
     try {
@@ -234,5 +270,10 @@ async function removeFromWorker(deps: Deps, secrets: Secrets, out: Output, w: Wo
   if (w.name === null) return "failed";
   const found = await findWrangler(deps, w.dir);
   if (!found.ok) return "failed";
-  return secrets.remove(found.bin, { dir: w.dir, name: w.name, env: w.env });
+  const target = { dir: w.dir, name: w.name, env: w.env };
+  const r = await secrets.remove(found.bin, target);
+  if (r !== "failed" || !again) return r;
+  const held = await secrets.holds(found.bin, target);
+  if (held === "stopped") return "stopped";
+  return held === "absent" ? "ok" : "failed";
 }

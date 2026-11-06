@@ -876,6 +876,37 @@ export interface Secrets {
   put: (bin: WranglerBin, target: SecretTarget, key: string) => Promise<SecretResult>;
   /** `secret delete OP8X_KEY` without stdin data (wrangler ≥ 4.152.0 confirms by itself). */
   remove: (bin: WranglerBin, target: SecretTarget) => Promise<SecretResult>;
+  /**
+   * Read only: `secret list --format json`; is OP8X_KEY among the worker's secret names? Only the
+   * names are read; nothing of the answer is kept or shown. failed = exit ≠ 0, a refused target,
+   * no start, or an answer that is not a JSON list of {name}.
+   */
+  holds: (bin: WranglerBin, target: SecretTarget) => Promise<"present" | "absent" | "failed" | "stopped">;
+}
+
+/**
+ * The secret names in the answer of `secret list --format json` (a JSON array of {name, type},
+ * pretty-printed; a line before it is skipped), or null.
+ */
+export function secretNames(stdout: string): string[] | null {
+  const text = stdout.trim();
+  const start = text.startsWith("[") ? 0 : text.indexOf("\n[") + 1;
+  if (start === 0 && !text.startsWith("[")) return null;
+  let v: unknown;
+  try {
+    v = JSON.parse(text.slice(start));
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(v)) return null;
+  const names: string[] = [];
+  for (const item of v) {
+    if (typeof item !== "object" || item === null) return null;
+    const name = (item as { name?: unknown }).name;
+    if (typeof name !== "string") return null;
+    names.push(name);
+  }
+  return names;
 }
 
 /**
@@ -889,12 +920,13 @@ export interface Secrets {
  * that file. Without one, the name is pinned by `--name`. An unreadable configuration refuses the
  * target. null: the target is refused (no start).
  */
-async function secretArgs(verb: "put" | "delete", t: SecretTarget): Promise<string[] | null> {
+async function secretArgs(verb: "put" | "delete" | "list", t: SecretTarget): Promise<string[] | null> {
   if (!isWranglerName(t.name) || (t.env !== null && !isWranglerName(t.env))) return null;
   const read = await readWranglerConfig(t.dir);
   if (!read.ok) return null;
-  const pin = read.file === null ? [] : ["--config", read.file];
-  const head = ["secret", verb, WRANGLER_SECRET];
+  // list names no key and asks for JSON, the only answer op8x reads.
+  const pin = [...(read.file === null ? [] : ["--config", read.file]), ...(verb === "list" ? ["--format", "json"] : [])];
+  const head = verb === "list" ? ["secret", "list"] : ["secret", verb, WRANGLER_SECRET];
   if (t.env === null) return [...head, "--name", t.name, ...pin];
   const suffix = `-${t.env}`;
   const base = t.name.slice(0, -suffix.length);
@@ -933,6 +965,18 @@ export function createSecrets(deps: RunDeps, out: Output): Secrets {
       if (out.stopped) return "stopped";
       const r = await runWrangler(deps, bin, args);
       return r !== null && r.code === 0 ? "ok" : "failed";
+    },
+    async holds(bin, target) {
+      if (out.stopped) return "stopped";
+      if (!sameDir(bin, target)) return "failed";
+      const args = await secretArgs("list", target);
+      if (args === null) return "failed";
+      if (out.stopped) return "stopped";
+      const r = await runWrangler(deps, bin, args);
+      if (r === null || r.code !== 0) return "failed";
+      const names = secretNames(r.stdout);
+      if (names === null) return "failed";
+      return names.includes(WRANGLER_SECRET) ? "present" : "absent";
     },
   };
 }

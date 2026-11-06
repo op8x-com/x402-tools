@@ -12,7 +12,7 @@ import type { Deps } from "../src/cli.ts";
 import { tempDir, testDeps } from "./account-deps.ts";
 import { startFakeCollector } from "./fake-collector.ts";
 import type { FakeCollector, FakeTenant } from "./fake-collector.ts";
-import { createFakeWrangler } from "./fake-wrangler.ts";
+import { createFakeWrangler, secretList } from "./fake-wrangler.ts";
 import type { FakeWrangler } from "./fake-wrangler.ts";
 
 type Line = Record<string, unknown>;
@@ -581,8 +581,127 @@ test("delete: an output guard hit stops before the next side effect", async (t) 
     assert.deepEqual(routes(s), expectRoutes);
     assert.equal(s.fake.tenant(s.tenant.name).deleted, deleted);
     for (const w of s.workers) assert.equal(w.deletes().length, 0, token);
-    assert.notEqual(s.file(), null);
+    const f = s.file();
+    assert.notEqual(f, null);
+    if (deleted) {
+      // The account is gone: the file already holds no R and no K, and still names every worker.
+      assert.equal(f?.read_token, null);
+      assert.equal(f?.write_key, null);
+      assert.equal(f?.write_key_next, null);
+      assert.notEqual(f?.deleted, null);
+      assert.deepEqual(f?.workers, s.workers.map((w) => w.entry));
+    } else {
+      assert.equal(f?.read_token, s.read);
+    }
   }
+});
+
+// --- progress per worker, and file failures after the account is gone ---------------------------------
+
+test("each removed worker leaves the remainder file at once: a run that breaks off is finished by the next delete", async (t) => {
+  const s = await setup(t, { workers: 3, tty: true });
+  // The run "breaks off" while the second worker's secret delete runs: the file as it is then.
+  let snapshot: string | null = null;
+  s.deps.exec = async (file, args, opts) => {
+    if (args.includes("delete") && args.includes("api2")) snapshot = readFileSync(accountPath(s.deps), "utf8");
+    return realExec(file, args, opts);
+  };
+  assert.equal(await s.remove(), 0);
+  assert.ok(snapshot !== null);
+  const broken = JSON.parse(snapshot) as AccountFile;
+  assert.equal(broken.read_token, null);
+  assert.deepEqual(broken.workers, [s.workers[1]!.entry, s.workers[2]!.entry]);
+
+  // Back to that moment; the secrets of api1 (done) and api2 (deleted just before the break) are gone.
+  writeFileSync(accountPath(s.deps), snapshot);
+  s.workers[1]!.wrangler.answer("delete", { exit: 1 });
+  s.workers[1]!.wrangler.answer("list", { exit: 0, stdout: secretList(["OTHER_SECRET"]) });
+  assert.equal(await s.remove(), 0);
+  assert.equal(s.runRequests().length, 0);
+  assert.equal(s.final().state, "deleted");
+  assert.equal(s.file(), null);
+  assert.equal(s.workers[0]!.deletes().length, 1, "a removed worker is not touched again");
+});
+
+test("remainder run: a secret removed by hand counts as removed (secret list, read only); present or unknown stays", async (t) => {
+  const s = await setup(t, { workers: 1 });
+  const w = s.workers[0]!;
+  const remainder: AccountFile = {
+    schema: "op8x.account/1",
+    collector: s.fake.url,
+    account: null,
+    contact_hint: null,
+    read_token: null,
+    write_key: null,
+    write_key_next: null,
+    pending_step_up: null,
+    deleted: { action_id: "0b4e2f1a-1111-4222-8333-444455556666" },
+    workers: [w.entry],
+  };
+  await writeAccount(s.deps, remainder);
+  w.wrangler.answer("delete", { exit: 1 });
+
+  // Still there, or the list cannot be read: the worker stays.
+  for (const list of [{ exit: 0, stdout: secretList(["OP8X_KEY"]) }, { exit: 1 }, { exit: 0, stdout: "not json" }]) {
+    w.wrangler.answer("list", list);
+    assert.equal(await s.remove(), 1);
+    assert.equal(s.final().state, "deleted_partial");
+    assert.deepEqual(s.file(), remainder);
+  }
+
+  w.wrangler.answer("list", { exit: 0, stdout: `\n${secretList(["OTHER_SECRET"])}` });
+  assert.equal(await s.remove(), 0);
+  assert.equal(s.final().state, "deleted");
+  assert.equal(s.file(), null);
+  assert.equal(s.runRequests().length, 0);
+  const list = w.wrangler.calls().filter((c) => c.argv[1] === "list");
+  assert.deepEqual(list.at(-1)?.argv, ["secret", "list", "--name", "api1", "--config", join(w.wrangler.dir, "wrangler.toml"), "--format", "json"]);
+  assert.equal(list.at(-1)?.stdin, "");
+  assert.equal(s.deps.stdout().includes("OTHER_SECRET"), false, "the answer of secret list is never shown");
+});
+
+test("the run that deletes the account does not ask secret list: a failed secret delete stays", async (t) => {
+  const s = await setup(t, { workers: 1, tty: true });
+  s.workers[0]!.wrangler.answer("delete", { exit: 1 });
+  s.workers[0]!.wrangler.answer("list", { exit: 0, stdout: secretList([]) });
+  assert.equal(await s.remove(), 1);
+  assert.equal(s.final().state, "deleted_partial");
+  assert.equal(s.workers[0]!.wrangler.calls().some((c) => c.argv[1] === "list"), false);
+});
+
+test("the op8x file cannot be written after the account is gone: permissions_failed names receipt and path", async (t) => {
+  // Run 1 stores the step; then every write of the op8x file fails (win32 without SystemRoot).
+  const s = await setup(t, { workers: 2 });
+  assert.equal(await s.remove(), 1);
+  const active = readFileSync(accountPath(s.deps), "utf8");
+  s.deps.platform = "win32";
+  s.deps.env = { OP8X_COLLECTOR_URL: s.fake.url };
+  s.workers[1]!.wrangler.answer("delete", { exit: 1 });
+  assert.equal(await s.remove("--code-stdin"), 1);
+  const final = s.final();
+  assert.equal(final.state, "permissions_failed");
+  assert.equal(final.exit_code, 1);
+  const receipt = final.receipt as Line;
+  assert.equal(receipt.tenant, s.tenant.name);
+  assert.equal(final.path, accountPath(s.deps));
+  assert.equal(
+    final.agent_hint,
+    `The account is deleted (receipt ${String(receipt.action_id)}), but the op8x file could not be updated. Delete it by hand: ${accountPath(s.deps)}.`,
+  );
+  assert.deepEqual(steps(s.lines()).at(-1), ["remove_file", "failed"]);
+  // Nothing could be written: the file is still the one from before.
+  assert.equal(readFileSync(accountPath(s.deps), "utf8"), active);
+  assertNoSecret(s, [s.read, s.key]);
+});
+
+test("the op8x file cannot be written after the account is gone, but every secret is removed: the file goes, deleted", async (t) => {
+  const s = await setup(t, { workers: 2 });
+  assert.equal(await s.remove(), 1);
+  s.deps.platform = "win32";
+  s.deps.env = { OP8X_COLLECTOR_URL: s.fake.url };
+  assert.equal(await s.remove("--code-stdin"), 0);
+  assert.equal(s.final().state, "deleted");
+  assert.equal(s.file(), null);
 });
 
 test("delete takes --code-stdin and --json only, and no positional", async (t) => {

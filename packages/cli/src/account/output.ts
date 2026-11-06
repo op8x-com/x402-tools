@@ -107,6 +107,8 @@ export interface HintVars {
   rotation_running?: boolean;
   /** old_key_still_used: rotate --now knows no worker (no T_check). */
   no_workers?: boolean;
+  /** permissions_failed after the account was deleted: the op8x file to delete by hand. */
+  after_delete_path?: string;
 }
 
 type Mode = "json" | "text";
@@ -184,7 +186,10 @@ const HINTS: Record<FinalState | "waiting_for_human", ((v: HintVars, mode: Mode)
   key_auth: () => "This computer's access is no longer valid. Run op8x login.",
   import_failed: () => "The file could not be read as an op8x file.",
   config_unreadable: () => "The wrangler configuration could not be read.",
-  permissions_failed: () => "The op8x file could not be protected; nothing was written.",
+  permissions_failed: (v) =>
+    v.after_delete_path === undefined
+      ? "The op8x file could not be protected; nothing was written."
+      : `The account is deleted (receipt ${text(v.action_id)}), but the op8x file could not be updated. Delete it by hand: ${text(v.after_delete_path)}.`,
   not_available_yet: () => "Numbers are not available in this version yet.",
   network_error: () => "Check the connection and run the command again.",
   busy: () => "The service is busy; try again in a minute.",
