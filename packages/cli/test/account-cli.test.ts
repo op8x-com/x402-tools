@@ -139,10 +139,22 @@ test("the global help lists the account commands built so far", async () => {
   const deps = testDeps();
   assert.equal(await run(["--help"], deps), 0);
   const help = deps.stdout();
-  assert.ok(help.includes("\n  op8x login "), help);
-  assert.ok(help.includes("\n  op8x logout "), help);
-  assert.ok(help.includes("\n  op8x import-key <path> "), help);
-  assert.ok(help.includes("\n  op8x init "), help);
+  const account = help.slice(help.indexOf("\nAccount commands"));
+  assert.equal(
+    account,
+    [
+      "",
+      "Account commands (each takes --json for JSON Lines):",
+      "  op8x init                connect the worker in this folder to op8x and send one test request",
+      "  op8x login               sign this computer in to your op8x account",
+      "  op8x logout              sign this computer out and remove its op8x file",
+      "  op8x import-key <path>   take the server key from the op8x file of your other computer",
+      "  op8x rotate [--now]      replace the server key in every worker this computer knows",
+      "  op8x delete              delete the op8x account and remove the server key from every worker",
+      "  op8x report              numbers of your account (not available yet)",
+      "",
+    ].join("\n"),
+  );
   assert.ok(help.includes("\n  --payer <address>      your own paying wallet; warns if it is a payTo\n"));
 });
 

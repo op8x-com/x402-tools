@@ -11,11 +11,11 @@ import type { ApiError } from "./api.ts";
 
 export const CLI_SCHEMA = "op8x.cli/1";
 
-/** The account commands registered so far (the dispatcher's table grows per task). */
-export type AccountCommand = "init" | "login" | "logout" | "import-key" | "rotate";
+/** The account commands of the dispatcher's table. */
+export type AccountCommand = "init" | "login" | "logout" | "import-key" | "rotate" | "delete" | "report";
 
 /** Every account command, for the output envelope. */
-export type CommandName = "init" | "login" | "logout" | "import-key" | "rotate" | "delete" | "report";
+export type CommandName = AccountCommand;
 
 /** The final JSON line of a usage error or of a run without Deps (no hint, no steps). */
 export function finalLine(

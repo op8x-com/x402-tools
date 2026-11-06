@@ -296,6 +296,34 @@ export async function writeEnvKey(deps: Pick<Deps, "platform" | "env" | "exec" |
   await writeSecureFile(deps, path, withEnvKey(existing, key), { ownDir: false });
 }
 
+/**
+ * The env file without its OP8X_KEY lines, each with its own line end; null if it has none. Every
+ * other byte stays as it is (the file is handled as bytes).
+ */
+export function withoutEnvKey(existing: Buffer): Buffer | null {
+  const lines = existing.toString("latin1").match(/[^\n]*\n|[^\n]+$/g) ?? [];
+  const kept = lines.filter((line) => !KEY_LINE.test(line.replace(/\r?\n$/, "")));
+  return kept.length === lines.length ? null : Buffer.from(kept.join(""), "latin1");
+}
+
+/**
+ * Removes the OP8X_KEY lines from the env file at `path` with the same routine as writeEnvKey. A
+ * file that is gone, or has no such line, is left as it is. Any failure → StoreError
+ * permissions_failed; the file's other content is never shown.
+ */
+export async function removeEnvKey(deps: Pick<Deps, "platform" | "env" | "exec" | "sleep">, path: string): Promise<void> {
+  let existing: Buffer | null;
+  try {
+    existing = await readEnvFile(path);
+  } catch (e) {
+    throw new StoreError("permissions_failed", "The env file could not be read.", { cause: e });
+  }
+  if (existing === null) return;
+  const next = withoutEnvKey(existing);
+  if (next === null) return;
+  await writeSecureFile(deps, path, next, { ownDir: false });
+}
+
 // --- worker entries --------------------------------------------------------------------------------
 
 /** A time for the op8x file: ISO 8601 UTC without milliseconds. */

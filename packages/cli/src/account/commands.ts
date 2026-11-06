@@ -14,6 +14,7 @@ import type { DeviceFailure, DeviceKeys } from "./device.ts";
 import { keyFingerprint } from "./keys.ts";
 import { createOutput, finalLine } from "./output.ts";
 import { ROTATE_USAGE, rotate } from "./rotate.ts";
+import { DELETE_USAGE, deleteCommand } from "./delete.ts";
 import type { AccountCommand, FinalState, Output } from "./output.ts";
 import { ACCOUNT_SCHEMA, accountPath, deleteAccount, parseAccount, writeAccount } from "./store.ts";
 import type { AccountFile, ActiveAccount, WorkerEntry } from "./store.ts";
@@ -91,6 +92,16 @@ Options:
   --json               print JSON Lines
 `;
 
+const REPORT_USAGE = `Usage: op8x report [--week | --month] [--json]
+
+The numbers of your op8x account. Not available in this version yet.
+
+Options:
+  --week               the last 7 days
+  --month              the last 30 days
+  --json               print JSON Lines
+`;
+
 const JSON_ONLY: ParseArgsOptionsConfig = { json: { type: "boolean" } };
 
 // Registered are only the commands that exist.
@@ -141,6 +152,21 @@ const COMMANDS: Record<AccountCommand, CommandSpec> = {
     valid: (v) => v.now === true || (v["force-stop"] === undefined && v["code-stdin"] === undefined),
     run: (v, deps) =>
       rotate(v.json === true, deps, { now: v.now === true, forceStop: v["force-stop"] === true, codeStdin: v["code-stdin"] === true }),
+  },
+  delete: {
+    usage: DELETE_USAGE,
+    options: { json: { type: "boolean" }, "code-stdin": { type: "boolean" } },
+    positionals: 0,
+    valid: () => true,
+    run: (v, deps) => deleteCommand(v.json === true, deps, { codeStdin: v["code-stdin"] === true }),
+  },
+  report: {
+    usage: REPORT_USAGE,
+    options: { json: { type: "boolean" }, week: { type: "boolean" }, month: { type: "boolean" } },
+    positionals: 0,
+    // --week and --month not both.
+    valid: (v) => !(v.week === true && v.month === true),
+    run: (v, deps) => report(v.json === true, deps),
   },
 };
 
@@ -583,4 +609,12 @@ async function importKey(json: boolean, deps: Deps, path: string): Promise<numbe
   }
   out.end("ok");
   return out.final("imported");
+}
+
+// --- report -----------------------------------------------------------------------------------
+
+/** op8x report [--week | --month]: a placeholder until the numbers exist (not_available_yet). */
+async function report(json: boolean, deps: Deps): Promise<number> {
+  const out = createOutput({ command: "report", json, deps, steps: 0, secrets: () => [] });
+  return out.final("not_available_yet");
 }

@@ -73,11 +73,17 @@ export function writeSlot(view: TenantView, slot: "current" | "previous"): Tenan
  * GET /tenant failed: then nothing changes, and a later run settles it.
  */
 export async function settleReplacedNext(api: Api, file: ActiveAccount): Promise<ActiveAccount | null> {
-  const next = file.write_key_next;
-  if (next === null) return { ...file, pending_step_up: null };
+  if (file.write_key_next === null) return { ...file, pending_step_up: null };
   const view = await api.tenant(file.read_token);
   if (!view.ok) return null;
-  const current = writeSlot(view.value, "current")?.fingerprint === keyFingerprint(next);
+  return settledNext(file, view.value);
+}
+
+/** settleReplacedNext with the account's keys already at hand (GET /tenant done by the caller). */
+export function settledNext(file: ActiveAccount, view: TenantView): ActiveAccount {
+  const next = file.write_key_next;
+  if (next === null) return { ...file, pending_step_up: null };
+  const current = writeSlot(view, "current")?.fingerprint === keyFingerprint(next);
   return { ...file, write_key: current ? next : file.write_key, write_key_next: null, pending_step_up: null };
 }
 
