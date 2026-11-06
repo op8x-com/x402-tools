@@ -72,7 +72,8 @@ export type Resumed = { ok: true; file: ActiveAccount; view: TenantView } | { ok
  * GET /tenant, with the resumption of write_key_next first: is it the
  * account's current key, it becomes write_key (a waiting step replace_current is then done and
  * goes too); else the exact same POST rotate again (idempotent at the collector). 409 key_conflict
- * or rotation_pending (the collector never took it) drop it and end the command with that state.
+ * drops it and ends the command with key_conflict; rotation_pending (the collector never took it)
+ * drops it and the command goes on.
  * A next K of a waiting step replace_current is left for the continuation (it was never sent
  * without its code).
  */
@@ -91,7 +92,10 @@ export async function resumeNextKey(api: Api, out: Output, file: ActiveAccount, 
       const e = rotated.error;
       if (e.state !== "key_conflict" && e.state !== "rotation_pending") return fail(out.error(e));
       const dropped = await save({ ...file, write_key_next: null });
-      return fail(dropped === null ? out.error(e) : out.final(dropped));
+      if (dropped !== null) return fail(out.final(dropped));
+      if (e.state === "key_conflict") return fail(out.error(e));
+      // rotation_pending: the collector never took this K; the command goes on without it.
+      return { ok: true, file: { ...file, write_key_next: null }, view: view.value };
     }
   }
   const promoted: ActiveAccount = { ...file, write_key: next, write_key_next: null, pending_step_up: waitingReplace ? null : file.pending_step_up };

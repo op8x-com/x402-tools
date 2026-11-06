@@ -74,22 +74,40 @@ export async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-/** One line from the terminal without echo; the prompt goes to stderr. */
-export function readHidden(prompt: string): Promise<string> {
+/**
+ * One line from `input` without echo: readline writes its echo into a sink that drops it (and puts
+ * a TTY into raw mode, so the terminal does not echo either); only the prompt and the final line
+ * break reach `prompts`. Settles with "" when the input ends or on Ctrl+C before a line arrives,
+ * so a closed stdin never hangs the command (the caller treats "" as invalid_input).
+ */
+export function readHiddenFrom(prompt: string, input: NodeJS.ReadableStream, prompts: { write: (s: string) => unknown }): Promise<string> {
   return new Promise((resolve) => {
-    process.stderr.write(prompt);
+    let settled = false;
+    const settle = (answer: string) => {
+      if (settled) return;
+      settled = true;
+      prompts.write("\n");
+      resolve(answer);
+    };
+    prompts.write(prompt);
     const silent = new Writable({
       write(_chunk, _encoding, callback) {
         callback();
       },
     });
-    const rl = createInterface({ input: process.stdin, output: silent, terminal: true });
+    const rl = createInterface({ input, output: silent, terminal: true });
+    rl.on("close", () => settle(""));
+    rl.on("SIGINT", () => rl.close());
     rl.question("", (answer) => {
+      settle(answer);
       rl.close();
-      process.stderr.write("\n");
-      resolve(answer);
     });
   });
+}
+
+/** One line from the terminal without echo; the prompt goes to stderr. */
+export function readHidden(prompt: string): Promise<string> {
+  return readHiddenFrom(prompt, process.stdin, process.stderr);
 }
 
 /** The op8x config folder: %APPDATA%\op8x on Windows, else $XDG_CONFIG_HOME/op8x or ~/.config/op8x. */
