@@ -252,7 +252,8 @@ const RENAME_PAUSE_MS = 200;
  * goes in, then renamed over the target. POSIX: the temp file is created 0600; with `ownDir` (the
  * op8x folder) the folder is created and always set to 0700, also when it existed; other folders
  * (an env file's) are left alone. Windows: the temp file is created empty, its ACL set to the
- * current user only and checked, then filled and renamed (EPERM/EBUSY retried three times).
+ * current user only (inheritance off, every other trustee removed) and checked, then filled and
+ * renamed (EPERM/EBUSY retried three times).
  * Any failure is StoreError("permissions_failed"); the target is then unchanged and no temp file stays.
  */
 export async function writeSecureFile(
@@ -284,9 +285,16 @@ export async function writeSecureFile(
 
       await (await open(tmp, "wx")).close();
       created = true;
-      const set = await run(helper("icacls.exe"), [tmp, "/inheritance:r", "/grant:r", `*${sid}:F`]);
+      const icacls = helper("icacls.exe");
+      const set = await run(icacls, [tmp, "/inheritance:r", "/grant:r", `*${sid}:F`]);
       if (set.code !== 0) throw new Error("icacls could not set the ACL");
-      await checkAcl(run, helper("icacls.exe"), tmp, dir, sid);
+      // A folder that passes no entries on leaves the new file with explicit entries from the
+      // creator's default DACL (SYSTEM, Administrators), which /inheritance:r keeps: remove them.
+      for (const other of sddlOtherTrustees(await saveDacl(run, icacls, tmp, dir), sid)) {
+        const removed = await run(icacls, [tmp, "/remove", `*${other}`]);
+        if (removed.code !== 0) throw new Error("icacls could not remove an entry");
+      }
+      await checkAcl(run, icacls, tmp, dir, sid);
 
       await writeFile(tmp, content, { flag: "r+" });
       for (let attempt = 0; ; attempt++) {
@@ -318,17 +326,13 @@ export async function writeSecureFile(
   }
 }
 
+type Run = (file: string, args: string[]) => ReturnType<Deps["exec"]>;
+
 /**
- * The DACL must be protected (no inherited entries) and hold exactly one entry: full access for
- * `sid`. Checked through the SID in SDDL form, so it does not depend on language or account names.
+ * The file's DACL in SDDL form, from `icacls /save` (UTF-16LE: a line with the name, a line with
+ * the DACL). The saved file lies next to the target and is always removed.
  */
-async function checkAcl(
-  run: (file: string, args: string[]) => ReturnType<Deps["exec"]>,
-  icacls: string,
-  file: string,
-  dir: string,
-  sid: string,
-): Promise<void> {
+async function saveDacl(run: Run, icacls: string, file: string, dir: string): Promise<string> {
   const saved = join(dir, `.${basename(file)}.${randomBytes(8).toString("hex")}.acl`);
   let text: string;
   try {
@@ -342,10 +346,46 @@ async function checkAcl(
     .replace(/^\uFEFF/, "")
     .split(/\r?\n/)
     .filter((l) => l !== "");
-  const trustee = lines.length === 2 ? /^D:P[A-Z]*\(A;;FA;;;([^;()]+)\)$/.exec(lines[1])?.[1] : undefined;
+  if (lines.length !== 2) throw new Error("icacls saved an unexpected ACL");
+  return lines[1];
+}
+
+/**
+ * The DACL must be protected (no inherited entries) and hold exactly one entry: full access for
+ * `sid`. Checked through the SID in SDDL form, so it does not depend on language or account names.
+ */
+async function checkAcl(run: Run, icacls: string, file: string, dir: string, sid: string): Promise<void> {
+  const trustee = /^D:P[A-Z]*\(A;;FA;;;([^;()]+)\)$/.exec(await saveDacl(run, icacls, file, dir))?.[1];
   if (trustee === undefined || !sddlTrusteeIsSid(trustee, sid)) {
     throw new Error("the ACL is not limited to the current user");
   }
+}
+
+/** SDDL aliases a new file's default DACL uses for trustees other than the user. */
+const OTHER_ALIASES: ReadonlyMap<string, string> = new Map([
+  ["SY", "S-1-5-18"],
+  ["BA", "S-1-5-32-544"],
+]);
+
+/**
+ * The SIDs of every trustee in `dacl` (SDDL) other than `sid`, in order and without repeats.
+ * A trustee is either a literal SID or an alias from OTHER_ALIASES; anything else (another alias,
+ * a DACL that does not parse) throws, so the write fails closed.
+ */
+export function sddlOtherTrustees(dacl: string, sid: string): string[] {
+  const aces = /^D:[A-Z]*((?:\([^()]*\))*)$/.exec(dacl)?.[1];
+  if (aces === undefined) throw new Error("the ACL does not parse");
+  const others: string[] = [];
+  for (const [, ace] of aces.matchAll(/\(([^()]*)\)/g)) {
+    const fields = ace.split(";");
+    if (fields.length !== 6) throw new Error("an ACL entry does not parse");
+    const trustee = fields[5];
+    if (sddlTrusteeIsSid(trustee, sid)) continue;
+    const other = /^S-1-[0-9-]+$/.test(trustee) ? trustee : OTHER_ALIASES.get(trustee);
+    if (other === undefined) throw new Error("the ACL names an unknown trustee");
+    if (!others.includes(other)) others.push(other);
+  }
+  return others;
 }
 
 /**

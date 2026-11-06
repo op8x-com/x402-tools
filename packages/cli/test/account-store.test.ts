@@ -1,12 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, win32 } from "node:path";
 import {
   accountPath,
   deleteAccount,
   parseAccount,
   readAccount,
+  sddlOtherTrustees,
   sddlTrusteeIsSid,
   StoreError,
   systemRootOf,
@@ -15,7 +16,7 @@ import {
   writeSecureFile,
 } from "../src/account/store.ts";
 import type { AccountFile } from "../src/account/store.ts";
-import type { ExecOptions, ExecResult } from "../src/cli.ts";
+import type { Deps, ExecOptions, ExecResult } from "../src/cli.ts";
 import { recordingExec, tempDir, testDeps } from "./account-deps.ts";
 import type { ExecHandler } from "./account-deps.ts";
 
@@ -301,12 +302,17 @@ interface WinOptions {
   whoami?: ExecResult;
   set?: ExecResult;
   save?: ExecResult;
+  remove?: ExecResult;
+  /** SDDL every /save writes (default: the user alone). */
   sddl?: string;
+  /** SDDL the first /save writes (after the set step), if it differs from `sddl`. */
+  before?: string;
 }
 
 /** Answers like whoami.exe and icacls.exe; the /save step writes the SDDL as UTF-16LE. */
 function windowsExec(o: WinOptions = {}) {
   const seen: { step: string; tmpContent?: string }[] = [];
+  let saves = 0;
   const handler: ExecHandler = (file: string, args: readonly string[], _opts: ExecOptions) => {
     if (file.endsWith("whoami.exe")) {
       seen.push({ step: "whoami" });
@@ -316,10 +322,15 @@ function windowsExec(o: WinOptions = {}) {
       seen.push({ step: "set", tmpContent: readFileSync(args[0], "utf8") });
       return o.set ?? { code: 0, stdout: "", stderr: "" };
     }
+    if (args[1] === "/remove") {
+      seen.push({ step: "remove", tmpContent: readFileSync(args[0], "utf8") });
+      return o.remove ?? { code: 0, stdout: "", stderr: "" };
+    }
     if (args[1] === "/save") {
       seen.push({ step: "save", tmpContent: readFileSync(args[0], "utf8") });
       const result = o.save ?? { code: 0, stdout: "", stderr: "" };
-      if (result.code === 0) writeFileSync(args[2], sddlFile(o.sddl ?? `D:PAI(A;;FA;;;${SID})`));
+      const sddl = o.sddl ?? `D:PAI(A;;FA;;;${SID})`;
+      if (result.code === 0) writeFileSync(args[2], sddlFile(saves++ === 0 ? (o.before ?? sddl) : sddl));
       return result;
     }
     throw new Error(`unexpected program ${file}`);
@@ -331,6 +342,9 @@ function windowsDeps(env: Record<string, string> = { SystemRoot: "C:\\Windows" }
   const w = windowsExec(o);
   return { deps: testDeps({ platform: "win32", env, exec: w.exec }), exec: w.exec, seen: w.seen };
 }
+
+/** The SDDL a new file gets in a folder that passes no entries on (owner, Administrators, SYSTEM). */
+const DEFAULT_DACL = `D:PAI(A;;FA;;;${SID})(A;;FA;;;BA)(A;;FA;;;SY)`;
 
 test("systemRootOf: case-insensitive and absolute only", () => {
   assert.equal(systemRootOf({ SystemRoot: "C:\\Windows" }), "C:\\Windows");
@@ -345,10 +359,11 @@ test("systemRootOf: case-insensitive and absolute only", () => {
 test("Windows: SID, set ACL, check ACL, write, rename, each helper by its absolute path", async () => {
   const { deps, exec, seen } = windowsDeps();
   await writeAccount(deps, full());
-  assert.deepEqual(seen.map((s) => s.step), ["whoami", "set", "save"]);
+  // Nothing to remove: the set step left the user alone, the second /save is the check.
+  assert.deepEqual(seen.map((s) => s.step), ["whoami", "set", "save", "save"]);
   // The content is written only after the ACL is set and checked.
-  assert.deepEqual(seen.map((s) => s.tmpContent ?? ""), ["", "", ""]);
-  const [who, set, save] = exec.calls;
+  assert.deepEqual(seen.map((s) => s.tmpContent ?? ""), ["", "", "", ""]);
+  const [who, set, save, check] = exec.calls;
   assert.equal(who.file, win32.join("C:\\Windows", "System32", "whoami.exe"));
   assert.deepEqual(who.args, ["/user", "/fo", "csv", "/nh"]);
   const icacls = win32.join("C:\\Windows", "System32", "icacls.exe");
@@ -359,6 +374,9 @@ test("Windows: SID, set ACL, check ACL, write, rename, each helper by its absolu
   assert.equal(save.args[0], set.args[0]);
   assert.equal(save.args[1], "/save");
   assert.equal(dirname(save.args[2]), deps.configDir);
+  assert.equal(check.file, icacls);
+  assert.deepEqual(check.args.slice(0, 2), [set.args[0], "/save"]);
+  assert.notEqual(check.args[2], save.args[2]);
   for (const c of exec.calls) {
     assert.ok(!Object.keys(c.opts.env).some((k) => k.toUpperCase() === "PATH"), "no PATH lookup is needed");
     assert.ok(c.opts.timeoutMs > 0);
@@ -368,12 +386,69 @@ test("Windows: SID, set ACL, check ACL, write, rename, each helper by its absolu
   assert.deepEqual(readdirSync(deps.configDir), ["account.json"]);
 });
 
+test("Windows: entries from the default DACL are removed one by one before the check (exact argv)", async () => {
+  const { deps, exec, seen } = windowsDeps(undefined, { before: DEFAULT_DACL });
+  await writeAccount(deps, full());
+  assert.deepEqual(seen.map((s) => s.step), ["whoami", "set", "save", "remove", "remove", "save"]);
+  assert.deepEqual(seen.map((s) => s.tmpContent ?? ""), ["", "", "", "", "", ""]);
+  const icacls = win32.join("C:\\Windows", "System32", "icacls.exe");
+  const tmp = exec.calls[1].args[0];
+  assert.deepEqual(
+    exec.calls.slice(1).map((c) => [c.file, ...c.args]),
+    [
+      [icacls, tmp, "/inheritance:r", "/grant:r", `*${SID}:F`],
+      [icacls, tmp, "/save", exec.calls[2].args[2]],
+      [icacls, tmp, "/remove", "*S-1-5-32-544"],
+      [icacls, tmp, "/remove", "*S-1-5-18"],
+      [icacls, tmp, "/save", exec.calls[5].args[2]],
+    ],
+  );
+  for (const c of exec.calls.slice(1)) assert.equal(c.opts.cwd, deps.configDir);
+  assert.deepEqual(parseAccount(readFileSync(accountPath(deps), "utf8")), full());
+  assert.deepEqual(readdirSync(deps.configDir), ["account.json"]);
+});
+
+test("Windows: on GitHub's runner (built-in Administrator) SY and BA are removed, LA is the user and stays", async () => {
+  const w = windowsExec({
+    whoami: { code: 0, stdout: `"runner\\runneradmin","${ADMIN_SID}"\r\n`, stderr: "" },
+    before: "D:PAI(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;LA)",
+    sddl: "D:PAI(A;;FA;;;LA)",
+  });
+  const deps = testDeps({ platform: "win32", env: { SystemRoot: "C:\\Windows" }, exec: w.exec });
+  await writeAccount(deps, full());
+  const removes = w.exec.calls.filter((c) => c.args[1] === "/remove").map((c) => c.args[2]);
+  assert.deepEqual(removes, ["*S-1-5-18", "*S-1-5-32-544"]);
+  assert.deepEqual(readdirSync(deps.configDir), ["account.json"]);
+});
+
+test("sddlOtherTrustees: literal SIDs and SY/BA, the user's own entries skipped, no repeats", () => {
+  assert.deepEqual(sddlOtherTrustees(`D:PAI(A;;FA;;;${SID})`, SID), []);
+  assert.deepEqual(sddlOtherTrustees(DEFAULT_DACL, SID), ["S-1-5-32-544", "S-1-5-18"]);
+  assert.deepEqual(sddlOtherTrustees("D:P(A;;0x1200a9;;;S-1-5-5-0-12345)(D;;FA;;;SY)(A;;FA;;;SY)", SID), ["S-1-5-5-0-12345", "S-1-5-18"]);
+  assert.deepEqual(sddlOtherTrustees("D:P(A;;FA;;;LA)(A;;FA;;;SY)", ADMIN_SID), ["S-1-5-18"]);
+  assert.deepEqual(sddlOtherTrustees("D:P", SID), []);
+});
+
+test("sddlOtherTrustees: an unknown alias or a DACL that does not parse throws", () => {
+  const bad: [string, string][] = [
+    ["LA for a normal user", "D:P(A;;FA;;;LA)"],
+    ["AU", `D:P(A;;FA;;;${SID})(A;;FA;;;AU)`],
+    ["WD", "D:P(A;;FA;;;WD)"],
+    ["prototype key", "D:P(A;;FA;;;constructor)"],
+    ["no access control", "D:PNO_ACCESS_CONTROL"],
+    ["not a DACL", "O:BA"],
+    ["short ACE", "D:P(A;;FA;;)"],
+    ["nested parens", "D:P(XA;;FA;;;WD;(x))"],
+  ];
+  for (const [name, dacl] of bad) assert.throws(() => sddlOtherTrustees(dacl, SID), Error, name);
+});
+
 test("Windows: works with lower-case systemroot and Path instead of PATH", async () => {
   const { deps, exec } = windowsDeps({ systemroot: "E:\\WINDOWS", Path: "C:\\evil;C:\\Windows" });
   await writeAccount(deps, full());
   assert.deepEqual(
     exec.calls.map((c) => c.file),
-    [win32.join("E:\\WINDOWS", "System32", "whoami.exe"), ...Array(2).fill(win32.join("E:\\WINDOWS", "System32", "icacls.exe"))],
+    [win32.join("E:\\WINDOWS", "System32", "whoami.exe"), ...Array(3).fill(win32.join("E:\\WINDOWS", "System32", "icacls.exe"))],
   );
 });
 
@@ -394,6 +469,10 @@ const WIN_FAILURES: [string, WinOptions][] = [
   ["whoami SID with spaces", { whoami: { code: 0, stdout: `"desktop-x\\anna","S-1-5 21"\r\n`, stderr: "" } }],
   ["icacls set fails", { set: { code: 5, stdout: "", stderr: "Access is denied." } }],
   ["icacls save fails", { save: { code: 1, stdout: "", stderr: "" } }],
+  ["icacls remove fails", { before: DEFAULT_DACL, remove: { code: 5, stdout: "", stderr: "Access is denied." } }],
+  ["entry not removed", { sddl: DEFAULT_DACL }],
+  ["unknown alias after the set step", { before: `D:PAI(A;;FA;;;${SID})(A;;FA;;;AU)` }],
+  ["saved ACL does not parse after the set step", { before: "D:PNO_ACCESS_CONTROL" }],
   ["DACL not protected", { sddl: `D:AI(A;;FA;;;${SID})` }],
   ["inherited ACE left", { sddl: `D:PAI(A;;FA;;;${SID})(A;ID;FA;;;S-1-5-18)` }],
   ["second ACE", { sddl: `D:PAI(A;;FA;;;${SID})(A;;FA;;;S-1-5-32-544)` }],
@@ -540,18 +619,48 @@ test("Windows for real: icacls and whoami protect the file, and the saved SDDL h
   assert.deepEqual(parseAccount(readFileSync(accountPath(deps), "utf8")), full());
   assert.deepEqual(readdirSync(deps.configDir), ["account.json"]);
 
-  // Check independently of store.ts: whoami for the SID, icacls /save for the DACL.
-  const root = env.SystemRoot;
-  const who = await exec(win32.join(root, "System32", "whoami.exe"), ["/user", "/fo", "csv", "/nh"], { cwd: deps.configDir, env, timeoutMs: 10_000 });
+  await assertOnlyUser(exec, env.SystemRoot, accountPath(deps));
+});
+
+/** The user's SID from a real whoami. */
+async function realSid(exec: Deps["exec"], root: string, cwd: string): Promise<string> {
+  const who = await exec(win32.join(root, "System32", "whoami.exe"), ["/user", "/fo", "csv", "/nh"], { cwd, env: { SystemRoot: root }, timeoutMs: 10_000 });
   assert.equal(who.code, 0);
   const sid = /"(S-1-[0-9-]+)"\s*$/.exec(who.stdout)?.[1];
   assert.ok(sid);
-  const saved = join(deps.configDir, "check.acl");
-  const save = await exec(win32.join(root, "System32", "icacls.exe"), [accountPath(deps), "/save", saved], { cwd: deps.configDir, env, timeoutMs: 10_000 });
+  return sid;
+}
+
+/** Checks independently of store.ts: whoami for the SID, icacls /save for the DACL (exactly one ACE). */
+async function assertOnlyUser(exec: Deps["exec"], root: string, file: string): Promise<void> {
+  const dir = dirname(file);
+  const sid = await realSid(exec, root, dir);
+  const saved = join(dir, "check.acl");
+  const save = await exec(win32.join(root, "System32", "icacls.exe"), [file, "/save", saved], { cwd: dir, env: { SystemRoot: root }, timeoutMs: 10_000 });
   assert.equal(save.code, 0);
   const lines = readFileSync(saved).toString("utf16le").split(/\r?\n/).filter((l) => l !== "");
+  unlinkSync(saved);
   assert.equal(lines.length, 2);
   const trustee = /^D:P[A-Z]*\(A;;FA;;;([^;()]+)\)$/.exec(lines[1])?.[1];
   assert.ok(trustee, `unexpected SDDL: ${lines[1]}`);
   assert.ok(sddlTrusteeIsSid(trustee, sid), `trustee ${trustee} is not ${sid}`);
+}
+
+test("Windows for real: in a folder that passes no entries on, the file still ends with exactly one ACE", { skip: process.platform !== "win32" }, async () => {
+  // Reproduces GitHub's windows-latest: with no inheritable entries in the folder, a new file gets
+  // explicit entries from the creator's default DACL (owner, SYSTEM, Administrators), which
+  // /inheritance:r does not remove. The target is not in the op8x folder, like an env file.
+  const { exec } = await import("../src/account/system.ts");
+  const root = systemRootOf(process.env) ?? "";
+  const env = { SystemRoot: root };
+  const dir = tempDir();
+  const sid = await realSid(exec, root, dir);
+  const closed = await exec(win32.join(root, "System32", "icacls.exe"), [dir, "/inheritance:r", "/grant:r", `*${sid}:F`], { cwd: dir, env, timeoutMs: 10_000 });
+  assert.equal(closed.code, 0);
+  const deps = testDeps({ platform: "win32", env, exec });
+  const target = join(dir, "secret.txt");
+  await writeSecureFile(deps, target, "OP8X_KEY=x\n", { ownDir: false });
+  assert.equal(readFileSync(target, "utf8"), "OP8X_KEY=x\n");
+  assert.deepEqual(readdirSync(dir), ["secret.txt"]);
+  await assertOnlyUser(exec, root, target);
 });
