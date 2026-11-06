@@ -210,8 +210,9 @@ function storeState(e: unknown): FinalState {
 
 /**
  * op8x login: the device login with mode login (no write_sha256). On a computer with an op8x file
- * only R (and the account and contact it belongs to) is replaced; K, the next K, a waiting step and
- * the workers stay. A remainder file (deleted) counts as no file and is replaced, without the
+ * of the same account R and the contact are replaced and a waiting step is cleared; K, the next K
+ * and the workers stay. Granted for another account, the file is replaced as if there was none.
+ * A remainder file (deleted) counts as no file and is replaced, without the
  * collector check. Ends with connected, which names the account's address (A1).
  */
 async function login(json: boolean, deps: Deps): Promise<number> {
@@ -233,9 +234,12 @@ async function login(json: boolean, deps: Deps): Promise<number> {
     return failWith(out, r.fail);
   }
   if (out.stopped) return out.final("internal_error");
+  // Same account: K, the next K and the workers stay; a waiting step goes (its codes are bound to
+  // the old R). Another account: the old K is not this account's, so the file starts over.
+  const same = kept !== null && kept.account === r.account;
   const next: ActiveAccount =
-    kept !== null
-      ? { ...kept, account: r.account, contact_hint: r.contactHint, read_token: keys.read }
+    same && kept !== null
+      ? { ...kept, contact_hint: r.contactHint, read_token: keys.read, pending_step_up: null }
       : {
           schema: ACCOUNT_SCHEMA,
           collector: base,

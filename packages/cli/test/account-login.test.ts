@@ -115,12 +115,22 @@ test("login without a file: device login with mode login, writes a new op8x file
   assert.deepEqual(s.fake.violations, []);
 });
 
-test("login on a computer with a file keeps K, the next K, the workers and the step; it replaces R", async (t) => {
+const PENDING = {
+  purpose: "delete",
+  command: "delete",
+  case: null,
+  phase: "delete",
+  force_stop: false,
+  t_check: null,
+  expires_at: "2026-11-03T14:15:00Z",
+} as const;
+
+test("login for the same account keeps K, the next K and the workers; it replaces R and clears the waiting step", async (t) => {
   const s = await setup(t);
   const k = generateKey("w");
   const next = generateKey("w");
   const t0 = s.fake.addTenant({ readKey: generateKey("r"), writeKey: k, contactHint: "a***@acme.example" });
-  const before = active(s.fake.url, { account: t0.name, write_key: k, write_key_next: next, workers: [worker] });
+  const before = active(s.fake.url, { account: t0.name, write_key: k, write_key_next: next, workers: [worker], pending_step_up: { ...PENDING } });
   await writeAccount(s.deps, before);
   onFirstPoll(s.fake, () => s.fake.grant({ tenant: t0.name }));
   assert.equal(await run(["login", "--json"], s.deps), 0);
@@ -129,9 +139,43 @@ test("login on a computer with a file keeps K, the next K, the workers and the s
   const f = s.file() as ActiveAccount;
   assert.notEqual(f.read_token, before.read_token);
   assert.equal(keyHash(f.read_token), s.fake.tenant(t0.name).read);
-  assert.deepEqual({ ...f, read_token: before.read_token, contact_hint: before.contact_hint }, before);
+  // Step-up codes are bound to the old R: the waiting step goes.
+  assert.equal(f.pending_step_up, null);
+  assert.deepEqual({ ...f, read_token: before.read_token, contact_hint: before.contact_hint, pending_step_up: before.pending_step_up }, before);
   assert.equal(f.contact_hint, "a***@acme.example");
   for (const secret of [k, next, f.read_token, before.read_token]) assert.equal(s.deps.stdout().includes(secret), false);
+});
+
+test("login granted for a different account replaces the file as if there was none: no old K, step or workers", async (t) => {
+  const s = await setup(t);
+  const oldKey = generateKey("w");
+  const next = generateKey("w");
+  const before = active(s.fake.url, { account: "t-aaaaaaaaaa", write_key: oldKey, write_key_next: next, workers: [worker], pending_step_up: { ...PENDING } });
+  await writeAccount(s.deps, before);
+  const other = s.fake.addTenant({ readKey: generateKey("r"), contactHint: "b***@other.example" });
+  assert.notEqual(other.name, before.account);
+  onFirstPoll(s.fake, () => s.fake.grant({ tenant: other.name }));
+  assert.equal(await run(["login", "--json"], s.deps), 0);
+  const f = s.file() as ActiveAccount;
+  assert.deepEqual(f, {
+    schema: "op8x.account/1",
+    collector: s.fake.url,
+    account: other.name,
+    contact_hint: "b***@other.example",
+    read_token: f.read_token,
+    write_key: null,
+    write_key_next: null,
+    pending_step_up: null,
+    deleted: null,
+    workers: [],
+  });
+  assert.equal(keyHash(f.read_token), s.fake.tenant(other.name).read);
+  assert.equal(s.final().state, "connected");
+  assert.equal(
+    s.final().agent_hint,
+    `op8x is connected to account ${other.name} (b***@other.example). Tell your human which address this account belongs to; if it is not theirs, run op8x logout.`,
+  );
+  for (const secret of [oldKey, next, before.read_token, f.read_token]) assert.equal(s.deps.stdout().includes(secret), false);
 });
 
 test("login on a remainder file (deleted) acts as without a file, even for another service address", async (t) => {
