@@ -1,12 +1,12 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { matchedRoutes } from "hono/route";
-import { hashPayer, parseSalt } from "./hash.ts";
+import { hashPayer, parseSalt, saltId } from "./hash.ts";
 import { buildRecord } from "./record.ts";
 import type { RecordInput } from "./record.ts";
 import { clampTimeout, createTransport, validEndpoint } from "./transport.ts";
 import type { Transport } from "./transport.ts";
-import type { AnalyticsOptions } from "./types.ts";
-import { envKey, isOp8xEndpoint, KEY_MISSING, resolveKey } from "./key.ts";
+import type { AnalyticsOptions, PayerHasher } from "./types.ts";
+import { envKey, envSalt, isOp8xEndpoint, KEY_MISSING, resolveKey, SALT_INVALID } from "./key.ts";
 import type { KeyResolution } from "./key.ts";
 import { firstTime, rateLimitOk } from "./warnings.ts";
 
@@ -143,8 +143,8 @@ function routesOf(c: Context): MatchedRoute[] | undefined {
  */
 export function analytics(options: AnalyticsOptions = {}): MiddlewareHandler {
   let transport: Transport | undefined;
-  let hash: ((address: string) => Promise<string>) | undefined;
-  let badSalt = false;
+  // The salt option, if any, wins over c.env and is never replaced by it (like the key).
+  let explicitSalt: unknown;
   let idle = false;
   let idleMessage = "";
   let readDeadlineMs = 0;
@@ -174,11 +174,7 @@ export function analytics(options: AnalyticsOptions = {}): MiddlewareHandler {
     }
     readDeadlineMs = clampTimeout(opts.timeoutMs);
     chainCheck = opts.chainCheck === true;
-    if (opts.salt !== undefined) {
-      const bytes = parseSalt(opts.salt);
-      if (bytes !== undefined) hash = (address) => hashPayer(bytes, address);
-      else badSalt = true;
-    }
+    explicitSalt = opts.salt;
   } catch {
     transport = undefined;
     warnOnce("op8x.analytics: setup failed, analytics disabled");
@@ -269,8 +265,14 @@ export function analytics(options: AnalyticsOptions = {}): MiddlewareHandler {
           clone = undefined;
         }
       }
-      const warnSalt = badSalt;
-      badSalt = false;
+      // Read per request, so a rotated secret applies at once; only handed on, never logged.
+      let rawSalt: unknown;
+      try {
+        rawSalt = explicitSalt !== undefined ? explicitSalt : envSalt(c.env);
+      } catch {
+        rawSalt = undefined;
+      }
+      const paid = requestHeaders.has("payment-signature") || requestHeaders.has("x-payment");
       const send = sender;
       const sendKey = key;
       const reqHeaders = requestHeaders;
@@ -281,7 +283,20 @@ export function analytics(options: AnalyticsOptions = {}): MiddlewareHandler {
           await new Promise((resolve) => setTimeout(resolve, 0));
           // Read the clone first: an unread tee branch would buffer the whole body.
           const body = clone !== undefined ? await readCapped(clone, readDeadlineMs) : undefined;
-          if (warnSalt) warnOnce("op8x.analytics: salt is not a valid op8x salt, payer hashing disabled");
+          let payer: PayerHasher | undefined;
+          if (rawSalt !== undefined) {
+            const bytes = parseSalt(rawSalt);
+            if (bytes === undefined) {
+              warnOnce(SALT_INVALID);
+            } else if (paid) {
+              // Per payment, no cache: the key import and the salt id are cheap and the salt stays out of long-lived state.
+              try {
+                payer = { hash: (address) => hashPayer(bytes, address), saltId: await saltId(bytes) };
+              } catch {
+                payer = undefined;
+              }
+            }
+          }
           const input: RecordInput = {
             id: crypto.randomUUID(),
             ts,
@@ -293,7 +308,7 @@ export function analytics(options: AnalyticsOptions = {}): MiddlewareHandler {
             responseHeaders,
           };
           if (body !== undefined) input.body = body;
-          const record = await buildRecord(input, hash, { chainCheck });
+          const record = await buildRecord(input, payer, { chainCheck });
           await send.send(record, sendKey);
         } catch {
           // fail open: nothing may escape

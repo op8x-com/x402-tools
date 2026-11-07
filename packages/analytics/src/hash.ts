@@ -8,6 +8,7 @@ export const SALT_PREFIX = "op8x_s_";
 const SALT_ID_LABEL = "op8x.salt-id.v1";
 const SALT_RE = /^op8x_s_[A-Za-z0-9_-]{43}$/;
 const EVM_RE = /^0x[0-9a-fA-F]{40}$/;
+const EDGE_WS_RE = /^[ \t\n\r\f\v]+|[ \t\n\r\f\v]+$/g;
 const B64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 /** Unpadded base64url of bytes, used only to check that a decoded salt is canonical. */
@@ -62,13 +63,19 @@ export async function saltId(salt: Uint8Array): Promise<string> {
   return hex(await mac(salt, new TextEncoder().encode(SALT_ID_LABEL)), 8);
 }
 
+/** Removes ASCII whitespace (space, tab, LF, CR, FF, VT) at both ends; nothing else, unlike String.prototype.trim. */
+export function trimAscii(value: string): string {
+  return value.replace(EDGE_WS_RE, "");
+}
+
 /**
  * Pseudonymize a payer address: first 32 hex of HMAC-SHA-256 keyed with the salt bytes over
- * "op8x.payer.v1" + 0x00 + address. The address is trimmed and lowercased only when it is an
- * EVM address (0x + 40 hex); other addresses, such as Solana, are case-sensitive.
+ * "op8x.payer.v1" + 0x00 + address'. address' is the address without ASCII whitespace (space,
+ * tab, LF, CR, FF, VT) at both ends, lowercased only when it is an EVM address (0x + 40 hex);
+ * other addresses, such as Solana, are case-sensitive. This is the only place that normalizes.
  */
 export async function hashPayer(salt: Uint8Array, address: string): Promise<string> {
-  const trimmed = address.trim();
+  const trimmed = trimAscii(address);
   const normalized = EVM_RE.test(trimmed) ? trimmed.toLowerCase() : trimmed;
   const message = new TextEncoder().encode(`${PAYER_ALG}\u0000${normalized}`);
   return hex(await mac(salt, message), 32);

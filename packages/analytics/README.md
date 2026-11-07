@@ -2,7 +2,7 @@
 
 Fail-open request analytics for x402 sellers on Cloudflare Workers. A Hono middleware that writes one metadata record per request: was it unpaid, was a 402 challenge issued, did a payment arrive, did a receipt come back, was the paid response delivered.
 
-> **Pre-release (0.0.2), not on npm yet.** `npm install @op8x/analytics` does not work today. Build it from a clone, see below.
+> **Pre-release (0.0.3), not on npm yet.** `npm install @op8x/analytics` does not work today. Build it from a clone, see below.
 
 Records go to an HTTP endpoint you choose (`endpoint`) and/or to the Worker log (`log: true`, read it with `wrangler tail`). There is no default endpoint: without `endpoint` nothing leaves your Worker. With neither option set, the middleware logs one warning on the first request and records nothing.
 
@@ -111,7 +111,7 @@ analytics({
 | `endpoint` | none | `https` URL (no username or password) that receives each record as a JSON `POST` (`http` only for `localhost` and `127.0.0.1`). Omitted: no network sends. An invalid value is not an error: one warning is logged and sending stays off. |
 | `key` | none | Write key, sent as `Authorization: Bearer <key>`. Wins over `OP8X_KEY` from the environment, see "Write key". |
 | `log` | `false` | Write one `console.log("op8x.analytics", <json>)` line per record. |
-| `salt` | none | Enables the `payer` field (a keyed hash of the payer address). Omitted: no `payer` field at all. Any value that is not a valid op8x salt (`op8x_s_` plus 43 base64url characters) also disables hashing and logs one warning, `op8x.analytics: salt is not a valid op8x salt, payer hashing disabled`. Keep it secret. |
+| `salt` | none | Enables the returning-buyer fields (`payer`, `payer_alg`, `payer_salt_id`). Wins over `OP8X_SALT` from the environment, see "Returning buyers". A value that is not a valid op8x salt (`op8x_s_` plus 43 base64url characters) disables the fields, with no fallback to the environment, and logs one warning per isolate, `op8x.analytics: OP8X_SALT must look like op8x_s_… (32 random bytes); payer pseudonyms disabled`. The warning never contains the value. Keep the salt secret. |
 | `timeoutMs` | `2000` | Abort the send after this long; also the limit for reading the 402 body copy. Clamped to 100..10000. |
 | `chainCheck` | `false` | Add `receipt.transaction` so the collector can confirm settlement on-chain. Omitted: the transaction hash is never sent; the record only says whether there is one. |
 
@@ -134,27 +134,40 @@ app.use(analytics({ endpoint: "https://ingest.op8x.com/v1/events" }));
 - A key is invalid when it is not a string, is empty, is longer than 256 characters or contains characters outside printable ASCII; for the op8x endpoint also when it does not start with `op8x_w_`. Surrounding whitespace is trimmed.
 - The key never appears in records, `log: true` output or warnings, and redirects are not followed.
 
+## Returning buyers
+
+With a salt, each paid request carries a pseudonym of the payer, so you can see how many different buyers came back. The pseudonym is `payer`: a keyed hash (HMAC-SHA-256) of the payer address, 32 hex characters. Next to it go `payer_alg` (`op8x.payer.v1`, the construction) and `payer_salt_id` (8 hex characters that tell salts apart). The three fields belong together.
+
+- **The salt stays with you.** It is a random value (`op8x_s_` plus 43 base64url characters, 32 bytes) that only your Worker holds. It is never sent, logged or recorded; only the pseudonym, the algorithm name and the salt id leave the Worker. Without the salt nobody can turn a pseudonym back into an address or recompute it from a known address.
+- **Create it with the CLI.** `npx @op8x/cli init` creates the salt and stores it as the Worker secret `OP8X_SALT`. To set it up by hand, store a salt in that secret: `npx wrangler secret put OP8X_SALT`.
+- **Read on every request.** The middleware reads `OP8X_SALT` from the Worker environment per request (for any endpoint), so a new secret applies to the next request. The `salt` option wins over the environment; an invalid option disables the fields and does not fall back to the environment.
+- **Changing the salt starts a new series.** The same buyer then gets a different pseudonym and a different `payer_salt_id`. Do not rotate it without a reason.
+- **Address normalization.** ASCII whitespace at both ends of the address is removed; EVM addresses (`0x` plus 40 hex digits) are lowercased, other addresses such as Solana are kept as they are. Exact definition and test vectors: [ingest contract](https://github.com/op8x-com/x402-tools/blob/main/packages/analytics/docs/ingest-contract.md).
+- **Invalid salt.** The fields are left out and one warning is logged per isolate. Your API and its responses are not affected.
+
+Requires `@op8x/analytics` 0.0.3 or later; older versions do not send `payer_alg` and `payer_salt_id`, and a collector then counts the payer as "without pseudonym".
+
 ## Record fields
 
-One record per request that passes through the middleware. The fields, headers and response codes are described in the [ingest contract](docs/ingest-contract.md).
+One record per request that passes through the middleware. The fields, headers and response codes are described in the [ingest contract](https://github.com/op8x-com/x402-tools/blob/main/packages/analytics/docs/ingest-contract.md).
 
 `route` is the pattern of the last matched route registered after the middleware, such as `/posts/:id`. `app.use` middlewares and `app.all()` handlers (method `ALL`) are ignored, so a handler registered with `app.all()` records `""`, as does a request where no such route matched.
 
-The payer address behind `payment.payer` is taken from the receipt's `payer`, falling back to `payload.authorization.from` in the payment header, and is hashed with the salt; it can be present even when the payment header itself was undecodable (`decodable: false`).
+The payer address behind `payment.payer` is taken from the receipt's `payer`, falling back to `payload.authorization.from` in the payment header, and is hashed with the salt (see "Returning buyers"); it can be present even when the payment header itself was undecodable (`decodable: false`).
 
 ## What is never collected
 
-- Request bodies and response bodies. The one exception is the 402 challenge: only the fields listed in the [ingest contract](docs/ingest-contract.md) are taken from it, and at most 64 KB of the body is read.
+- Request bodies and response bodies. The one exception is the 402 challenge: only the fields listed in the [ingest contract](https://github.com/op8x-com/x402-tools/blob/main/packages/analytics/docs/ingest-contract.md) are taken from it, and at most 64 KB of the body is read.
 - IP addresses (`cf-connecting-ip`, `x-forwarded-for` and any other source).
 - The URL path and query string; only the route pattern is recorded.
 - Cookies, `authorization` and the raw User-Agent.
-- Payment signatures and the payment payload, except the payer address, which is hashed with your `salt` before it leaves the middleware and is not recorded at all without a `salt`.
+- Payment signatures and the payment payload, except the payer address, which is hashed with your salt before it leaves the middleware and is not recorded at all without a salt.
 - The value of the request header `op8x-test`, unless it has the nonce format: exactly 43 base64url characters. Any other value is ignored and never recorded.
 - The receipt's transaction hash, unless you set `chainCheck: true`. Without it the record only says whether the receipt names a transaction (`receipt.hasTransaction`). With `chainCheck: true` the record includes the public transaction hash so the collector can confirm settlement on-chain. The hash links the record to the payer address on-chain. op8x's hosted collector uses it only for that check, stores only the result and deletes the hash afterwards. If you point `endpoint` at your own server, handle it the same way. With `log: true` the hash also appears in the Worker log, where this deletion does not apply.
 
 ## Connection test
 
-A request that carries the header `op8x-test` with a nonce of exactly 43 base64url characters gets the record field `test_nonce` (see the [ingest contract](docs/ingest-contract.md)). A collector can use it to recognize a connection test and keep that request out of your numbers. The header does not change the response, and it stays on the request for your own handler. Requires `@op8x/analytics` 0.0.2 or later; older versions count the test request as a normal request.
+A request that carries the header `op8x-test` with a nonce of exactly 43 base64url characters gets the record field `test_nonce` (see the [ingest contract](https://github.com/op8x-com/x402-tools/blob/main/packages/analytics/docs/ingest-contract.md)). A collector can use it to recognize a connection test and keep that request out of your numbers. The header does not change the response, and it stays on the request for your own handler. Requires `@op8x/analytics` 0.0.2 or later; older versions count the test request as a normal request.
 
 ## Guarantees
 
@@ -169,13 +182,14 @@ A request that carries the header `op8x-test` with a nonce of exactly 43 base64u
 - **Body challenges over 64 KB.** Only the first 64 KB of a 402 body are read, and only within `timeoutMs`. A longer or slower body challenge is truncated, does not parse, and is recorded as `location: "none"` (or `"header"` when a header challenge is present).
 - **`ms` on Workers.** Workers advance the clock only across I/O, so `ms` covers time spent waiting on I/O downstream (fetches, KV, the facilitator); CPU time in your handlers does not advance it.
 
-## Not in 0.0.2
+## Not in 0.0.3
 
 No batching, retries, sampling or persistence; no adapters other than Hono; no default endpoint.
 
 ## Links
 
 - Website: <https://op8x.com>
+- Documentation: <https://docs.op8x.com>
 - Source: <https://github.com/op8x-com/x402-tools>
 - Also free for sellers: `npx @op8x/cli check <url>` diagnoses the 402 challenge of an endpoint.
 

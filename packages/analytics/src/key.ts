@@ -8,6 +8,8 @@ export const KEY_MISSING_TRANSPORT =
   "op8x.analytics: no key for the op8x endpoint (set the key option or OP8X_KEY), sending disabled";
 export const KEY_REFUSED = "op8x.analytics: op8x write key refused for a non-op8x endpoint";
 export const KEY_INVALID = "op8x.analytics: invalid key, sending disabled";
+export const SALT_INVALID =
+  "op8x.analytics: OP8X_SALT must look like op8x_s_… (32 random bytes); payer pseudonyms disabled";
 
 /** True when `endpoint` (an already validated URL) has exactly the op8x collector origin. */
 export function isOp8xEndpoint(endpoint: string | undefined): boolean {
@@ -38,6 +40,16 @@ export function envKey(env: unknown): unknown {
   try {
     if (env === null || typeof env !== "object") return undefined;
     return (env as Record<string, unknown>)["OP8X_KEY"];
+  } catch {
+    return undefined;
+  }
+}
+
+/** OP8X_SALT from a Hono-style environment; undefined when absent or unreadable. */
+export function envSalt(env: unknown): unknown {
+  try {
+    if (env === null || typeof env !== "object") return undefined;
+    return (env as Record<string, unknown>)["OP8X_SALT"];
   } catch {
     return undefined;
   }

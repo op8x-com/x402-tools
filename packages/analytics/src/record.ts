@@ -1,6 +1,7 @@
 import { clean, decodeBase64Json, parseJson } from "./decode.ts";
+import { PAYER_ALG, trimAscii } from "./hash.ts";
 import { uaClass } from "./ua.ts";
-import type { AnalyticsRecord, ChallengeInfo, PaymentInfo, ReceiptInfo } from "./types.ts";
+import type { AnalyticsRecord, ChallengeInfo, PayerHasher, PaymentInfo, ReceiptInfo } from "./types.ts";
 
 export interface RecordInput {
   id: string;
@@ -118,7 +119,7 @@ export interface RecordOptions {
 
 export async function buildRecord(
   input: RecordInput,
-  hashPayer?: (address: string) => Promise<string>,
+  payerHasher?: PayerHasher,
   options?: RecordOptions,
 ): Promise<AnalyticsRecord> {
   const { requestHeaders: req, responseHeaders: res, status } = input;
@@ -175,7 +176,7 @@ export async function buildRecord(
       const errorReason = clean(own(decoded, "errorReason"), LONG);
       if (errorReason !== undefined) receipt.errorReason = errorReason;
       const p = own(decoded, "payer");
-      if (typeof p === "string" && p.trim() !== "") receiptPayer = p.trim();
+      if (typeof p === "string" && trimAscii(p) !== "") receiptPayer = p;
     }
     record.receipt = receipt;
   }
@@ -200,11 +201,16 @@ export async function buildRecord(
 
     // The receipt payer counts even when the payment header itself is undecodable.
     const fromAuth = authorizationFrom(decoded);
-    const payer = receiptPayer ?? (fromAuth !== undefined && fromAuth.trim() !== "" ? fromAuth.trim() : undefined);
-    if (hashPayer !== undefined && payer !== undefined) {
+    // The address goes to the hasher as is; the hasher alone normalizes it.
+    const payer = receiptPayer ?? (fromAuth !== undefined && trimAscii(fromAuth) !== "" ? fromAuth : undefined);
+    if (payerHasher !== undefined && payer !== undefined) {
       try {
-        const hashed = await hashPayer(payer.toLowerCase());
-        if (typeof hashed === "string" && hashed !== "") payment.payer = hashed;
+        const hashed = await payerHasher.hash(payer);
+        if (typeof hashed === "string" && hashed !== "" && typeof payerHasher.saltId === "string" && payerHasher.saltId !== "") {
+          payment.payer = hashed;
+          payment.payer_alg = PAYER_ALG;
+          payment.payer_salt_id = payerHasher.saltId;
+        }
       } catch {
         // omit payer; never fail the record
       }

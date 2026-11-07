@@ -69,9 +69,9 @@ A collector may store a `scheme`, `network` or `asset` value that does not have 
 | `payment.network` | string | when known | Network of the payment. |
 | `payment.amount` | string | when known | Amount of the payment (v2). |
 | `payment.asset` | string | when known | Asset of the payment. |
-| `payment.payer` | string | with a valid `salt` option | First 32 hex characters (lowercase) of HMAC-SHA-256 keyed with the seller's salt. See "Payer pseudonym". |
-| `payment.payer_alg` | string | with `payment.payer` | `op8x.payer.v1`, the construction of `payment.payer`. Sent by the module from the next version on. |
-| `payment.payer_salt_id` | string | with `payment.payer` | 8 lowercase hex characters identifying the salt, so series made with different salts are not mixed. Sent by the module from the next version on. |
+| `payment.payer` | string | with a valid salt | First 32 hex characters (lowercase) of HMAC-SHA-256 keyed with the seller's salt, from the `salt` option or the Worker secret `OP8X_SALT`. See "Payer pseudonym". |
+| `payment.payer_alg` | string | with `payment.payer` | `op8x.payer.v1`, the construction of `payment.payer`. New in 0.0.3: the module sends it with every pseudonym. |
+| `payment.payer_salt_id` | string | with `payment.payer` | 8 lowercase hex characters identifying the salt, so series made with different salts are not mixed. New in 0.0.3: the module sends it with every pseudonym. |
 | `receipt` | object | with a receipt header | The receipt the seller returned. |
 | `receipt.header` | string | with `receipt` | `PAYMENT-RESPONSE` or `X-PAYMENT-RESPONSE`. |
 | `receipt.decodable` | boolean | with `receipt` | Whether the header could be decoded. |
@@ -86,8 +86,8 @@ A collector may store a `scheme`, `network` or `asset` value that does not have 
 ## Payer pseudonym
 
 - `payment.payer`, `payment.payer_alg` and `payment.payer_salt_id` belong together. A consumer counts a pseudonym only when all three are present.
-- The salt is a string of the form `op8x_s_` followed by 43 base64url characters (`A-Z`, `a-z`, `0-9`, `-`, `_`), which decode to exactly 32 bytes. The encoding must be canonical: encoding the 32 bytes again gives the same string. Any other value is not a salt and disables payer hashing.
-- Key: the 32 decoded bytes. `payment.payer` is the first 32 lowercase hex characters of HMAC-SHA-256 over the UTF-8 bytes of `op8x.payer.v1`, one `0x00` byte, and the payer address. The address is trimmed; it is lowercased only when it matches `0x` plus 40 hex digits (EVM). Other addresses, such as Solana, keep their case, because their case is significant.
+- The salt is a string of the form `op8x_s_` followed by 43 base64url characters (`A-Z`, `a-z`, `0-9`, `-`, `_`), which decode to exactly 32 bytes. The encoding must be canonical: encoding the 32 bytes again gives the same string. Any other value is not a salt and disables payer hashing. The module takes the salt from the `salt` option; without that option it reads the Worker secret `OP8X_SALT` on every request, so a rotated secret applies to the next request. An invalid option is not replaced by the environment.
+- Key: the 32 decoded bytes. `payment.payer` is the first 32 lowercase hex characters of HMAC-SHA-256 over the UTF-8 bytes of `op8x.payer.v1`, one `0x00` byte, and the payer address. The address is first stripped of ASCII whitespace at both ends: space, tab (U+0009), line feed, carriage return, form feed and vertical tab (U+000B), and nothing else. A no-break space, for example, is kept. The stripped address is then lowercased only when it matches `0x` plus 40 hex digits (EVM). Other addresses, such as Solana, keep their case, because their case is significant. This normalization is part of the construction; the module applies it nowhere else.
 - `payment.payer_salt_id` is the first 8 lowercase hex characters of HMAC-SHA-256 over the UTF-8 bytes of `op8x.salt-id.v1`, keyed with the same 32 bytes. It tells salts apart and reveals nothing usable about the salt.
 - Test vectors (salts, salt ids, addresses, pseudonyms, and invalid salts) are in [`payer-hash-vectors.json`](payer-hash-vectors.json). An implementation must reproduce every one.
 - The salt never leaves the seller's server. Only the pseudonym, the algorithm name and the salt id are sent.

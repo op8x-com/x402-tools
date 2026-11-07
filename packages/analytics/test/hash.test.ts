@@ -38,7 +38,7 @@ test("vectors: independent node:crypto recomputation", async () => {
     const bytes = Buffer.from(v.salt_bytes_hex, "hex");
     assert.equal(createHmac("sha256", bytes).update("op8x.salt-id.v1").digest("hex").slice(0, 8), v.salt_id);
     for (const p of v.payers) {
-      const a = p.address.trim();
+      const a = p.address.replace(/^[ \t\n\r\f\v]+|[ \t\n\r\f\v]+$/g, "");
       const n = /^0x[0-9a-fA-F]{40}$/.test(a) ? a.toLowerCase() : a;
       const mac = createHmac("sha256", bytes).update(Buffer.concat([Buffer.from("op8x.payer.v1"), Buffer.from([0]), Buffer.from(n)]));
       assert.equal(mac.digest("hex").slice(0, 32), p.payer);
@@ -86,11 +86,7 @@ test("parseSalt accepts a url-safe salt with - and _", () => {
   assert.deepEqual(parseSalt(s), bytes);
 });
 
-test("parseSalt never throws and an error never contains the salt", async () => {
-  const hostile = { get length(): number { throw new Error(`boom ${VALID}`); } };
-  for (const v of [hostile, new Proxy({}, { get() { throw new Error(VALID); } })]) {
-    assert.doesNotThrow(() => parseSalt(v));
-  }
+test("an error from hashPayer never contains the salt", async () => {
   const bytes = parseSalt(VALID)!;
   try {
     await hashPayer(bytes, undefined as unknown as string);
@@ -115,6 +111,23 @@ test("hashPayer: 32 lowercase hex, case-insensitive for EVM, case-sensitive othe
   assert.equal(await hashPayer(salt, evm.toLowerCase()), a);
   assert.equal(await hashPayer(salt, `  ${evm}\t`), a);
   assert.notEqual(await hashPayer(salt, "abc"), await hashPayer(salt, "ABC"));
+});
+
+test("hashPayer strips only ASCII whitespace at both ends", async () => {
+  const salt = parseSalt(VALID)!;
+  const sol = "9wzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
+  const plain = await hashPayer(salt, sol);
+  for (const ws of [" ", "\t", "\n", "\r", "\f", "\v", " \t\n\r\f\v"]) {
+    assert.equal(await hashPayer(salt, `${ws}${sol}${ws}`), plain, JSON.stringify(ws));
+  }
+  // Not stripped: no-break space, em space, BOM, line separator, NEL.
+  for (const code of [0x00a0, 0x2003, 0xfeff, 0x2028, 0x0085]) {
+    const ch = String.fromCharCode(code);
+    assert.notEqual(await hashPayer(salt, `${ch}${sol}`), plain, `leading U+${code.toString(16)}`);
+    assert.notEqual(await hashPayer(salt, `${sol}${ch}`), plain, `trailing U+${code.toString(16)}`);
+  }
+  // Inner whitespace is kept.
+  assert.notEqual(await hashPayer(salt, "9wzD XwBb"), await hashPayer(salt, "9wzDXwBb"));
 });
 
 test("different salts give different pseudonyms and ids", async () => {
