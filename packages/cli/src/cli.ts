@@ -1,4 +1,6 @@
 import { parseArgs } from "node:util";
+import { accountCommand, runAccount } from "./account/commands.ts";
+import { finalLine } from "./account/output.ts";
 import { extract, withBrowserView } from "./extract.ts";
 import { preflight, probe } from "./probe.ts";
 import { buildReport, renderJson, renderText } from "./report.ts";
@@ -16,6 +18,58 @@ export interface Io {
   fetchImpl?: typeof fetch;
 }
 
+export interface ExecOptions {
+  cwd: string;
+  env: Record<string, string>; // complete child environment, never process.env
+  input?: string; // written to a stdin pipe; without input stdin is closed at once
+  timeoutMs: number;
+  // Start the child on its own and never wait for it: code 0 once it started, null if it could
+  // not start within timeoutMs; no stdio, so no output and no input.
+  detach?: boolean;
+}
+
+export interface ExecResult {
+  code: number | null; // null = timeout or signal
+  stdout: string; // UTF-8, at most 1 MiB, the rest dropped
+  stderr: string;
+}
+
+export interface Deps extends Io {
+  env: Readonly<Record<string, string | undefined>>;
+  platform: NodeJS.Platform;
+  nodeVersion: string; // process.versions.node
+  cwd: string;
+  configDir: string;
+  stdinIsTTY: boolean;
+  readStdin: () => Promise<string>; // all of stdin, at most 4 KiB
+  readHidden: (prompt: string) => Promise<string>; // TTY input without echo
+  exec: (file: string, args: readonly string[], opts: ExecOptions) => Promise<ExecResult>;
+  lookup: (host: string) => Promise<string[]>; // all addresses, like dns.lookup(host, { all: true })
+  now: () => number; // ms since the epoch
+  sleep: (ms: number) => Promise<void>;
+}
+
+const DEPS_FIELDS: Record<Exclude<keyof Deps, keyof Io>, "object" | "string" | "boolean" | "function"> = {
+  env: "object",
+  platform: "string",
+  nodeVersion: "string",
+  cwd: "string",
+  configDir: "string",
+  stdinIsTTY: "boolean",
+  readStdin: "function",
+  readHidden: "function",
+  exec: "function",
+  lookup: "function",
+  now: "function",
+  sleep: "function",
+};
+
+/** True if `io` carries every field of Deps; account commands need all of them. */
+export function isDeps(io: Io | Deps): io is Deps {
+  const fields = io as unknown as Record<string, unknown>;
+  return Object.entries(DEPS_FIELDS).every(([name, type]) => typeof fields[name] === type && fields[name] !== null);
+}
+
 const USAGE = `Usage: op8x check <url> [options]
 
 Checks an x402 endpoint from the outside with unpaid requests.
@@ -27,6 +81,15 @@ Options:
   --payer <address>      your own paying wallet; warns if it is a payTo
   -v, --version          print the version
   -h, --help             print this help
+
+Account commands (each takes --json for JSON Lines):
+  op8x init                connect the worker in this folder to op8x and send one test request
+  op8x login               sign this computer in to your op8x account
+  op8x logout              sign this computer out and remove its op8x file
+  op8x import-key <path>   take the server key from the op8x file of your other computer
+  op8x rotate [--now]      replace the server key in every worker this computer knows
+  op8x delete              delete the op8x account and remove the server key from every worker
+  op8x report              numbers of your account (not available yet)
 `;
 
 function parse(argv: string[]) {
@@ -45,7 +108,36 @@ function parse(argv: string[]) {
   });
 }
 
-export async function run(argv: string[], io: Io): Promise<number> {
+// Every option of any command that takes a value, so the loose first pass does not
+// take a value for the command word (op8x --timeout 5 check <url>).
+const VALUE_OPTIONS = {
+  method: { type: "string" },
+  timeout: { type: "string" },
+  payer: { type: "string" },
+  env: { type: "string" },
+  url: { type: "string" },
+  "env-file": { type: "string" },
+  name: { type: "string" },
+} as const;
+
+/**
+ * Dispatches on the first positional. No positional, or `check`, runs `op8x check` with the
+ * whole argv unchanged; an account command parses the whole argv again, strictly, with its own
+ * options; any other word is a usage error (exit 4).
+ */
+export async function run(argv: string[], io: Io | Deps): Promise<number> {
+  const { values, positionals } = parseArgs({ args: argv, strict: false, allowPositionals: true, options: VALUE_OPTIONS });
+  const word = positionals[0];
+  if (word === undefined || word === "check") return runCheck(argv, io);
+  const command = accountCommand(word);
+  if (command) return runAccount(command, argv, io, isDeps(io) ? io : null);
+  // The word is not repeated: it may be anything, including a pasted secret.
+  io.err(USAGE);
+  if (values.json === true) io.out(finalLine(null, "usage_error", 4));
+  return 4;
+}
+
+async function runCheck(argv: string[], io: Io): Promise<number> {
   let parsed: ReturnType<typeof parse>;
   try {
     parsed = parse(argv);

@@ -402,3 +402,51 @@ test("io.curl = curl.exe: Reproduce lines use it, validate line keeps curl, JSON
   await run(["check", `${server.url}/v2-good`, "--json"], b);
   assert.deepEqual(strip(a.stdout()), strip(b.stdout()));
 });
+
+// Dispatcher: the first positional picks the command; options may come before it.
+
+test("options before check: --timeout 5 check <url> runs like today", async () => {
+  const before = capture();
+  const after = capture();
+  assert.equal(await run(["check", `${server.url}/v2-good`, "--timeout", "5"], before), 0);
+  assert.equal(await run(["--timeout", "5", "check", `${server.url}/v2-good`], after), 0);
+  assert.match(after.stdout(), /Official x402 client can read the challenge/);
+  assert.equal(after.stderr(), "");
+});
+
+test("options before check: --method GET check <url> probes only GET", async () => {
+  const io = capture();
+  assert.equal(await run(["--method", "GET", "check", `${server.url}/v1-good`, "--json"], io), 0);
+  const methods = JSON.parse(io.stdout()).requests.map((r: { method: string }) => r.method);
+  assert.deepEqual(methods, ["GET", "GET"]);
+});
+
+test("empty argv, --json alone and check usage errors keep exit 2 and stderr", async () => {
+  for (const argv of [[], ["--json"], ["check"], ["--nope"]]) {
+    const io = capture();
+    assert.equal(await run(argv, io), 2, argv.join(" "));
+    assert.match(io.stderr(), /Usage: op8x check <url>/);
+    assert.equal(io.stdout(), "");
+  }
+});
+
+test("an unknown first word is a usage error (exit 4) with help on stderr", async () => {
+  const io = capture();
+  assert.equal(await run(["frobnicate"], io), 4);
+  assert.match(io.stderr(), /Usage: op8x check <url>/);
+  assert.equal(io.stdout(), "");
+  assert.equal(io.stderr().includes("frobnicate"), false);
+});
+
+test("an unknown first word with --json adds the final line on stdout", async () => {
+  const io = capture();
+  assert.equal(await run(["--json", "frobnicate"], io), 4);
+  assert.match(io.stderr(), /Usage: op8x check <url>/);
+  assert.deepEqual(JSON.parse(io.stdout()), {
+    schema: "op8x.cli/1",
+    command: null,
+    final: true,
+    state: "usage_error",
+    exit_code: 4,
+  });
+});

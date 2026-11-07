@@ -13,7 +13,8 @@ export interface ProbeOptions {
   fetchImpl?: typeof fetch;
 }
 
-interface Sent {
+/** What `send` returns: status and headers if an answer came, the body text (read up to the limit), or the error. */
+export interface Sent {
   status?: number;
   headers: Record<string, string>;
   bodyText: string;
@@ -22,7 +23,11 @@ interface Sent {
   error?: string;
 }
 
-async function send(
+/**
+ * One HTTP request: no redirect is followed (`redirect: "manual"`), our own timeout, the op8x User-Agent and a
+ * body read up to MAX_CONTROL_PLANE_RESPONSE_BYTES. Shared with the account commands' API client.
+ */
+export async function send(
   url: string,
   init: { method: string; headers: Record<string, string>; body?: string },
   opts: ProbeOptions,
