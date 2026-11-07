@@ -64,7 +64,7 @@ Options:
   --env <name>         the wrangler environment to set up
   --name <worker>      the worker name, in place of the name in the wrangler configuration
   --url <url>          an https address the op8x module handles, for the test request
-  --env-file <path>    write the server key to this git-ignored file instead of wrangler
+  --env-file <path>    write the server key and the salt to this git-ignored file instead of wrangler
   --json               print JSON Lines
 `;
 
@@ -86,8 +86,8 @@ Options:
 
 const IMPORT_USAGE = `Usage: op8x import-key <path> [--json]
 
-Takes the server key from the op8x file of your other computer, after checking that it is the
-account's current key.
+Takes the server key and the salt from the op8x file of your other computer, after checking
+that the key is the account's current key.
 
 Options:
   --json               print JSON Lines
