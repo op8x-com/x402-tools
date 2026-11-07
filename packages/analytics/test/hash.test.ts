@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { PAYER_ALG, SALT_PREFIX, hashPayer, parseSalt, saltId } from "../src/hash.ts";
+import { PAYER_ALG, SALT_PREFIX, hashPayer, parseSalt, saltId, trimAscii } from "../src/hash.ts";
 
 interface Vectors {
   alg: string;
@@ -135,4 +135,17 @@ test("different salts give different pseudonyms and ids", async () => {
   const s2 = parseSalt(vectors.salts[1]!.salt)!;
   assert.notEqual(await saltId(s1), await saltId(s2));
   assert.notEqual(await hashPayer(s1, "x"), await hashPayer(s2, "x"));
+});
+
+test("trimAscii is linear: long inner whitespace runs do not blow up", () => {
+  for (const ws of [" ", "\t"]) {
+    const value = "a" + ws.repeat(16000) + "a";
+    const start = performance.now();
+    for (let i = 0; i < 5; i++) assert.equal(trimAscii(value), value);
+    assert.ok(performance.now() - start < 50, "five calls under 50 ms");
+  }
+  assert.equal(trimAscii(" \t\n\r\f\v" + "a b" + " \t\n\r\f\v"), "a b");
+  assert.equal(trimAscii(" \t "), "");
+  assert.equal(trimAscii(""), "");
+  assert.equal(trimAscii(" a "), " a ");
 });

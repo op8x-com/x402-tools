@@ -9,7 +9,7 @@ export const KEY_MISSING_TRANSPORT =
 export const KEY_REFUSED = "op8x.analytics: op8x write key refused for a non-op8x endpoint";
 export const KEY_INVALID = "op8x.analytics: invalid key, sending disabled";
 export const SALT_INVALID =
-  "op8x.analytics: OP8X_SALT must look like op8x_s_… (32 random bytes); payer pseudonyms disabled";
+  "op8x.analytics: the salt (OP8X_SALT or the salt option) must look like op8x_s_… (32 random bytes); payer pseudonyms disabled";
 
 /** True when `endpoint` (an already validated URL) has exactly the op8x collector origin. */
 export function isOp8xEndpoint(endpoint: string | undefined): boolean {
@@ -35,24 +35,24 @@ export function checkKey(value: unknown, op8x: boolean): string | undefined {
   return key;
 }
 
-/** OP8X_KEY from a Hono-style environment; undefined when absent or unreadable. */
-export function envKey(env: unknown): unknown {
+/** A named value from a Hono-style environment; undefined when absent or unreadable. */
+function envValue(env: unknown, name: string): unknown {
   try {
     if (env === null || typeof env !== "object") return undefined;
-    return (env as Record<string, unknown>)["OP8X_KEY"];
+    return (env as Record<string, unknown>)[name];
   } catch {
     return undefined;
   }
 }
 
-/** OP8X_SALT from a Hono-style environment; undefined when absent or unreadable. */
+/** The write key from a Hono-style environment; undefined when absent or unreadable. */
+export function envKey(env: unknown): unknown {
+  return envValue(env, "OP8X_KEY");
+}
+
+/** The salt from a Hono-style environment; undefined when absent or unreadable. */
 export function envSalt(env: unknown): unknown {
-  try {
-    if (env === null || typeof env !== "object") return undefined;
-    return (env as Record<string, unknown>)["OP8X_SALT"];
-  } catch {
-    return undefined;
-  }
+  return envValue(env, "OP8X_SALT");
 }
 
 export type KeyResolution = { ok: true; key: string | undefined } | { ok: false; warning: string };

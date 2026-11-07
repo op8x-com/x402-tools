@@ -859,7 +859,7 @@ test("per-request analytics() instances warn once per isolate", async (t) => {
   const { ctx, promises } = fakeCtx();
   for (let i = 0; i < 100; i++) await app.request("/json", undefined, {}, ctx);
   await settleWithin(promises, 3000);
-  const salted = warn.mock.calls.filter((c) => String(c.arguments[0]).includes("OP8X_SALT must look like"));
+  const salted = warn.mock.calls.filter((c) => String(c.arguments[0]).includes("must look like op8x_s_"));
   assert.equal(salted.length, 1);
   assert.equal(warn.mock.callCount(), 1);
 });
@@ -1029,7 +1029,7 @@ for (const bad of ["op8x_s_" + "A".repeat(42), "op8x_s_" + "A".repeat(42) + "B",
       for (const r of collector.records) assert.deepEqual(pick(r.payment), NO_FIELDS);
       const texts = warn.mock.calls.map((c) => String(c.arguments[0]));
       assert.equal(texts.filter((m) => m === SALT_INVALID).length, 1);
-      assert.ok(SALT_INVALID.startsWith("op8x.analytics: OP8X_SALT must look like op8x_s_"));
+      assert.ok(SALT_INVALID.startsWith("op8x.analytics: the salt (OP8X_SALT or the salt option) must look like op8x_s_"));
       if (typeof bad === "string" && bad !== "") assert.ok(texts.every((m) => !m.includes(bad)));
     } finally {
       await collector.close();
@@ -1098,17 +1098,25 @@ test("the key import only happens for payment events", async (t) => {
   }
 });
 
-test("the buyer's response is identical with and without a salt (valid or invalid)", async (t) => {
+test("the buyer's response is identical with and without a salt (valid, invalid or failing to hash)", async (t) => {
   t.mock.method(console, "warn", () => {});
+  const realImport = crypto.subtle.importKey.bind(crypto.subtle);
+  let failHash = false;
+  t.mock.method(crypto.subtle, "importKey", (...args: Parameters<typeof realImport>) => {
+    if (failHash) throw new Error("import failed");
+    return realImport(...args);
+  });
   const collector = await startCollector("ok");
   try {
     const shots = [];
-    for (const [options, env] of [
-      [{}, {}],
-      [{}, { OP8X_SALT: SALT }],
-      [{ salt: SALT }, {}],
-      [{}, { OP8X_SALT: "op8x_s_bad" }],
-    ] as [AnalyticsOptions, Record<string, unknown>][]) {
+    for (const [options, env, fail] of [
+      [{}, {}, false],
+      [{}, { OP8X_SALT: SALT }, false],
+      [{ salt: SALT }, {}, false],
+      [{}, { OP8X_SALT: "op8x_s_bad" }, false],
+      [{}, { OP8X_SALT: SALT }, true],
+    ] as [AnalyticsOptions, Record<string, unknown>, boolean][]) {
+      failHash = fail;
       const app = buildApp(analytics({ endpoint: collector.url, ...options }));
       const { ctx, promises } = fakeCtx();
       const res = await app.request("/paid", { headers: { "PAYMENT-SIGNATURE": b64(v2Payment) } }, env, ctx);
@@ -1132,7 +1140,7 @@ test("neither the log nor the sent body contains the salt", async (t) => {
     assert.ok(logged.includes("op8x.analytics"), "something was logged");
     assert.ok(!/op8x_s_[A-Za-z0-9_-]{8}/.test(logged), "no salt-shaped text in the log");
     assert.ok(!JSON.stringify(collector.requests.map((r) => r.body)).includes("op8x_s_"));
-    assert.ok(logged.includes("OP8X_SALT must look like"), "the invalid salt gave the fixed warning");
+    assert.ok(logged.includes("must look like op8x_s_"), "the invalid salt gave the fixed warning");
     assert.ok(collector.requests.every((r) => !JSON.stringify(r.headers).includes("op8x_s_")));
   } finally {
     await collector.close();
@@ -1140,7 +1148,7 @@ test("neither the log nor the sent body contains the salt", async (t) => {
 });
 
 interface VectorFile {
-  salts: { salt: string; payers: { note: string; address: string; payer: string }[] }[];
+  salts: { salt: string; salt_id: string; payers: { note: string; address: string; payer: string }[] }[];
 }
 const vectorFile = JSON.parse(readFileSync(new URL("../docs/payer-hash-vectors.json", import.meta.url), "utf8")) as VectorFile;
 
@@ -1159,10 +1167,11 @@ test("every published vector address, as a payment, gives exactly the published 
         const got = collector.records[collector.records.length - 1]?.payment;
         assert.equal(got?.payer, p.payer, p.note);
         assert.equal(got?.payer_alg, "op8x.payer.v1");
+        assert.equal(got?.payer_salt_id, v.salt_id, p.note);
       }
     }
     const ids = new Set(collector.records.map((r) => r.payment?.payer_salt_id));
-    assert.equal(ids.size, vectorFile.salts.length);
+    assert.deepEqual([...ids].sort(), vectorFile.salts.map((v) => v.salt_id).sort());
   } finally {
     await collector.close();
   }

@@ -35,8 +35,13 @@
         },
         {
           "note": "EVM address after a leading U+00A0 (no-break space): only ASCII whitespace is trimmed, so the address is kept as is, case-sensitive",
-          "address": " 0x52908400098527886E0F7030069857D2E4169EE7",
+          "address": "\u00a00x52908400098527886E0F7030069857D2E4169EE7",
           "payer": "010c271e2da1d284a25d4e0a70958739"
+        },
+        {
+          "note": "Upper-case 0X prefix: not treated as EVM, kept as is, case-sensitive",
+          "address": "0X52908400098527886E0F7030069857D2E4169EE7",
+          "payer": "89523e61bc36ff06d21138e3df06b7a1"
         },
         {
           "note": "Not a 40-hex EVM address: kept as is, case-sensitive",
@@ -78,8 +83,13 @@
         },
         {
           "note": "EVM address after a leading U+00A0 (no-break space): only ASCII whitespace is trimmed, so the address is kept as is, case-sensitive",
-          "address": " 0x52908400098527886E0F7030069857D2E4169EE7",
+          "address": "\u00a00x52908400098527886E0F7030069857D2E4169EE7",
           "payer": "45e22a1eb8d8eb34994e57a4338788c5"
+        },
+        {
+          "note": "Upper-case 0X prefix: not treated as EVM, kept as is, case-sensitive",
+          "address": "0X52908400098527886E0F7030069857D2E4169EE7",
+          "payer": "69dccc257822a89ad861235c06e2b868"
         },
         {
           "note": "Not a 40-hex EVM address: kept as is, case-sensitive",

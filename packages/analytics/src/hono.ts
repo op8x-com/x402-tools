@@ -266,12 +266,7 @@ export function analytics(options: AnalyticsOptions = {}): MiddlewareHandler {
         }
       }
       // Read per request, so a rotated secret applies at once; only handed on, never logged.
-      let rawSalt: unknown;
-      try {
-        rawSalt = explicitSalt !== undefined ? explicitSalt : envSalt(c.env);
-      } catch {
-        rawSalt = undefined;
-      }
+      const rawSalt: unknown = explicitSalt !== undefined ? explicitSalt : envSalt(c.env);
       const paid = requestHeaders.has("payment-signature") || requestHeaders.has("x-payment");
       const send = sender;
       const sendKey = key;

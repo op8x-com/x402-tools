@@ -604,3 +604,19 @@ test("buildRecord yields exactly the published vectors, for payment-header and r
     }
   }
 });
+
+test("buildRecord stays fast for an address with long inner whitespace, with and without a salt", async () => {
+  const bytes = parseSalt(vectorFile.salts[0]!.salt)!;
+  const hasher: PayerHasher = { hash: (a) => hashPayer(bytes, a), saltId: await saltId(bytes) };
+  for (const ws of [" ", "\t"]) {
+    // A tab is two bytes in the JSON header, which is capped at 16 KiB.
+    const address = "a" + ws.repeat(ws === "	" ? 8000 : 16000) + "a";
+    const req = { "payment-signature": b64({ payload: { authorization: { from: address } } }) };
+    const start = performance.now();
+    const unsalted = await buildRecord(input({ req }));
+    const salted = await buildRecord(input({ req }), hasher);
+    assert.ok(performance.now() - start < 50, "both records under 50 ms");
+    assert.equal(unsalted.payment?.payer, undefined);
+    assert.equal(salted.payment?.payer, await hashPayer(bytes, address));
+  }
+});

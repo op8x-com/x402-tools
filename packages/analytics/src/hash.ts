@@ -8,7 +8,6 @@ export const SALT_PREFIX = "op8x_s_";
 const SALT_ID_LABEL = "op8x.salt-id.v1";
 const SALT_RE = /^op8x_s_[A-Za-z0-9_-]{43}$/;
 const EVM_RE = /^0x[0-9a-fA-F]{40}$/;
-const EDGE_WS_RE = /^[ \t\n\r\f\v]+|[ \t\n\r\f\v]+$/g;
 const B64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 /** Unpadded base64url of bytes, used only to check that a decoded salt is canonical. */
@@ -65,7 +64,16 @@ export async function saltId(salt: Uint8Array): Promise<string> {
 
 /** Removes ASCII whitespace (space, tab, LF, CR, FF, VT) at both ends; nothing else, unlike String.prototype.trim. */
 export function trimAscii(value: string): string {
-  return value.replace(EDGE_WS_RE, "");
+  let start = 0;
+  let end = value.length;
+  while (start < end && isAsciiWs(value.charCodeAt(start))) start++;
+  while (end > start && isAsciiWs(value.charCodeAt(end - 1))) end--;
+  return value.slice(start, end);
+}
+
+/** Space, tab, LF, VT, FF, CR. */
+function isAsciiWs(code: number): boolean {
+  return code === 0x20 || (code >= 0x09 && code <= 0x0d);
 }
 
 /**
