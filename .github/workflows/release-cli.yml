@@ -26,15 +26,15 @@ jobs:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
           package-manager-cache: false
-      # Trusted publishing needs npm >= 11.5.1.
-      - run: npm install -g npm@latest
+      # Trusted publishing needs npm >= 11.5.1; pinned to an exact version so the release does not change underneath us.
+      - run: npm install -g npm@11.21.1
+      - name: npm must be the pinned version
+        run: test "$(npm -v)" = "11.21.1" || { echo "npm $(npm -v) is not the pinned 11.21.1"; exit 1; }
       - name: Tag must match package version
-        run: |
-          expected="cli-v$(node -p "require('./package.json').version")"
-          if [ "$GITHUB_REF_NAME" != "$expected" ]; then
-            echo "Tag $GITHUB_REF_NAME does not match package version ($expected)"
-            exit 1
-          fi
+        run: node ../../scripts/check-release-tag.mjs packages/cli
       - run: npm ci
-      # prepublishOnly runs typecheck, tests and build.
+      # Explicit steps: we do not rely on npm stage publish running prepublishOnly.
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
       - run: npm stage publish .
