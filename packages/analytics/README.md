@@ -100,7 +100,7 @@ analytics({
   endpoint: "https://collector.example/v1/events",
   key: "your-collector-key",
   log: true,
-  salt: "a-long-random-secret",
+  salt: "op8x_s_<43 characters generated for you>",
   timeoutMs: 2000,
   chainCheck: false,
 });
@@ -111,7 +111,7 @@ analytics({
 | `endpoint` | none | `https` URL (no username or password) that receives each record as a JSON `POST` (`http` only for `localhost` and `127.0.0.1`). Omitted: no network sends. An invalid value is not an error: one warning is logged and sending stays off. |
 | `key` | none | Write key, sent as `Authorization: Bearer <key>`. Wins over `OP8X_KEY` from the environment, see "Write key". |
 | `log` | `false` | Write one `console.log("op8x.analytics", <json>)` line per record. |
-| `salt` | none | Enables the `payer` field (a keyed hash of the payer address). Omitted: no `payer` field at all. A blank or non-string value also disables hashing and logs one warning, `op8x.analytics: salt must be a non-empty string, payer hashing disabled`. Keep it secret. |
+| `salt` | none | Enables the `payer` field (a keyed hash of the payer address). Omitted: no `payer` field at all. Any value that is not a valid op8x salt (`op8x_s_` plus 43 base64url characters) also disables hashing and logs one warning, `op8x.analytics: salt is not a valid op8x salt, payer hashing disabled`. Keep it secret. |
 | `timeoutMs` | `2000` | Abort the send after this long; also the limit for reading the 402 body copy. Clamped to 100..10000. |
 | `chainCheck` | `false` | Add `receipt.transaction` so the collector can confirm settlement on-chain. Omitted: the transaction hash is never sent; the record only says whether there is one. |
 

@@ -1,6 +1,6 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { matchedRoutes } from "hono/route";
-import { hashPayer } from "./hash.ts";
+import { hashPayer, parseSalt } from "./hash.ts";
 import { buildRecord } from "./record.ts";
 import type { RecordInput } from "./record.ts";
 import { clampTimeout, createTransport, validEndpoint } from "./transport.ts";
@@ -174,11 +174,10 @@ export function analytics(options: AnalyticsOptions = {}): MiddlewareHandler {
     }
     readDeadlineMs = clampTimeout(opts.timeoutMs);
     chainCheck = opts.chainCheck === true;
-    const salt: unknown = opts.salt;
-    if (typeof salt === "string" && salt.trim() !== "") {
-      hash = (address) => hashPayer(salt, address);
-    } else if (salt !== undefined) {
-      badSalt = true;
+    if (opts.salt !== undefined) {
+      const bytes = parseSalt(opts.salt);
+      if (bytes !== undefined) hash = (address) => hashPayer(bytes, address);
+      else badSalt = true;
     }
   } catch {
     transport = undefined;
@@ -282,7 +281,7 @@ export function analytics(options: AnalyticsOptions = {}): MiddlewareHandler {
           await new Promise((resolve) => setTimeout(resolve, 0));
           // Read the clone first: an unread tee branch would buffer the whole body.
           const body = clone !== undefined ? await readCapped(clone, readDeadlineMs) : undefined;
-          if (warnSalt) warnOnce("op8x.analytics: salt must be a non-empty string, payer hashing disabled");
+          if (warnSalt) warnOnce("op8x.analytics: salt is not a valid op8x salt, payer hashing disabled");
           const input: RecordInput = {
             id: crypto.randomUUID(),
             ts,

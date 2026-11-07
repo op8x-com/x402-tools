@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { Hono } from "hono";
 import type { ExecutionContext, MiddlewareHandler } from "hono";
 import { analytics } from "../src/hono.ts";
-import { hashPayer } from "../src/hash.ts";
+import { hashPayer, parseSalt } from "../src/hash.ts";
 import type { AnalyticsOptions, AnalyticsRecord } from "../src/types.ts";
 import { resetWarnings } from "../src/warnings.ts";
 import { startCollector } from "./collector.ts";
@@ -389,20 +389,23 @@ test("the transport is created once per analytics() call: one warning for two fa
   }
 });
 
+// Generated test salt (bytes 0x00..0x1f); not a real secret.
+const SALT = "op8x_s_" + Buffer.from(Array.from({ length: 32 }, (_, i) => i)).toString("base64url");
+
 test("salt hashes the payer", async () => {
   const collector = await startCollector("ok");
   try {
-    const app = buildApp(analytics({ endpoint: collector.url, salt: "seller-salt" }));
+    const app = buildApp(analytics({ endpoint: collector.url, salt: SALT }));
     const { ctx, promises } = fakeCtx();
     await app.request("/paid", { headers: { "PAYMENT-SIGNATURE": b64(v2Payment) } }, {}, ctx);
     await settleWithin(promises, 3000);
-    assert.equal(collector.records[0]?.payment?.payer, await hashPayer("seller-salt", PAYER));
+    assert.equal(collector.records[0]?.payment?.payer, await hashPayer(parseSalt(SALT)!, PAYER));
   } finally {
     await collector.close();
   }
 });
 
-for (const salt of ["", "   ", 5, null, {}] as unknown as string[]) {
+for (const salt of ["", "   ", 5, null, {}, "seller-salt"] as unknown as string[]) {
   test(`blank or non-string salt ${JSON.stringify(salt)}: no payer, one warning on first request`, async (t) => {
     const warn = t.mock.method(console, "warn", () => {});
     const collector = await startCollector("ok");
@@ -416,7 +419,7 @@ for (const salt of ["", "   ", 5, null, {}] as unknown as string[]) {
       await app.request("/paid", { headers: { "PAYMENT-SIGNATURE": b64(v2Payment) } }, {}, ctx);
       await settleWithin(promises, 3000);
       const salted = warn.mock.calls.filter(
-        (c) => c.arguments[0] === "op8x.analytics: salt must be a non-empty string, payer hashing disabled",
+        (c) => c.arguments[0] === "op8x.analytics: salt is not a valid op8x salt, payer hashing disabled",
       );
       assert.equal(salted.length, 1);
       assert.equal(collector.records.length, 2);
@@ -854,7 +857,7 @@ test("per-request analytics() instances warn once per isolate", async (t) => {
   const { ctx, promises } = fakeCtx();
   for (let i = 0; i < 100; i++) await app.request("/json", undefined, {}, ctx);
   await settleWithin(promises, 3000);
-  const salted = warn.mock.calls.filter((c) => String(c.arguments[0]).includes("salt must be"));
+  const salted = warn.mock.calls.filter((c) => String(c.arguments[0]).includes("salt is not a valid"));
   assert.equal(salted.length, 1);
   assert.equal(warn.mock.callCount(), 1);
 });

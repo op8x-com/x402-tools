@@ -49,7 +49,7 @@ export interface PaymentInfo {
   /** v2 accepted.amount */
   amount?: string;
   asset?: string;
-  /** Hex HMAC-SHA-256(salt, lowercase address), first 32 hex chars; only with salt. */
+  /** Hex HMAC-SHA-256 keyed with the salt over the payer address, first 32 hex chars; only with a valid salt. */
   payer?: string;
 }
 

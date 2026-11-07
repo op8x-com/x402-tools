@@ -1,0 +1,116 @@
+{
+  "description": "Test vectors for the op8x.payer.v1 payer pseudonym. salt = \"op8x_s_\" + base64url(32 bytes), canonical. salt_id = first 8 hex of HMAC-SHA-256(salt bytes, \"op8x.salt-id.v1\"). payer = first 32 hex of HMAC-SHA-256(salt bytes, \"op8x.payer.v1\" || 0x00 || address'), address' = trimmed address, lowercased only when it matches ^0x[0-9a-fA-F]{40}$.",
+  "alg": "op8x.payer.v1",
+  "salts": [
+    {
+      "note": "bytes 0x00..0x1f",
+      "salt": "op8x_s_AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+      "salt_bytes_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "salt_id": "91660ffa",
+      "payers": [
+        {
+          "note": "EVM, mixed case (EIP-55)",
+          "address": "0x52908400098527886E0F7030069857D2E4169EE7",
+          "payer": "dc8468cb6128d5a5050fb24aa3b5c06c"
+        },
+        {
+          "note": "EVM, same address lowercase: same pseudonym",
+          "address": "0x52908400098527886e0f7030069857d2e4169ee7",
+          "payer": "dc8468cb6128d5a5050fb24aa3b5c06c"
+        },
+        {
+          "note": "EVM with surrounding whitespace: trimmed, same pseudonym",
+          "address": "  0x52908400098527886E0F7030069857D2E4169EE7\n",
+          "payer": "dc8468cb6128d5a5050fb24aa3b5c06c"
+        },
+        {
+          "note": "Solana",
+          "address": "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+          "payer": "a40aa6a8f56df9f3de97689fa718e3cc"
+        },
+        {
+          "note": "Solana, differs only in case of the second character: different pseudonym",
+          "address": "9wzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+          "payer": "5c11c04b8854a89cb8a2a835aa65e845"
+        },
+        {
+          "note": "Not a 40-hex EVM address: kept as is, case-sensitive",
+          "address": "0xABCDEF",
+          "payer": "455a48d38d408b2e4ce871d0518206f8"
+        }
+      ]
+    },
+    {
+      "note": "SHA-256 of UTF-8 \"op8x payer test salt 2\"",
+      "salt": "op8x_s_8jzNoLfHoCtuyZj7pDO6WMNT66fvRxkgnRgMT8W4X1k",
+      "salt_bytes_hex": "f23ccda0b7c7a02b6ec998fba433ba58c353eba7ef4719209d180c4fc5b85f59",
+      "salt_id": "cc6f7d18",
+      "payers": [
+        {
+          "note": "EVM, mixed case (EIP-55)",
+          "address": "0x52908400098527886E0F7030069857D2E4169EE7",
+          "payer": "3b26d55e0c4cbab72d0d0a2ee286cfa4"
+        },
+        {
+          "note": "EVM, same address lowercase: same pseudonym",
+          "address": "0x52908400098527886e0f7030069857d2e4169ee7",
+          "payer": "3b26d55e0c4cbab72d0d0a2ee286cfa4"
+        },
+        {
+          "note": "EVM with surrounding whitespace: trimmed, same pseudonym",
+          "address": "  0x52908400098527886E0F7030069857D2E4169EE7\n",
+          "payer": "3b26d55e0c4cbab72d0d0a2ee286cfa4"
+        },
+        {
+          "note": "Solana",
+          "address": "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+          "payer": "f8ca2accc42c618c548aa6737f7c9b0d"
+        },
+        {
+          "note": "Solana, differs only in case of the second character: different pseudonym",
+          "address": "9wzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+          "payer": "571919023bcc465eb02e684fcf6f3bf3"
+        },
+        {
+          "note": "Not a 40-hex EVM address: kept as is, case-sensitive",
+          "address": "0xABCDEF",
+          "payer": "7c65270600197af61cb65b1269f89038"
+        }
+      ]
+    }
+  ],
+  "invalid_salts": [
+    {
+      "note": "non-canonical: low bits of the last character set",
+      "salt": "op8x_s_AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh9"
+    },
+    {
+      "note": "missing prefix",
+      "salt": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    },
+    {
+      "note": "wrong prefix",
+      "salt": "op8x_k_AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    },
+    {
+      "note": "42 characters after the prefix",
+      "salt": "op8x_s_AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh"
+    },
+    {
+      "note": "44 characters after the prefix",
+      "salt": "op8x_s_AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8A"
+    },
+    {
+      "note": "standard base64 characters + and /",
+      "salt": "op8x_s_+/ECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    },
+    {
+      "note": "surrounding whitespace",
+      "salt": " op8x_s_AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8 "
+    },
+    {
+      "note": "empty",
+      "salt": ""
+    }
+  ]
+}
