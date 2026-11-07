@@ -16,9 +16,10 @@
     "access": "public"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
-  "homepage": "https://op8x.com",
+  "homepage": "https://docs.op8x.com",
+  "bugs": "https://github.com/op8x-com/x402-tools/issues",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/op8x-com/x402-tools.git",
@@ -32,7 +33,9 @@
     "agents"
   ],
   "scripts": {
+    "prebuild": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build",
     "typecheck": "tsc -p tsconfig.test.json",
     "test": "node --test \"test/*.test.ts\"",
     "prepublishOnly": "npm run typecheck && npm test && npm run build"

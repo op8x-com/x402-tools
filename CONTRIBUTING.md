@@ -4,7 +4,7 @@ Thanks for helping make x402 easier for sellers. This repository holds the open 
 
 ## Setup
 
-Node 24 for development (packages run on Node 20+ and Cloudflare Workers).
+Node 24 for development (packages run on Node 22+ and Cloudflare Workers).
 
 ```bash
 cd packages/cli
