@@ -14,6 +14,7 @@ import type { DeviceFailure, DeviceKeys } from "./device.ts";
 import { keyFingerprint } from "./keys.ts";
 import { createOutput, finalLine } from "./output.ts";
 import { ROTATE_USAGE, rotate } from "./rotate.ts";
+import { newSalt } from "./salt.ts";
 import { DELETE_USAGE, deleteCommand } from "./delete.ts";
 import type { AccountCommand, FinalState, Output } from "./output.ts";
 import { ACCOUNT_SCHEMA, accountPath, deleteAccount, parseAccount, writeAccount } from "./store.ts";
@@ -233,13 +234,17 @@ type Place =
  * and write_sha256), the op8x file is written right after granted and before wrangler; server_key
  * ignored ends with server_key_missing (only a key the collector accepted is ever used). On a
  * signed-in computer only key and test: write_key_next is settled first, then K must be the
- * account's current key. Step key puts K (wrangler secret put, or the line OP8X_KEY=… in the
+ * account's current key. Step key takes the account's salt from the op8x file (an op8x file
+ * without one gets a new salt, saved before anything is put), then puts K and the salt (one
+ * wrangler secret bulk with both on stdin, or the lines OP8X_KEY=… and OP8X_SALT=… in the
  * --env-file); step test sends one test request with a nonce and waits for the collector to see it
  * (connected, whose hint names the account's address so the human can check it is theirs).
+ * server_key_missing ends the run before a salt is made.
  */
 async function init(json: boolean, deps: Deps, o: InitOptions): Promise<number> {
   let keys: DeviceKeys | null = null;
   let held: AccountFile | null = null;
+  let madeSalt: string | null = null;
   const loaded = await loadFile(deps);
   if (loaded.ok) held = loaded.file;
   const signed = held !== null && held.deleted === null ? held : null;
@@ -250,7 +255,7 @@ async function init(json: boolean, deps: Deps, o: InitOptions): Promise<number> 
     json,
     deps,
     steps,
-    secrets: () => [keys?.device, keys?.read, keys?.write, ...fileSecrets(held)],
+    secrets: () => [keys?.device, keys?.read, keys?.write, madeSalt, ...fileSecrets(held)],
   });
   const stopped = () => out.final("internal_error");
 
@@ -340,12 +345,23 @@ async function init(json: boolean, deps: Deps, o: InitOptions): Promise<number> 
     }
   }
 
-  // Step key: K into the worker.
+  // Step key: K and the account's salt into the worker. A new salt is saved first, so a failed
+  // put leaves it in the op8x file and every later init puts the same one.
   const entry: WorkerEntry =
     place.kind === "env_file"
       ? { dir: dirname(place.path), name: null, env: null, env_file: place.path, url: o.url ?? null, deployed_at: "", verified_at: null, key_fingerprint: "" }
       : { dir: place.target.dir, name: place.target.name, env: place.target.env, env_file: null, url: o.url ?? place.target.url, deployed_at: "", verified_at: null, key_fingerprint: "" };
-  const put = await putKey(deps, out, place, key);
+  let salt = file!.salt;
+  if (salt === null) {
+    salt = newSalt();
+    madeSalt = salt;
+    const savedSalt = await save({ ...file!, salt });
+    if (savedSalt !== null) {
+      out.end("failed");
+      return out.final(savedSalt);
+    }
+  }
+  const put = await putKey(deps, out, place, key, salt);
   if (put === "stopped") return stopped();
   if (put === "failed") {
     out.end("failed");
@@ -405,12 +421,15 @@ async function findPlace(deps: Deps, o: InitOptions): Promise<FoundPlace> {
   return { ok: true, place: { kind: "wrangler", bin: found.bin, target: target.target } };
 }
 
-/** K into the place: wrangler secret put (notice secret_put_deploys first), or the env file. */
-async function putKey(deps: Deps, out: Output, place: Place, key: string): Promise<SecretResult> {
+/**
+ * K and the salt into the place: one wrangler secret bulk (notice secret_put_deploys first), or
+ * both lines in one write of the env file.
+ */
+async function putKey(deps: Deps, out: Output, place: Place, key: string, salt: string): Promise<SecretResult> {
   if (out.stopped) return "stopped";
-  if (place.kind === "wrangler") return createSecrets(deps, out).put(place.bin, place.target, key);
+  if (place.kind === "wrangler") return createSecrets(deps, out).putWithSalt(place.bin, place.target, key, salt);
   try {
-    await writeEnvKey(deps, place.path, key);
+    await writeEnvKey(deps, place.path, key, salt);
     return "ok";
   } catch {
     return "failed";
@@ -442,8 +461,8 @@ async function currentKey(deps: Deps, api: Api, out: Output, file: ActiveAccount
 
 /**
  * op8x login: the device login with mode login (no write_sha256). On a computer with an op8x file
- * of the same account R and the contact are replaced and a waiting step is cleared; K, the next K
- * and the workers stay. Granted for another account, the file is replaced as if there was none.
+ * of the same account R and the contact are replaced and a waiting step is cleared; K, the next K,
+ * the salt and the workers stay. Granted for another account, the file is replaced as if there was none.
  * A remainder file (deleted) counts as no file and is replaced, without the
  * collector check. Ends with connected, which names the account's address so the human can check
  * that it is theirs.
@@ -468,7 +487,7 @@ async function login(json: boolean, deps: Deps): Promise<number> {
     return failWith(out, r.fail);
   }
   if (out.stopped) return out.final("internal_error");
-  // Same account: K, the next K and the workers stay; a waiting step goes (its codes are bound to
+  // Same account: K, the next K, the salt and the workers stay; a waiting step goes (its codes are bound to
   // the old R). Another account: the old K is not this account's, so the file starts over.
   const same = kept !== null && kept.account === r.account;
   let next: ActiveAccount =
@@ -542,11 +561,12 @@ async function logout(json: boolean, deps: Deps): Promise<number> {
 const MAX_IMPORT_BYTES = 1024 * 1024;
 
 /**
- * K from the op8x file at `path`, or null if the file is missing, not a regular file, too big,
- * not a valid op8x file, or has no K. Nothing about the file (content, parser message) leaves
- * this function, since the file may hold other secrets. Opened without blocking, so a FIFO cannot hang the command.
+ * K and the salt (null if it has none) from the op8x file at `path`, or null if the file is
+ * missing, not a regular file, too big, not a valid op8x file (an invalid salt included), or has
+ * no K. Nothing about the file (content, parser message) leaves this function, since the file may
+ * hold other secrets. Opened without blocking, so a FIFO cannot hang the command.
  */
-async function readKeyFile(path: string): Promise<string | null> {
+async function readKeyFile(path: string): Promise<{ key: string; salt: string | null } | null> {
   let handle;
   try {
     handle = await open(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
@@ -566,7 +586,8 @@ async function readKeyFile(path: string): Promise<string | null> {
       chunks.push(buf.subarray(0, bytesRead));
     }
     const file = parseAccount(Buffer.concat(chunks).toString("utf8"));
-    return file.deleted === null ? file.write_key : null;
+    if (file.deleted !== null || file.write_key === null) return null;
+    return { key: file.write_key, salt: file.salt };
   } catch {
     return null;
   } finally {
@@ -575,21 +596,25 @@ async function readKeyFile(path: string): Promise<string | null> {
 }
 
 /**
- * op8x import-key <path>: takes only K from the op8x file of another computer, and only if it is the account's current key. K never leaves
- * this computer: GET /tenant with R, then K's fingerprint is compared with the account's keys.
- * Current → stored (imported); previous → key_previous; else key_mismatch.
+ * op8x import-key <path>: takes K and the salt from the op8x file of another computer, and only
+ * if K is the account's current key. K never leaves this computer: GET /tenant with R, then K's
+ * fingerprint is compared with the account's keys. Current → stored (imported); previous →
+ * key_previous; else key_mismatch. The other file's salt replaces this computer's; a file without
+ * one keeps this computer's salt (if neither has one, the next init makes it).
  */
 async function importKey(json: boolean, deps: Deps, path: string): Promise<number> {
   let held: AccountFile | null = null;
-  let imported: string | null = null;
-  const out = createOutput({ command: "import-key", json, deps, steps: 1, secrets: () => [...fileSecrets(held), imported] });
+  let read: { key: string; salt: string | null } | null = null;
+  const out = createOutput({ command: "import-key", json, deps, steps: 1, secrets: () => [...fileSecrets(held), read?.key, read?.salt] });
   const s = await signedIn(deps, out, (f) => {
     held = f;
   });
   if (!s.ok) return s.exit;
 
-  imported = await readKeyFile(resolve(deps.cwd, path));
-  if (imported === null) return out.final("import_failed");
+  read = await readKeyFile(resolve(deps.cwd, path));
+  if (read === null) return out.final("import_failed");
+  const imported = read.key;
+  const salt = read.salt ?? s.file.salt;
 
   out.start("check_key");
   const r = await createApi(deps, s.base).tenant(s.file.read_token);
@@ -608,7 +633,7 @@ async function importKey(json: boolean, deps: Deps, path: string): Promise<numbe
   // sent later), and a waiting replace_current step is settled with it. Other waiting steps stay.
   const settled = s.file.pending_step_up?.purpose === "replace_current" ? settledNext(s.file, r.value) : s.file;
   try {
-    await writeAccount(deps, { ...settled, write_key: imported, write_key_next: null });
+    await writeAccount(deps, { ...settled, write_key: imported, write_key_next: null, salt });
   } catch (e) {
     out.end("failed");
     return out.final(storeState(e));

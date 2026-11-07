@@ -3,7 +3,10 @@ import { readFileSync, readdirSync, realpathSync, writeFileSync, mkdirSync } fro
 import { join } from "node:path";
 import { test } from "node:test";
 import type { TestContext } from "node:test";
+import { fileSecrets } from "../src/account/common.ts";
 import { generateKey, keyFingerprint, keyHash } from "../src/account/keys.ts";
+import { createOutput } from "../src/account/output.ts";
+import { isSalt, newSalt } from "../src/account/salt.ts";
 import { accountPath, writeAccount } from "../src/account/store.ts";
 import type { AccountFile, ActiveAccount, WorkerEntry } from "../src/account/store.ts";
 import { exec as realExec } from "../src/account/system.ts";
@@ -31,9 +34,19 @@ interface Setup {
   lines: () => Line[];
   final: () => Line;
   file: () => ActiveAccount;
-  /** K as the fake wrangler got it on stdin (the last secret put). */
+  /** K as the fake wrangler got it on stdin (the last secret put or secret bulk). */
   putKey: () => string | null;
+  /** The salt as the fake wrangler got it on stdin (the last secret bulk). */
+  putSalt: () => string | null;
   url: string;
+}
+
+/** The value of `name` the last secret put or secret bulk gave wrangler on stdin. */
+function lastPut(wrangler: FakeWrangler, name: "OP8X_KEY" | "OP8X_SALT"): string | null {
+  const c = wrangler.calls().filter((x) => x.argv[0] === "secret" && (x.argv[1] === "put" || x.argv[1] === "bulk")).at(-1);
+  if (c === undefined) return null;
+  if (c.argv[1] === "put") return c.argv[2] === name ? c.stdin : null;
+  return (JSON.parse(c.stdin) as Record<string, string>)[name] ?? null;
 }
 
 async function setup(
@@ -44,7 +57,8 @@ async function setup(
   t.after(() => fake.close());
   const wrangler = createFakeWrangler();
   if (o.config !== null) wrangler.file("wrangler.toml", o.config ?? 'name = "api"\n');
-  const putKey = () => wrangler.calls().filter((c) => c.argv[0] === "secret" && c.argv[1] === "put").at(-1)?.stdin ?? null;
+  const putKey = () => lastPut(wrangler, "OP8X_KEY");
+  const putSalt = () => lastPut(wrangler, "OP8X_SALT");
   const worker = await startFakeWorker({ collector: fake, key: o.workerKey ?? putKey, mode: o.mode });
   t.after(() => worker.close());
   // The recorded platform stays POSIX for the op8x file unless a test sets it (the real Windows ACL
@@ -67,7 +81,7 @@ async function setup(
       .filter((l) => l !== "")
       .map((l) => JSON.parse(l) as Line);
   const file = () => JSON.parse(readFileSync(accountPath(deps), "utf8")) as ActiveAccount;
-  return { fake, wrangler, worker, deps, lines, final: () => lines().at(-1) ?? {}, file, putKey, url: `${worker.origin}/paid` };
+  return { fake, wrangler, worker, deps, lines, final: () => lines().at(-1) ?? {}, file, putKey, putSalt, url: `${worker.origin}/paid` };
 }
 
 /** The human allows after the first poll of the newest flow. */
@@ -193,7 +207,7 @@ test("first init in text mode shows Step n of 4 and the connected sentence", asy
 
 test("first init writes the op8x file after granted and before wrangler (put fails → partial, file holds K)", async (t) => {
   const s = await setup(t);
-  s.wrangler.answer("put", { exit: 1 });
+  s.wrangler.answer("bulk", { exit: 1 });
   onFirstPoll(s.fake, () => s.fake.grant({ contactHint: CONTACT }));
   assert.equal(await run(["init", "--json", "--url", s.url], s.deps), 1);
   const f = s.file();
@@ -282,8 +296,8 @@ test("--name replaces the configuration's name; with --env the name becomes <nam
   const s = await setup(t, { config: 'name = "api"\n[env.staging]\n' });
   await signedIn(s);
   assert.equal(await run(["init", "--json", "--name", "shop", "--env", "staging", "--url", s.url], s.deps), 0);
-  const put = s.wrangler.calls().find((c) => c.argv[1] === "put")!;
-  assert.deepEqual(put.argv.slice(0, 7), ["secret", "put", "OP8X_KEY", "--name", "shop", "--env", "staging"]);
+  const put = s.wrangler.calls().find((c) => c.argv[1] === "bulk")!;
+  assert.deepEqual(put.argv.slice(0, 6), ["secret", "bulk", "--name", "shop", "--env", "staging"]);
   assert.equal(s.file().workers[0]!.name, "shop-staging");
   assert.equal(s.file().workers[0]!.env, "staging");
 });
@@ -638,7 +652,8 @@ test("--env-file without a file: browser, key, test skipped; K in the file, othe
     ["test", "skipped"],
   ]);
   const f = s.file();
-  assert.equal(readFileSync(s.path, "utf8"), `PORT=8787\n# note\nOP8X_KEY=${f.write_key}\n`);
+  assert.ok(f.salt !== null && isSalt(f.salt));
+  assert.equal(readFileSync(s.path, "utf8"), `PORT=8787\n# note\nOP8X_KEY=${f.write_key}\nOP8X_SALT=${f.salt}\n`);
   assert.equal(f.workers.length, 1);
   const w: WorkerEntry = f.workers[0]!;
   assert.equal(w.env_file, s.path);
@@ -666,7 +681,9 @@ test("--env-file with --url on a signed-in computer: key and test, connected", a
     ["key", "ok"],
     ["test", "ok"],
   ]);
-  assert.equal(readFileSync(s.path, "utf8"), `OP8X_KEY=${a.write}\n`);
+  const salt = s.file().salt;
+  assert.ok(salt !== null && isSalt(salt));
+  assert.equal(readFileSync(s.path, "utf8"), `OP8X_KEY=${a.write}\nOP8X_SALT=${salt}\n`);
   assert.equal(s.final().state, "connected");
   assert.deepEqual(s.final().workers, [{ name: null, env: null, env_file: s.path, status: "verified" }]);
   // A second run with the same file updates the same entry.
@@ -683,4 +700,126 @@ test("--env-file that git does not ignore, tracks, outside a repo, or .dev.vars:
     assert.deepEqual(s.fake.requests, []);
     assert.deepEqual(readdirSync(s.project), []);
   }
+});
+
+// --- the salt -----------------------------------------------------------------------------------
+
+/** No salt anywhere: output, wrangler's argv and environment, the worker's requests, the collector's requests. */
+function assertNoSaltLeak(s: Setup, extra: FakeWrangler[] = []): void {
+  const where: [string, string][] = [
+    ["stdout", s.deps.stdout()],
+    ["stderr", s.deps.stderr()],
+    ["worker requests", JSON.stringify(s.worker.requests)],
+    ["collector requests", JSON.stringify(s.fake.requests)],
+  ];
+  for (const w of [s.wrangler, ...extra]) {
+    for (const c of w.calls()) where.push(["wrangler argv", JSON.stringify(c.argv)], ["wrangler env", JSON.stringify(c.env)]);
+  }
+  for (const [name, text] of where) assert.equal(text.includes("op8x_s_"), false, `a salt reached ${name}`);
+}
+
+test("first init makes a salt, keeps it in the op8x file and puts it with K in one secret bulk, only on stdin", async (t) => {
+  const s = await setup(t);
+  onFirstPoll(s.fake, () => s.fake.grant({ contactHint: CONTACT }));
+  assert.equal(await run(["init", "--json", "--url", s.url], s.deps), 0);
+  assert.equal(s.final().state, "connected");
+  const f = s.file();
+  assert.ok(f.salt !== null && isSalt(f.salt));
+  const secretCalls = s.wrangler.calls().filter((c) => c.argv[0] === "secret");
+  assert.deepEqual(
+    secretCalls.map((c) => c.argv.slice(0, 2)),
+    [["secret", "bulk"]],
+  );
+  assert.deepEqual(JSON.parse(secretCalls[0]!.stdin), { OP8X_KEY: f.write_key, OP8X_SALT: f.salt });
+  assert.deepEqual(s.wrangler.held(), { OP8X_KEY: f.write_key, OP8X_SALT: f.salt });
+  // One deploy, one notice.
+  assert.deepEqual(
+    s.lines().filter((l) => l.event === "notice").map((l) => l.id),
+    ["secret_put_deploys", "test_host"],
+  );
+  assertNoSaltLeak(s);
+});
+
+test("the test request carries the op8x User-Agent", async (t) => {
+  const s = await setup(t);
+  await signedIn(s);
+  assert.equal(await run(["init", "--json", "--url", s.url], s.deps), 0);
+  assert.equal(s.worker.requests.length, 1);
+  assert.match(String(s.worker.requests[0]!.headers["user-agent"]), /^op8x-cli\/\d+\.\d+\.\d+\S* \(\+https:\/\/op8x\.com\)$/);
+});
+
+test("server_key_missing (first init or signed in without K): no salt is made, nothing reaches wrangler", async (t) => {
+  const s = await setup(t);
+  const existing = s.fake.addTenant({ readKey: generateKey("r"), writeKey: generateKey("w"), contactHint: CONTACT });
+  onFirstPoll(s.fake, () => s.fake.grant({ tenant: existing.name }));
+  assert.equal(await run(["init", "--json", "--url", s.url], s.deps), 1);
+  assert.equal(s.final().state, "server_key_missing");
+  assert.equal(s.file().salt, null);
+  assert.equal(s.wrangler.calls().filter((c) => c.argv[0] === "secret").length, 0);
+  assertNoSaltLeak(s);
+
+  const n = await setup(t);
+  await signedIn(n, { withKey: false });
+  assert.equal(await run(["init", "--json", "--url", n.url], n.deps), 1);
+  assert.equal(n.final().state, "server_key_missing");
+  assert.equal(n.file().salt, null);
+  assert.equal(n.wrangler.calls().length, 0);
+});
+
+test("a second worker on a signed-in computer gets the same salt; the op8x file keeps it", async (t) => {
+  const s = await setup(t);
+  await signedIn(s);
+  assert.equal(await run(["init", "--json", "--url", s.url], s.deps), 0);
+  const salt = s.file().salt;
+  assert.ok(salt !== null && isSalt(salt));
+  assert.equal(s.putSalt(), salt);
+
+  const second = createFakeWrangler();
+  second.file("wrangler.toml", 'name = "shop"\n');
+  s.deps.cwd = second.dir;
+  assert.equal(await run(["init", "--json"], s.deps), 1);
+  assert.equal(s.final().state, "url_required");
+  assert.equal(lastPut(second, "OP8X_SALT"), salt);
+  assert.equal(s.file().salt, salt);
+  assert.equal(s.file().workers.length, 2);
+  // A third run in text mode: still the same salt, and none in the text either.
+  assert.equal(await run(["init"], s.deps), 1);
+  assert.equal(lastPut(second, "OP8X_SALT"), salt);
+  assertNoSaltLeak(s, [second]);
+});
+
+test("a signed-in computer with a salt in its op8x file uses that salt", async (t) => {
+  const s = await setup(t);
+  const salt = newSalt();
+  await signedIn(s, { file: { salt } });
+  assert.equal(await run(["init", "--json", "--url", s.url], s.deps), 0);
+  assert.equal(s.putSalt(), salt);
+  assert.equal(s.file().salt, salt);
+  assertNoSaltLeak(s);
+});
+
+test("the salt is saved before wrangler runs: a failed secret bulk leaves it in the file, the next run reuses it", async (t) => {
+  const s = await setup(t);
+  await signedIn(s);
+  s.wrangler.answer("bulk", { exit: 1 });
+  assert.equal(await run(["init", "--json", "--url", s.url], s.deps), 1);
+  assert.equal(s.final().state, "partial");
+  const salt = s.file().salt;
+  assert.ok(salt !== null && isSalt(salt));
+  assert.equal(s.putSalt(), salt);
+  s.wrangler.answer("bulk", { exit: 0 });
+  assert.equal(await run(["init", "--json", "--url", s.url], s.deps), 0);
+  assert.equal(s.putSalt(), salt);
+  assertNoSaltLeak(s);
+});
+
+test("the salt of the op8x file is one of the output guard's secrets", async (t) => {
+  const s = await setup(t);
+  const salt = newSalt();
+  await signedIn(s, { file: { salt } });
+  const out = createOutput({ command: "init", json: true, deps: s.deps, steps: 1, secrets: () => fileSecrets(s.file()) });
+  out.notice("test_host", { host: salt });
+  assert.equal(out.stopped, true);
+  assert.equal(s.deps.stdout().includes("op8x_s_"), false);
+  assert.equal(s.final().state, "internal_error");
 });

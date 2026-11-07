@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import type { TestContext } from "node:test";
 import { generateKey, keyHash } from "../src/account/keys.ts";
+import { newSalt } from "../src/account/salt.ts";
 import { accountPath, writeAccount } from "../src/account/store.ts";
 import type { AccountFile, ActiveAccount } from "../src/account/store.ts";
 import { run } from "../src/cli.ts";
@@ -126,12 +127,12 @@ const PENDING = {
   expires_at: "2026-11-03T14:15:00Z",
 } as const;
 
-test("login for the same account keeps K, the next K and the workers; it replaces R and clears the waiting step", async (t) => {
+test("login for the same account keeps K, the next K, the salt and the workers; it replaces R and clears the waiting step", async (t) => {
   const s = await setup(t);
   const k = generateKey("w");
   const next = generateKey("w");
   const t0 = s.fake.addTenant({ readKey: generateKey("r"), writeKey: k, contactHint: "a***@acme.example" });
-  const before = active(s.fake.url, { account: t0.name, write_key: k, write_key_next: next, workers: [worker], pending_step_up: { ...PENDING } });
+  const before = active(s.fake.url, { account: t0.name, write_key: k, write_key_next: next, salt: newSalt(), workers: [worker], pending_step_up: { ...PENDING } });
   await writeAccount(s.deps, before);
   onFirstPoll(s.fake, () => s.fake.grant({ tenant: t0.name }));
   assert.equal(await run(["login", "--json"], s.deps), 0);
@@ -147,11 +148,11 @@ test("login for the same account keeps K, the next K and the workers; it replace
   for (const secret of [k, next, f.read_token, before.read_token]) assert.equal(s.deps.stdout().includes(secret), false);
 });
 
-test("login granted for a different account replaces the file as if there was none: no old K, step or workers", async (t) => {
+test("login granted for a different account replaces the file as if there was none: no old K, salt, step or workers", async (t) => {
   const s = await setup(t);
   const oldKey = generateKey("w");
   const next = generateKey("w");
-  const before = active(s.fake.url, { account: "t-aaaaaaaaaa", write_key: oldKey, write_key_next: next, workers: [worker], pending_step_up: { ...PENDING } });
+  const before = active(s.fake.url, { account: "t-aaaaaaaaaa", write_key: oldKey, write_key_next: next, salt: newSalt(), workers: [worker], pending_step_up: { ...PENDING } });
   await writeAccount(s.deps, before);
   const other = s.fake.addTenant({ readKey: generateKey("r"), contactHint: "b***@other.example" });
   assert.notEqual(other.name, before.account);
