@@ -16,6 +16,9 @@ interface Bindings {
   // Write key for the op8x collector, set with `wrangler secret put OP8X_KEY`.
   // The analytics middleware reads it from the environment itself.
   OP8X_KEY?: string;
+  // Salt for buyer pseudonyms, set with `wrangler secret put OP8X_SALT` (`npx @op8x/cli init` creates it).
+  // The analytics middleware reads it from the environment itself; without it there are no pseudonyms.
+  OP8X_SALT?: string;
 }
 
 const app = new Hono<{ Bindings: Bindings }>();

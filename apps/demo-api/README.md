@@ -14,6 +14,7 @@ A small paid API on Cloudflare Workers that shows `@op8x/analytics` in an x402 f
 | `PAY_TO` | var | `wrangler.toml` | Address that receives the testnet payments |
 | `ANALYTICS_ENDPOINT` | var | `wrangler.toml` | Where records are sent (the op8x collector); unset, or without `OP8X_KEY`, records are only logged |
 | `OP8X_KEY` | secret | `npx wrangler secret put OP8X_KEY` | Write key for the op8x collector; never in a file |
+| `OP8X_SALT` | secret (optional) | `npx @op8x/cli init`, or `npx wrangler secret put OP8X_SALT` | Salt for buyer pseudonyms (`payer`, `payer_alg`, `payer_salt_id`); the middleware reads it on every request; without it records carry no pseudonym; never in a file |
 
 ## The module comes from a packed tarball
 
