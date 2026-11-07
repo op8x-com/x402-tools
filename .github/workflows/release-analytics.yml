@@ -21,6 +21,8 @@ jobs:
         working-directory: packages/analytics
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: "24"
@@ -33,7 +35,7 @@ jobs:
       - name: Tag must match package version
         run: node ../../scripts/check-release-tag.mjs packages/analytics
       - run: npm ci
-      # Explicit steps: we do not rely on npm stage publish running prepublishOnly.
+      # Explicit checks fail fast with clear logs; npm stage publish runs prepublishOnly and prepack again.
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
