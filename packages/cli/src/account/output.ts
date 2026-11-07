@@ -67,10 +67,10 @@ export const EXIT_CODES = {
   import_failed: 1,
   config_unreadable: 1,
   permissions_failed: 1,
-  not_available_yet: 1,
   network_error: 2,
   busy: 2,
   unexpected_response: 2,
+  schema_unsupported: 2,
   internal_error: 2,
   usage_error: 4,
   invalid_input: 4,
@@ -190,11 +190,12 @@ const HINTS: Record<FinalState | "waiting_for_human", ((v: HintVars, mode: Mode)
     v.after_delete_path === undefined
       ? "The op8x file could not be protected; nothing was written."
       : `The account is deleted (receipt ${text(v.action_id)}), but the op8x file could not be updated. Delete it by hand: ${text(v.after_delete_path)}.`,
-  not_available_yet: () => "Numbers are not available in this version yet.",
   network_error: () => "Check the connection and run the command again.",
   busy: () => "The service is busy; try again in a minute.",
   unexpected_response: (v) =>
     `op8x got an answer it does not expect (status ${text(v.status)}, code ${text(v.code)}). Update op8x and run the command again; if it stays, please report it.`,
+  schema_unsupported: () =>
+    "The report has a format this version of op8x cannot read. Update @op8x/cli (npx @op8x/cli@latest report) and run the command again.",
   internal_error: () => "op8x stopped because of an internal error. Please report this.",
   // The help of the command goes to stderr instead.
   usage_error: null,
@@ -255,6 +256,11 @@ export interface Output {
   final: (state: FinalState, o?: { extra?: Record<string, unknown>; hint?: HintVars }) => number;
   /** The final line of an API error, with the fields its state carries. */
   error: (e: ApiError, o?: { extra?: Record<string, unknown>; hint?: HintVars }) => number;
+  /**
+   * The result of a run that ends with a document instead of a final line (op8x report): `text`
+   * as it is, through the guard, then nothing more. Returns 0, or 2 if the guard replaced it.
+   */
+  document: (text: string) => number;
 }
 
 export interface OutputOptions {
@@ -418,6 +424,13 @@ export function createOutput(o: OutputOptions): Output {
       else write(`${message}\n`);
     },
     final,
+    document: (text) => {
+      if (stopped) return finalExit ?? 2;
+      const ok = write(text.endsWith("\n") ? text : `${text}\n`);
+      stopped = true;
+      finalExit = ok ? 0 : 2;
+      return finalExit;
+    },
     error: (e, f = {}) => {
       const { state, ...fields } = e;
       return final(state, { ...f, extra: { ...fields, ...(f.extra ?? {}) } });

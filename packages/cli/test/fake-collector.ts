@@ -27,7 +27,8 @@ export type RouteName =
   | "delete"
   | "sign_out"
   | "test_nonce"
-  | "test_nonce_status";
+  | "test_nonce_status"
+  | "report";
 
 export type Purpose = "rotate_now" | "replace_current" | "delete";
 
@@ -182,6 +183,11 @@ export interface FakeCollector {
    * Returns false if the key is not current or previous of any account.
    */
   ingest: (writeKey: string, nonce?: string) => boolean;
+  /**
+   * The raw body of a successful GET /tenant/report (sent as is with status 200); null: a small
+   * op8x.metrics/1 document for the asked days.
+   */
+  reportBody: string | null;
 }
 
 const HOUR = 3_600_000;
@@ -329,7 +335,18 @@ const SUCCESS_STATUS: Record<RouteName, number> = {
   sign_out: 204,
   test_nonce: 201,
   test_nonce_status: 200,
+  report: 200,
 };
+
+/**
+ * 503 busy of the report route, with the Retry-After header (null: without it). The body has no
+ * retry_after_s; only the header says how long to wait.
+ */
+export function busyAnswer(retryAfter: string | null): Canned {
+  const headers: Record<string, string> = { "content-type": "application/problem+json" };
+  if (retryAfter !== null) headers["retry-after"] = retryAfter;
+  return { status: 503, headers, body: JSON.stringify({ type: "https://op8x.com/errors/busy", title: "Busy, try again shortly", status: 503, code: "busy" }) };
+}
 
 function canned(answer: Canned, route: RouteName | null): Answer {
   if (typeof answer === "object") return answer;
@@ -386,6 +403,8 @@ function routeOf(method: string, path: string): { route: RouteName; nonce?: stri
   if (method === "POST" && path === `${API}/tenant/test-nonce`) return { route: "test_nonce" };
   const prefix = `${API}/tenant/test-nonce/`;
   if (method === "GET" && path.startsWith(prefix)) return { route: "test_nonce_status", nonce: path.slice(prefix.length) };
+  const report = `${API}/tenant/report`;
+  if (method === "GET" && (path === report || path.startsWith(`${report}?`))) return { route: "report" };
   return null;
 }
 
@@ -719,6 +738,30 @@ export async function startFakeCollector(opts: { start?: number; testToken?: str
     return ok(200, { seen: true, seen_at: iso(row.seenAt) });
   }
 
+  /**
+   * GET /tenant/report?days=N in the collector's order: Bearer form, then days (1..30, absent = 7;
+   * repeated, bare or any other form is 400 invalid_field), then R only (K: 403 wrong_secret_kind).
+   */
+  function report(req: RecordedRequest): Answer {
+    if (!/^Bearer op8x_[wr]_[A-Za-z0-9_-]{43}$/.test(req.headers.authorization ?? "")) return keyAuth();
+    const query = req.path.includes("?") ? req.path.slice(req.path.indexOf("?") + 1) : "";
+    const parts = query === "" ? [] : query.split("&");
+    const daysParts = parts.filter((x) => x === "days" || x.startsWith("days="));
+    let days = 7;
+    if (daysParts.length > 1) return invalid(["days"]);
+    if (daysParts.length === 1) {
+      const raw = daysParts[0] === "days" ? null : (daysParts[0] ?? "").slice("days=".length);
+      if (raw === null || !/^(?:[1-9]|[12][0-9]|30)$/.test(raw)) return invalid(["days"]);
+      days = Number(raw);
+    }
+    const t = readOnly(req);
+    if (isAnswer(t)) return t;
+    if (fake.reportBody !== null) return { status: 200, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }, body: fake.reportBody };
+    const to = utcDay(clock);
+    const from = utcDay(clock - (days - 1) * 24 * HOUR);
+    return ok(200, { schema: "op8x.metrics/1", definitions_version: "2026-11-06", generated_at: iso(clock).replace(/\.\d{3}Z$/, "Z"), window: { from, to, days, timezone: "UTC", partial_today: true, incomplete_days: [] } });
+  }
+
   function contractChecks(req: RecordedRequest, route: RouteName): void {
     const say = (s: string) => fake.violations.push(`${req.method} ${req.path}: ${s}`);
     if (req.method === "GET") {
@@ -767,6 +810,8 @@ export async function startFakeCollector(opts: { start?: number; testToken?: str
         return createNonce(req);
       case "test_nonce_status":
         return nonceStatus(req, nonce ?? "");
+      case "report":
+        return report(req);
     }
   }
 
@@ -820,6 +865,7 @@ export async function startFakeCollector(opts: { start?: number; testToken?: str
     },
     onRequest: null,
     staleDeletes: 0,
+    reportBody: null,
     flows,
     lastFlow: () => flows.at(-1),
     grant: (o = {}) => {

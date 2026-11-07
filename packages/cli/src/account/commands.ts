@@ -13,6 +13,7 @@ import { deviceKeys, deviceLogin } from "./device.ts";
 import type { DeviceFailure, DeviceKeys } from "./device.ts";
 import { keyFingerprint } from "./keys.ts";
 import { createOutput, finalLine } from "./output.ts";
+import { DOCS_BASE, renderReportView } from "./report-view.ts";
 import { ROTATE_USAGE, rotate } from "./rotate.ts";
 import { newSalt } from "./salt.ts";
 import { DELETE_USAGE, deleteCommand } from "./delete.ts";
@@ -30,8 +31,11 @@ interface CommandSpec {
   options: ParseArgsOptionsConfig;
   /** Positionals after the command word (only import-key takes one). */
   positionals: number;
-  /** False if a value breaks a pattern, an exclusion or a condition of the options table. */
-  valid: (values: Values) => boolean;
+  /**
+   * False if a value breaks a pattern, an exclusion or a condition of the options table. `names`
+   * lists every option as given, repeats included.
+   */
+  valid: (values: Values, names: string[]) => boolean;
   run: (values: Values, deps: Deps, args: string[]) => Promise<number>;
 }
 
@@ -93,14 +97,16 @@ Options:
   --json               print JSON Lines
 `;
 
-const REPORT_USAGE = `Usage: op8x report [--week | --month] [--json]
+const REPORT_USAGE = `Usage: op8x report [--days <n> | --week | --month] [--json]
 
-The numbers of your op8x account. Not available in this version yet.
+The numbers of your op8x account for the last 7 UTC days (today included), or the period you pick.
+Definitions: ${DOCS_BASE}/metrics/
 
 Options:
+  --days <n>           the last n days, 1 to 30
   --week               the last 7 days
   --month              the last 30 days
-  --json               print JSON Lines
+  --json               print the op8x.metrics/1 document as op8x sends it (an error as one JSON line)
 `;
 
 const JSON_ONLY: ParseArgsOptionsConfig = { json: { type: "boolean" } };
@@ -163,11 +169,11 @@ const COMMANDS: Record<AccountCommand, CommandSpec> = {
   },
   report: {
     usage: REPORT_USAGE,
-    options: { json: { type: "boolean" }, week: { type: "boolean" }, month: { type: "boolean" } },
+    options: { json: { type: "boolean" }, days: { type: "string" }, week: { type: "boolean" }, month: { type: "boolean" } },
     positionals: 0,
-    // --week and --month not both.
-    valid: (v) => !(v.week === true && v.month === true),
-    run: (v, deps) => report(v.json === true, deps),
+    // At most one of --days, --week and --month, each once; --days 1..30 in digits.
+    valid: (v, names) => names.filter((n) => n === "days" || n === "week" || n === "month").length <= 1 && (v.days === undefined || reportDays(v.days) !== null),
+    run: (v, deps) => report(v.json === true, deps, v.week === true ? 7 : v.month === true ? 30 : (reportDays(v.days) ?? 7)),
   },
 };
 
@@ -184,14 +190,17 @@ export async function runAccount(command: AccountCommand, argv: string[], io: Io
   const spec = COMMANDS[command];
   let values: Values;
   let positionals: string[];
+  let names: string[];
   try {
-    ({ values, positionals } = parseArgs({ args: argv, strict: true, allowPositionals: true, options: spec.options }));
+    const parsed = parseArgs({ args: argv, strict: true, allowPositionals: true, options: spec.options, tokens: true });
+    ({ values, positionals } = parsed);
+    names = parsed.tokens.flatMap((t) => (t.kind === "option" ? [t.name] : []));
   } catch {
     // The parser message names the rejected input, so it is not shown.
     return usageError(command, io, argv.includes("--json"));
   }
   const json = values.json === true;
-  if (positionals.length !== 1 + spec.positionals || !spec.valid(values)) return usageError(command, io, json);
+  if (positionals.length !== 1 + spec.positionals || !spec.valid(values, names)) return usageError(command, io, json);
   if (!deps) {
     io.out(json ? finalLine(command, "internal_error", 2) : "op8x stopped because of an internal error. Please report this.\n");
     return 2;
@@ -646,8 +655,26 @@ async function importKey(json: boolean, deps: Deps, path: string): Promise<numbe
 
 // --- report -----------------------------------------------------------------------------------
 
-/** op8x report [--week | --month]: a placeholder until the numbers exist (not_available_yet). */
-async function report(json: boolean, deps: Deps): Promise<number> {
-  const out = createOutput({ command: "report", json, deps, steps: 0, secrets: () => [] });
-  return out.final("not_available_yet");
+/** The value of --days as a number 1..30 (digits only), or null. */
+function reportDays(v: Value): number | null {
+  if (typeof v !== "string" || !/^\d{1,3}$/.test(v)) return null;
+  const n = Number(v);
+  return n >= 1 && n <= 30 ? n : null;
+}
+
+/**
+ * op8x report [--days <n> | --week | --month]: GET /tenant/report with R. Success: with --json
+ * the op8x.metrics/1 document exactly as received (only its schema is checked), else the terminal
+ * view; every other end is one final line (with --json one op8x.cli/1 line). No steps.
+ */
+async function report(json: boolean, deps: Deps, days: number): Promise<number> {
+  let held: AccountFile | null = null;
+  const out = createOutput({ command: "report", json, deps, steps: 0, secrets: () => fileSecrets(held) });
+  const s = await signedIn(deps, out, (f) => {
+    held = f;
+  });
+  if (!s.ok) return s.exit;
+  const r = await createApi(deps, s.base).report(s.file.read_token, days);
+  if (!r.ok) return out.error(r.error);
+  return out.document(json ? r.value.text : renderReportView(r.value.doc));
 }

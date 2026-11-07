@@ -1,58 +1,373 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import type { TestContext } from "node:test";
+import { generateKey } from "../src/account/keys.ts";
+import { DOCS_BASE, renderReportView } from "../src/account/report-view.ts";
+import { writeAccount } from "../src/account/store.ts";
+import type { ActiveAccount } from "../src/account/store.ts";
 import { run } from "../src/cli.ts";
 import { testDeps } from "./account-deps.ts";
 import type { RecordingExec } from "./account-deps.ts";
+import { busyAnswer, startFakeCollector } from "./fake-collector.ts";
+import type { FakeCollector } from "./fake-collector.ts";
+
+// Fixtures in test/metrics/: metrics-example.json and metrics-injection.json are example
+// op8x.metrics/1 documents produced by the op8x collector (copied unchanged); metrics-unknown.json
+// is made for these tests (unknown values, extra fields, escapes and control characters).
+// The .txt files next to them are the expected terminal views, compared byte for byte.
 
 type Line = Record<string, unknown>;
 
-const lastLine = (out: string) => JSON.parse(out.trimEnd().split("\n").at(-1) ?? "") as Line;
+const fixture = (name: string) => readFileSync(new URL(`./metrics/${name}`, import.meta.url), "utf8");
+const doc = (name: string) => JSON.parse(fixture(name)) as Record<string, unknown>;
+/** The compact JSON the collector sends. */
+const compact = (name: string) => JSON.stringify(doc(name));
+const ESC = String.fromCodePoint(0x1b);
 
-test("report is a placeholder: not_available_yet (exit 1), with --week or --month too", async () => {
-  for (const argv of [["report", "--json"], ["report", "--week", "--json"], ["--json", "report", "--month"]]) {
-    const deps = testDeps();
-    assert.equal(await run(argv, deps), 1, argv.join(" "));
-    assert.deepEqual(lastLine(deps.stdout()), {
-      schema: "op8x.cli/1",
-      command: "report",
-      final: true,
-      state: "not_available_yet",
-      exit_code: 1,
-      agent_hint: "Numbers are not available in this version yet.",
-      steps: [],
-    });
-    assert.equal(deps.stdout().trimEnd().split("\n").length, 1);
-    assert.equal(deps.stderr(), "");
-  }
-});
-
-test("report in text mode prints the hint only", async () => {
-  const deps = testDeps();
-  assert.equal(await run(["report"], deps), 1);
-  assert.equal(deps.stdout(), "Numbers are not available in this version yet.\n");
-});
-
-test("report: --week with --month, another option or a positional is a usage error", async () => {
-  for (const argv of [["report", "--week", "--month", "--json"], ["report", "--code-stdin", "--json"], ["report", "week", "--json"]]) {
-    const deps = testDeps();
-    assert.equal(await run(argv, deps), 4, argv.join(" "));
-    assert.match(deps.stderr(), /^Usage: op8x report \[--week \| --month\] \[--json\]/);
-    const final = lastLine(deps.stdout());
-    assert.equal(final.command, "report");
-    assert.equal(final.state, "usage_error");
-    assert.equal(final.exit_code, 4);
-  }
-});
-
-test("report needs no op8x file and sends nothing", async () => {
-  let fetched = false;
+async function setup(t: TestContext, o: { collector?: string; signedIn?: boolean } = {}) {
+  const fake: FakeCollector = await startFakeCollector();
+  t.after(() => fake.close());
   const deps = testDeps({
-    fetchImpl: async () => {
-      fetched = true;
-      throw new Error("no request expected");
+    now: () => fake.now(),
+    sleep: async (ms) => {
+      deps.sleeps.push(ms);
+      fake.advance(ms);
     },
+    env: { OP8X_COLLECTOR_URL: fake.url },
   });
-  assert.equal(await run(["report", "--json"], deps), 1);
-  assert.equal(fetched, false);
-  assert.deepEqual((deps.exec as RecordingExec).calls, []);
+  const r = generateKey("r");
+  const k = generateKey("w");
+  const t0 = fake.addTenant({ readKey: r, writeKey: k });
+  const file: ActiveAccount = {
+    schema: "op8x.account/1",
+    collector: o.collector ?? fake.url,
+    account: t0.name,
+    contact_hint: "a***@acme.example",
+    read_token: r,
+    write_key: k,
+    write_key_next: null,
+    salt: null,
+    pending_step_up: null,
+    deleted: null,
+    workers: [],
+  };
+  if (o.signedIn !== false) await writeAccount(deps, file);
+  const lines = () =>
+    deps
+      .stdout()
+      .split("\n")
+      .filter((l) => l !== "")
+      .map((l) => JSON.parse(l) as Line);
+  const reports = () => fake.requests.filter((x) => x.route === "report");
+  return { fake, deps, file, lines, reports };
+}
+
+/** Asserts the one JSON line of a failed run with --json and returns it. */
+function oneCliLine(s: Awaited<ReturnType<typeof setup>>, state: string, exit: number): Line {
+  const lines = s.lines();
+  assert.equal(lines.length, 1, s.deps.stdout());
+  const line = lines[0] as Line;
+  assert.equal(line.schema, "op8x.cli/1");
+  assert.equal(line.command, "report");
+  assert.equal(line.final, true);
+  assert.equal(line.state, state);
+  assert.equal(line.exit_code, exit);
+  return line;
+}
+
+// --- period ----------------------------------------------------------------------------------
+
+test("report asks for the last 7 days by default; --days 1..30, --week and --month pick the period", async (t) => {
+  const cases: [string[], number][] = [
+    [[], 7],
+    [["--days", "1"], 1],
+    [["--days", "30"], 30],
+    [["--days=12"], 12],
+    [["--days", "07"], 7],
+    [["--week"], 7],
+    [["--month"], 30],
+  ];
+  for (const [args, days] of cases) {
+    const s = await setup(t);
+    s.fake.reportBody = compact("metrics-example.json");
+    assert.equal(await run(["report", ...args, "--json"], s.deps), 0, args.join(" "));
+    const reqs = s.reports();
+    assert.equal(reqs.length, 1);
+    assert.equal(reqs[0]?.method, "GET");
+    assert.equal(reqs[0]?.path, `/api/v1/tenant/report?days=${days}`);
+    assert.equal(reqs[0]?.headers.authorization, `Bearer ${s.file.read_token}`);
+    assert.deepEqual(s.fake.violations, []);
+  }
+});
+
+test("report: an invalid period, more than one period option, another option or a positional is a usage error (exit 4)", async (t) => {
+  const bad = [
+    ["--days", "0"],
+    ["--days", "31"],
+    ["--days", "7.5"],
+    ["--days", "abc"],
+    ["--days", "-1"],
+    ["--days="],
+    ["--days", " 7"],
+    ["--days", "1e1"],
+    ["--days", "3", "--week"],
+    ["--days", "3", "--month"],
+    ["--week", "--month"],
+    ["--days", "3", "--days", "4"],
+    ["--week", "--week"],
+    ["--code-stdin"],
+    ["week"],
+  ];
+  for (const args of bad) {
+    const s = await setup(t);
+    assert.equal(await run(["report", ...args, "--json"], s.deps), 4, args.join(" "));
+    assert.match(s.deps.stderr(), /^Usage: op8x report \[--days <n> \| --week \| --month\] \[--json\]/);
+    const line = oneCliLine(s, "usage_error", 4);
+    assert.equal("agent_hint" in line, false);
+    assert.equal(s.fake.requests.length, 0);
+  }
+});
+
+// --- --json -----------------------------------------------------------------------------------
+
+test("report --json prints the collector's document unchanged, as the only line on stdout", async (t) => {
+  const s = await setup(t);
+  // Key order and spacing as sent; the CLI checks only the schema and passes the text on.
+  const body = `{"schema":"op8x.metrics/1", "zeta":1,"alpha" : {"b":2,"a":1},"data":{"routes":{"r1":"GET /x"}}}`;
+  s.fake.reportBody = body;
+  assert.equal(await run(["report", "--json"], s.deps), 0);
+  assert.equal(s.deps.stdout(), `${body}\n`);
+  assert.equal(s.deps.stderr(), "");
+});
+
+test("report --json with the example document: exactly one op8x.metrics/1 document", async (t) => {
+  const s = await setup(t);
+  s.fake.reportBody = compact("metrics-example.json");
+  assert.equal(await run(["--json", "report", "--week"], s.deps), 0);
+  const lines = s.lines();
+  assert.equal(lines.length, 1);
+  assert.deepEqual(lines[0], doc("metrics-example.json"));
+  assert.equal(s.deps.stdout().includes(s.file.read_token), false);
+});
+
+test("report: a document of another schema is schema_unsupported (exit 2, update @op8x/cli)", async (t) => {
+  const hint = "The report has a format this version of op8x cannot read. Update @op8x/cli (npx @op8x/cli@latest report) and run the command again.";
+  for (const body of [`{"schema":"op8x.metrics/2","window":{}}`, `{"window":{}}`, `{"schema":1}`]) {
+    const s = await setup(t);
+    s.fake.reportBody = body;
+    assert.equal(await run(["report", "--json"], s.deps), 2, body);
+    const line = oneCliLine(s, "schema_unsupported", 2);
+    assert.equal(line.agent_hint, hint);
+  }
+  const s = await setup(t);
+  s.fake.reportBody = `{"schema":"op8x.metrics/2"}`;
+  assert.equal(await run(["report"], s.deps), 2);
+  assert.equal(s.deps.stdout(), `${hint}\n`);
+});
+
+test("report: a body that is not a JSON object is unexpected_response (exit 2)", async (t) => {
+  for (const body of ["<html>maintenance</html>", "[1,2]", `"op8x.metrics/1"`, "null", ""]) {
+    const s = await setup(t);
+    s.fake.reportBody = body;
+    assert.equal(await run(["report", "--json"], s.deps), 2, body);
+    const line = oneCliLine(s, "unexpected_response", 2);
+    assert.equal(line.status, 200);
+    assert.equal(line.code, null);
+  }
+});
+
+test("report: every error with --json is one op8x.cli/1 line; network and server errors exit 2", async (t) => {
+  const problem = (status: number, body: string) => ({ status, headers: { "content-type": "application/problem+json" }, body });
+  const cases: [Parameters<FakeCollector["respond"]>[1], string, number][] = [
+    ["drop", "network_error", 2],
+    ["server_error", "network_error", 2],
+    [{ status: 500 }, "network_error", 2],
+    ["redirect", "network_error", 2],
+    [problem(401, `{"code":"key_auth","status":401}`), "key_auth", 1],
+    ["wrong_secret_kind", "unexpected_response", 2],
+    [problem(400, `{"code":"invalid_field","fields":["days"]}`), "unexpected_response", 2],
+    ["huge", "unexpected_response", 2],
+  ];
+  for (const [answer, state, exit] of cases) {
+    const s = await setup(t);
+    s.fake.respond("report", answer);
+    assert.equal(await run(["report", "--json"], s.deps), exit, state);
+    oneCliLine(s, state, exit);
+    assert.equal(s.deps.stdout().includes(s.file.read_token), false);
+  }
+});
+
+test("report: an R the collector no longer knows is key_auth from the route itself", async (t) => {
+  const s = await setup(t);
+  s.fake.tenant(s.file.account).read = null;
+  assert.equal(await run(["report", "--json"], s.deps), 1);
+  const line = oneCliLine(s, "key_auth", 1);
+  assert.equal(line.agent_hint, "This computer's access is no longer valid. Run op8x login.");
+});
+
+test("the fake report route takes R only: the current server key gets 403 wrong_secret_kind", async (t) => {
+  const s = await setup(t);
+  const res = await fetch(`${s.fake.url}/api/v1/tenant/report?days=7`, {
+    headers: { authorization: `Bearer ${s.file.write_key}`, "user-agent": "op8x-cli/0.0.0 (+https://op8x.com)" },
+  });
+  assert.equal(res.status, 403);
+  assert.equal(((await res.json()) as Line).code, "wrong_secret_kind");
+  for (const q of ["days=0", "days=31", "days=07", "days=7.5", "days=", "days", "days=7&days=7", "days=%2B7"]) {
+    const bad = await fetch(`${s.fake.url}/api/v1/tenant/report?${q}`, {
+      headers: { authorization: `Bearer ${s.file.read_token}`, "user-agent": "op8x-cli/0.0.0 (+https://op8x.com)" },
+    });
+    assert.equal(bad.status, 400, q);
+    assert.deepEqual(((await bad.json()) as Line).fields, ["days"], q);
+  }
+});
+
+// --- busy and Retry-After ---------------------------------------------------------------------
+
+test("report: 503 busy waits as long as Retry-After says, then the answer counts", async (t) => {
+  const s = await setup(t);
+  s.fake.reportBody = compact("metrics-example.json");
+  s.fake.respond("report", busyAnswer("5"), 2);
+  assert.equal(await run(["report", "--json"], s.deps), 0);
+  assert.deepEqual(s.deps.sleeps, [5_000, 5_000]);
+  assert.equal(s.reports().length, 3);
+});
+
+test("report: Retry-After is clamped to 1..60 seconds; absent or not an integer falls back to 10 seconds", async (t) => {
+  const cases: [string | null, number][] = [
+    ["0", 1_000],
+    ["1", 1_000],
+    ["60", 60_000],
+    ["120", 60_000],
+    ["99999999999999999999", 60_000],
+    [null, 10_000],
+    ["abc", 10_000],
+    ["5.5", 10_000],
+    ["-3", 10_000],
+    ["", 10_000],
+    ["Fri, 07 Nov 2026 12:00:00 GMT", 10_000],
+  ];
+  for (const [header, ms] of cases) {
+    const s = await setup(t);
+    s.fake.reportBody = compact("metrics-example.json");
+    s.fake.respond("report", busyAnswer(header));
+    assert.equal(await run(["report", "--json"], s.deps), 0, String(header));
+    assert.deepEqual(s.deps.sleeps, [ms], String(header));
+  }
+});
+
+test("report: busy for longer than 2 minutes ends as busy (exit 2), Retry-After or not", async (t) => {
+  const cases: [string | null, number[]][] = [
+    ["60", [60_000, 60_000]],
+    ["5", Array(24).fill(5_000)],
+    [null, Array(12).fill(10_000)],
+  ];
+  for (const [header, sleeps] of cases) {
+    const s = await setup(t);
+    s.fake.respond("report", busyAnswer(header), 1000);
+    assert.equal(await run(["report", "--json"], s.deps), 2);
+    assert.deepEqual(s.deps.sleeps, sleeps, String(header));
+    const line = oneCliLine(s, "busy", 2);
+    assert.equal(line.agent_hint, "The service is busy; try again in a minute.");
+  }
+});
+
+test("Retry-After counts only on the report route: other routes keep the 10 s step", async (t) => {
+  const s = await setup(t);
+  s.fake.respond("sign_out", busyAnswer("2"));
+  assert.equal(await run(["logout", "--json"], s.deps), 0);
+  assert.deepEqual(s.deps.sleeps, [10_000]);
+});
+
+// --- signed in --------------------------------------------------------------------------------
+
+test("report without an op8x file: not_logged_in, nothing is sent", async (t) => {
+  const s = await setup(t, { signedIn: false });
+  assert.equal(await run(["report", "--json"], s.deps), 1);
+  const line = oneCliLine(s, "not_logged_in", 1);
+  assert.equal(line.agent_hint, "This computer is not signed in. Run op8x init or op8x login.");
+  assert.equal(s.fake.requests.length, 0);
+  assert.deepEqual((s.deps.exec as RecordingExec).calls, []);
+});
+
+test("report with an op8x file of another service address: collector_mismatch, nothing is sent", async (t) => {
+  const s = await setup(t, { collector: "http://127.0.0.1:1" });
+  assert.equal(await run(["report", "--json"], s.deps), 4);
+  oneCliLine(s, "collector_mismatch", 4);
+  assert.equal(s.fake.requests.length, 0);
+});
+
+test("report never prints R: a document that holds it is replaced by internal_error", async (t) => {
+  for (const json of [true, false]) {
+    const s = await setup(t);
+    const d = doc("metrics-example.json");
+    s.fake.reportBody = JSON.stringify({ ...d, data: { ...(d.data as Line), routes: { r1: s.file.read_token, r2: "POST /alerts" } } });
+    assert.equal(await run(json ? ["report", "--json"] : ["report"], s.deps), 2);
+    assert.equal(s.deps.stdout().includes(s.file.read_token), false);
+    assert.equal(s.deps.stderr().includes(s.file.read_token), false);
+    if (json) assert.equal(oneCliLine(s, "internal_error", 2).agent_hint, "op8x stopped because of an internal error. Please report this.");
+    else assert.equal(s.deps.stdout(), "op8x stopped because of an internal error. Please report this.\n");
+  }
+});
+
+// --- the terminal view ------------------------------------------------------------------------
+
+test("report in text mode prints the view of the example document and exits 0", async (t) => {
+  const s = await setup(t);
+  s.fake.reportBody = compact("metrics-example.json");
+  assert.equal(await run(["report"], s.deps), 0);
+  assert.equal(s.deps.stdout(), fixture("metrics-example.txt"));
+  assert.equal(s.deps.stderr(), "");
+});
+
+for (const name of ["metrics-example", "metrics-injection", "metrics-unknown"]) {
+  test(`terminal view of ${name}.json matches ${name}.txt exactly`, () => {
+    assert.equal(renderReportView(doc(`${name}.json`)), fixture(`${name}.txt`));
+  });
+}
+
+test("the view names what op8x cannot see, op8x outages included, and links the definitions", () => {
+  const view = renderReportView(doc("metrics-example.json"));
+  assert.equal(DOCS_BASE, "https://docs.op8x.com");
+  assert.ok(view.includes("op8x outages are not included"));
+  assert.ok(view.includes("Definitions: https://docs.op8x.com/metrics/ (definitions 2026-11-06)\n"));
+  assert.ok(view.includes("https://docs.op8x.com/findings/funnel.possibly_paid/\n"));
+});
+
+test("the view prints every hint text in full", () => {
+  const d = doc("metrics-example.json");
+  const view = renderReportView(d).replace(/\n {4}/g, " ");
+  const routes = (d.funnel as { routes: { hints: { text: string }[] }[] }).routes;
+  for (const h of routes.flatMap((r) => r.hints)) assert.ok(view.includes(h.text), h.text);
+});
+
+test("the view shows strings from the report escaped: no control, ANSI or bidi character reaches the terminal", () => {
+  for (const name of ["metrics-injection.json", "metrics-unknown.json"]) {
+    const view = renderReportView(doc(name));
+    // Only printable ASCII, the newline and the view's own characters (middle dot, ellipsis, the quotes of hint texts).
+    const stray = Array.from(view).filter((c) => !(c === "\n" || (c >= " " && c <= "~") || "·…“”".includes(c)));
+    assert.deepEqual(stray, [], name);
+    assert.equal(view.includes(ESC), false, name);
+  }
+  const view = renderReportView(doc("metrics-unknown.json"));
+  assert.ok(view.includes(String.raw`"\u{001B}[2J\u{001B}[31mGET /pwn\u{0007}\u{000D}\u{000A}OK \u{202E}evil\u{202C} \u{009B}31m"`));
+  assert.ok(view.includes(String.raw`\u{001B}]8;;https://evil.example\u{0007}link`));
+  // A data string longer than 100 printed characters is cut and marked.
+  assert.match(view, /"a{100}…"/);
+});
+
+test("the view keeps working with unknown values: unknown statuses and codes show raw and escaped", () => {
+  const view = renderReportView(doc("metrics-unknown.json"));
+  assert.ok(view.includes(`status "hibernating"`));
+  assert.ok(view.includes(`"sidechain"`));
+  assert.ok(view.includes("! ingest.brand_new"));
+  assert.ok(view.includes(`${DOCS_BASE}/findings/ingest.brand_new/`));
+  // An id that is not a plain id gets no link.
+  assert.equal(view.includes(`${DOCS_BASE}/findings/x`), false);
+});
+
+test("the view survives a document with missing blocks", () => {
+  const view = renderReportView({ schema: "op8x.metrics/1" });
+  assert.ok(view.startsWith("op8x report"));
+  assert.ok(view.endsWith(`Definitions: ${DOCS_BASE}/metrics/ (definitions (missing))\n`));
 });

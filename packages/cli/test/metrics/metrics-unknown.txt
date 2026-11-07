@@ -1,0 +1,60 @@
+op8x report · last 1 day (2026-11-02 to 2026-11-02, UTC)
+
+Is my API sending data?                                 status "hibernating"
+  Last event                 never
+  Events today               0
+  Events last 24 hours       0
+  Active days (previous 7)   0 of 7
+
+Buyers on the way to paying (per route)                 status "sampled"
+  "\u{001B}[2J\u{001B}[31mGET /pwn\u{0007}\u{000D}\u{000A}OK \u{202E}evil\u{202C} \u{009B}31m"
+    Unpaid requests          5
+    Price offers (402)       25   from x402 clients: 40.0 % (10 of 25) · status "estimated"
+    Payment attempts         "sidechain" 3
+      "sidechain": paid 1 · possibly paid 0 · rejected 2 · no confirmation 0 (with 402: 0)
+                   delivered 1 · not delivered 0 · delivery unknown 0 · marked as test 1
+    Paid per 100 offers      4.0 (1 of 25) · status "estimated"
+    Error texts from buyers  "line one\u{000A}line two\u{0009}tab \u{001B}]8;;https://evil.example\u{0007}link\u{001B}]8;;\u{0007}"
+                             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…"
+                             (not in the report: "t9")
+  (not in the report: "r9")
+    Unpaid requests          1
+    Price offers (402)       0   from x402 clients: 0 of 0 (too few for a percentage)
+    Payment attempts         none
+    Paid per 100 offers      too few offers (0 of 20 needed)
+  Other requests             2
+  More routes not shown      0
+
+Wallets                                                 partial (reason "new_reason")
+  Paying wallets             1 since 2026-11-02
+  Payments                   1 (without wallet id: 0)
+  Returning wallets          0 of 1 (too few for a percentage)
+
+Revenue (as reported by payments)
+  "US\u{001B}DC"             "1.5\u{202E}0" from 1 payment   declared test amount 0
+  Without amount 0 · unknown asset 1 · unknown network 0 · testnet 0
+  Unknown assets             "eip155:1/\u{200B}0xdead\u{2066}beef\u{2069}"
+
+Data basis                                              status "partially_known"
+  Left out as tests          0 (op8x checks 0 · declared tests 0)
+  Attempts marked as test    1
+  Incomplete days            2026-11-02 ("flood")
+  Dropped (daily cap) 0 · dropped (invalid) 0 · unreadable 0 · odd timestamps 0
+  Copies not removed (too many to check)
+  Not visible to op8x        refused keys (401), op8x outages are not included,
+                             "new_gap\u{001B}[1m"
+
+Findings
+  ! ingest.brand_new
+    A finding this version has no label for.\u{001B}[2J\u{001B}[31m Still shown.
+    https://docs.op8x.com/findings/ingest.brand_new/
+
+  ! "x\u{001B}[31m.evil"  "\u{001B}[2J\u{001B}[31mGET /pwn\u{0007}\u{000D}\u{000A}OK \u{202E}evil\u{202C} \u{009B}31m"
+    Unsafe id\u{202E} reversed\u{202C} and a bell\u{0007}.
+
+  ! wallets.partial
+    The salt changed on "2026-11-02\u{001B}[0m". Only wallets from that day on
+    are counted.
+    https://docs.op8x.com/findings/wallets.partial/
+
+Definitions: https://docs.op8x.com/metrics/ (definitions 2026-12-01)

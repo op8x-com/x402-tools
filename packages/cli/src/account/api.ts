@@ -8,7 +8,8 @@ import type { KeyKind } from "./keys.ts";
 // (no redirect, 10 s timeout, op8x User-Agent, size-limited body). Every answer is checked
 // against the contract of its route; an answer without a row of its own becomes
 // unexpected_response, a network fault, a redirect or a 5xx other than 503 busy becomes
-// network_error, and 503 busy is retried every 10 s for at most 2 minutes on every route.
+// network_error, and 503 busy is retried every 10 s for at most 2 minutes on every route (on the
+// report route as long as its Retry-After header says, within the same 2 minutes).
 // Requests go out one at a time (the collector has two shared slots).
 
 /** The fixed collector. */
@@ -81,7 +82,9 @@ export type ApiError =
   | { state: "code_exhausted" }
   | { state: "code_missing" }
   /** 409 no_write_key of POST test-nonce; the command adds its hint ("run op8x rotate first"). */
-  | { state: "server_key_missing" };
+  | { state: "server_key_missing" }
+  /** GET /tenant/report answered a JSON object whose `schema` is not op8x.metrics/1. */
+  | { state: "schema_unsupported" };
 
 export type ApiResult<T> = { ok: true; value: T } | { ok: false; error: ApiError };
 
@@ -160,6 +163,15 @@ export interface RotateInput {
   code?: string;
 }
 
+/** The schema of the report document; the only field of it the API client checks. */
+export const METRICS_SCHEMA = "op8x.metrics/1";
+
+/** A report as received: the body text exactly as sent, and the parsed object. */
+export interface MetricsReport {
+  text: string;
+  doc: Record<string, unknown>;
+}
+
 export interface Api {
   deviceStart: (input: StartInput) => Promise<ApiResult<DeviceStart>>;
   deviceToken: (deviceKey: string) => Promise<ApiResult<DeviceToken>>;
@@ -172,6 +184,8 @@ export interface Api {
   signOut: (readToken: string) => Promise<ApiResult<null>>;
   createTestNonce: (readToken: string) => Promise<ApiResult<TestNonce>>;
   testNonce: (readToken: string, nonce: string) => Promise<ApiResult<NonceStatus>>;
+  /** GET /tenant/report?days=N with R; days is an integer 1..30. */
+  report: (readToken: string, days: number) => Promise<ApiResult<MetricsReport>>;
 }
 
 // --- shape checks -----------------------------------------------------------------------------
@@ -291,8 +305,24 @@ const MAX_RETRY_AFTER_S = 86_400;
 /** A problem code is passed on only in this form; anything else is reported as null. */
 const PROBLEM_CODE = /^[a-z0-9_]{1,64}$/;
 
+/** The shortest and longest wait the CLI takes from a Retry-After header, in seconds. */
+const RETRY_AFTER_MIN_S = 1;
+const RETRY_AFTER_MAX_S = 60;
+
+/**
+ * The wait of a Retry-After header in ms: whole seconds only (an HTTP date or anything else is
+ * ignored), clamped to 1..60 s; null when absent or not of that form.
+ */
+export function retryAfterMs(header: string | undefined): number | null {
+  if (header === undefined || !/^\d{1,20}$/.test(header.trim())) return null;
+  const s = Number(header.trim());
+  return Math.min(RETRY_AFTER_MAX_S, Math.max(RETRY_AFTER_MIN_S, s)) * 1000;
+}
+
 interface Answer {
   status: number;
+  /** The body text exactly as received. */
+  text: string;
   /** The parsed body, or undefined if it is not JSON. */
   body: unknown;
   /** The problem+json `code`, if the body has one in the expected form. */
@@ -311,7 +341,8 @@ export function createApi(deps: Pick<Deps, "now" | "sleep" | "fetchImpl">, base:
   /** ISO 8601 UTC without milliseconds, `seconds` from now, rounded up to the second. */
   const retryAt = (seconds: number) => new Date(Math.ceil((deps.now() + seconds * 1000) / 1000) * 1000).toISOString().replace(".000Z", "Z");
 
-  async function once(method: "GET" | "POST", path: string, secret: string | null, body: unknown): Promise<Raw | "busy"> {
+  /** One request; a 503 busy comes back as `busy` with the Retry-After wait (null without one). */
+  async function once(method: "GET" | "POST", path: string, secret: string | null, body: unknown): Promise<Raw | { busy: number | null }> {
     const headers: Record<string, string> = { accept: "application/json" };
     if (method === "POST") headers["content-type"] = "application/json";
     if (secret !== null) headers.authorization = `Bearer ${secret}`;
@@ -335,28 +366,33 @@ export function createApi(deps: Pick<Deps, "now" | "sleep" | "fetchImpl">, base:
       parsed = undefined;
     }
     const code = isObj(parsed) && typeof parsed.code === "string" && PROBLEM_CODE.test(parsed.code) ? parsed.code : null;
-    if (status === 503 && code === "busy") return "busy";
+    if (status === 503 && code === "busy") return { busy: retryAfterMs(sent.headers["retry-after"]) };
     if (status >= 500) return fail({ state: "network_error" });
-    return { ok: true, answer: { status, body: parsed, code } };
+    return { ok: true, answer: { status, text: sent.bodyText, body: parsed, code } };
   }
 
-  /** One request with the busy rule: every 10 s again, at most 2 minutes, then busy. */
-  async function request(method: "GET" | "POST", path: string, secret: string | null, body?: unknown): Promise<Raw> {
+  /**
+   * One request with the busy rule: every 10 s again, at most 2 minutes, then busy. With
+   * `retryAfter` (the report route only) the wait is the answer's Retry-After (1..60 s), else 10 s;
+   * the 2 minutes stay the limit.
+   */
+  async function request(method: "GET" | "POST", path: string, secret: string | null, body: unknown, retryAfter: boolean): Promise<Raw> {
     const started = deps.now();
     let waited = 0;
     for (;;) {
       const r = await once(method, path, secret, body);
-      if (r !== "busy") return r;
-      if (waited + BUSY_STEP_MS > BUSY_MAX_MS || deps.now() - started + BUSY_STEP_MS > BUSY_MAX_MS) return fail({ state: "busy" });
-      await deps.sleep(BUSY_STEP_MS);
-      waited += BUSY_STEP_MS;
+      if (!("busy" in r)) return r;
+      const step = retryAfter && r.busy !== null ? r.busy : BUSY_STEP_MS;
+      if (waited + step > BUSY_MAX_MS || deps.now() - started + step > BUSY_MAX_MS) return fail({ state: "busy" });
+      await deps.sleep(step);
+      waited += step;
     }
   }
 
   async function call<T>(
-    route: { method: "GET" | "POST"; path: string; secret: string | null; kind: KeyKind | KeyKind[] | null; body?: unknown },
+    route: { method: "GET" | "POST"; path: string; secret: string | null; kind: KeyKind | KeyKind[] | null; body?: unknown; retryAfter?: boolean },
     success: number,
-    shape: (v: unknown) => T | null,
+    shape: (v: unknown, text: string) => T | null,
     errors: ErrorMap,
   ): Promise<ApiResult<T>> {
     // A secret of the wrong kind or form never leaves (it would also break the header).
@@ -364,12 +400,12 @@ export function createApi(deps: Pick<Deps, "now" | "sleep" | "fetchImpl">, base:
       const kinds = Array.isArray(route.kind) ? route.kind : [route.kind];
       if (!kinds.some((k) => isKey(route.secret, k))) return fail({ state: "internal_error" });
     }
-    const raw = await request(route.method, route.path, route.secret, route.body);
+    const raw = await request(route.method, route.path, route.secret, route.body, route.retryAfter === true);
     if (!raw.ok) return raw;
     const a = raw.answer;
     if (a.status === success) {
       if (success === 204) return { ok: true, value: null as T };
-      const value = shape(a.body);
+      const value = shape(a.body, a.text);
       return value === null ? fail(unexpected({ status: a.status, code: null })) : { ok: true, value };
     }
     if (isObj(a.body) && a.code !== null) {
@@ -453,6 +489,18 @@ export function createApi(deps: Pick<Deps, "now" | "sleep" | "fetchImpl">, base:
       // The segment goes out raw; only the collector's own nonce form is ever sent.
       if (!NONCE.test(nonce)) return fail({ state: "internal_error" });
       return call({ method: "GET", path: `${tenantPath}/test-nonce/${nonce}`, secret: r, kind: "r" }, 200, nonceStatusShape, keyAuth);
+    },
+    report: async (r, days) => {
+      if (!Number.isInteger(days) || days < 1 || days > 30) return fail({ state: "internal_error" });
+      // Any JSON object passes here; its schema decides below (only the schema is checked).
+      const res = await call(
+        { method: "GET", path: `${tenantPath}/report?days=${days}`, secret: r, kind: "r", retryAfter: true },
+        200,
+        (v, text): MetricsReport | null => (isObj(v) ? { text, doc: v } : null),
+        keyAuth,
+      );
+      if (res.ok && res.value.doc.schema !== METRICS_SCHEMA) return fail({ state: "schema_unsupported" });
+      return res;
     },
   };
 }

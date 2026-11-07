@@ -79,9 +79,13 @@ const CATALOG: [FinalState, number, string | null, Parameters<typeof agentHint>[
   ["import_failed", 1, "The file could not be read as an op8x file."],
   ["config_unreadable", 1, "The wrangler configuration could not be read."],
   ["permissions_failed", 1, "The op8x file could not be protected; nothing was written."],
-  ["not_available_yet", 1, "Numbers are not available in this version yet."],
   ["network_error", 2, "Check the connection and run the command again."],
   ["busy", 2, "The service is busy; try again in a minute."],
+  [
+    "schema_unsupported",
+    2,
+    "The report has a format this version of op8x cannot read. Update @op8x/cli (npx @op8x/cli@latest report) and run the command again.",
+  ],
   [
     "unexpected_response",
     2,
