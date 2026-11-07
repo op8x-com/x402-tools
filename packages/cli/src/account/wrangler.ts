@@ -4,15 +4,18 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Deps, ExecResult } from "../cli.ts";
 import { isKey } from "./keys.ts";
 import type { Output } from "./output.ts";
+import { SALT_SECRET, isSalt } from "./salt.ts";
 
 // The seller's own wrangler: found only in the worker folder, started with node itself (no shell,
-// no npx), with an allowlisted environment, the server key only on stdin. Its output is never
+// no npx), with an allowlisted environment, the server key and the salt only on stdin. Its output is never
 // shown; only the exit code counts (for whoami also `loggedIn`). The configuration reader reads a
 // small subset of wrangler.json / wrangler.jsonc / wrangler.toml and treats the file as hostile.
 
 export const WRANGLER_TIMEOUT_MS = 120_000;
-/** The name of the secret in the worker. */
+/** The name of the server key in the worker. */
 export const WRANGLER_SECRET = "OP8X_KEY";
+/** The secrets op8x puts into a worker. */
+export type SecretName = typeof WRANGLER_SECRET | typeof SALT_SECRET;
 export const MAX_CONFIG_BYTES = 256 * 1024;
 export const MAX_CONFIG_DEPTH = 16;
 
@@ -883,14 +886,19 @@ export type SecretResult = "ok" | "failed" | "stopped";
 export interface Secrets {
   /** `secret put OP8X_KEY` with K on stdin; the notice secret_put_deploys comes before the first put. */
   put: (bin: WranglerBin, target: SecretTarget, key: string) => Promise<SecretResult>;
-  /** `secret delete OP8X_KEY` without stdin data (wrangler ≥ 4.152.0 confirms by itself). */
-  remove: (bin: WranglerBin, target: SecretTarget) => Promise<SecretResult>;
   /**
-   * Read only: `secret list --format json`; is OP8X_KEY among the worker's secret names? Only the
-   * names are read; nothing of the answer is kept or shown. failed = exit ≠ 0, a refused target,
-   * no start, or an answer that is not a JSON list of {name}.
+   * `secret bulk` with {"OP8X_KEY": K, "OP8X_SALT": salt} as JSON on stdin: both in one new
+   * version of the worker (one deploy). The notice secret_put_deploys comes before the first put.
    */
-  holds: (bin: WranglerBin, target: SecretTarget) => Promise<"present" | "absent" | "failed" | "stopped">;
+  putWithSalt: (bin: WranglerBin, target: SecretTarget, key: string, salt: string) => Promise<SecretResult>;
+  /** `secret delete <name>` (default OP8X_KEY) without stdin data (wrangler ≥ 4.152.0 confirms by itself). */
+  remove: (bin: WranglerBin, target: SecretTarget, name?: SecretName) => Promise<SecretResult>;
+  /**
+   * Read only: `secret list --format json`; is `name` (default OP8X_KEY) among the worker's secret
+   * names? Only the names are read; nothing of the answer is kept or shown. failed = exit ≠ 0, a
+   * refused target, no start, or an answer that is not a JSON list of {name}.
+   */
+  holds: (bin: WranglerBin, target: SecretTarget, name?: SecretName) => Promise<"present" | "absent" | "failed" | "stopped">;
 }
 
 /**
@@ -929,13 +937,13 @@ export function secretNames(stdout: string): string[] | null {
  * that file. Without one, the name is pinned by `--name`. An unreadable configuration refuses the
  * target. null: the target is refused (no start).
  */
-async function secretArgs(verb: "put" | "delete" | "list", t: SecretTarget): Promise<string[] | null> {
+async function secretArgs(verb: "put" | "bulk" | "delete" | "list", t: SecretTarget, name: SecretName = WRANGLER_SECRET): Promise<string[] | null> {
   if (!isWranglerName(t.name) || (t.env !== null && !isWranglerName(t.env))) return null;
   const read = await readWranglerConfig(t.dir);
   if (!read.ok) return null;
-  // list names no key and asks for JSON, the only answer op8x reads.
+  // list names no secret and asks for JSON, the only answer op8x reads; bulk takes the names from stdin.
   const pin = [...(read.file === null ? [] : ["--config", read.file]), ...(verb === "list" ? ["--format", "json"] : [])];
-  const head = verb === "list" ? ["secret", "list"] : ["secret", verb, WRANGLER_SECRET];
+  const head = verb === "list" || verb === "bulk" ? ["secret", verb] : ["secret", verb, name];
   if (t.env === null) return [...head, "--name", t.name, ...pin];
   const suffix = `-${t.env}`;
   const base = t.name.slice(0, -suffix.length);
@@ -952,30 +960,41 @@ async function secretArgs(verb: "put" | "delete" | "list", t: SecretTarget): Pro
 export function createSecrets(deps: RunDeps, out: Output): Secrets {
   let noticed = false;
   const sameDir = (bin: WranglerBin, t: SecretTarget) => resolve(t.dir) === bin.dir;
+  /** A start that changes the worker's secrets: the notice before the first one of the run. */
+  async function deploy(bin: WranglerBin, args: string[], input: string): Promise<SecretResult> {
+    if (!noticed) {
+      noticed = true;
+      out.notice("secret_put_deploys");
+    }
+    if (out.stopped) return "stopped";
+    const r = await runWrangler(deps, bin, args, input);
+    return r !== null && r.code === 0 ? "ok" : "failed";
+  }
   return {
     async put(bin, target, key) {
       if (out.stopped) return "stopped";
       if (!isKey(key, "w") || !sameDir(bin, target)) return "failed";
       const args = await secretArgs("put", target);
       if (args === null) return "failed";
-      if (!noticed) {
-        noticed = true;
-        out.notice("secret_put_deploys");
-      }
-      if (out.stopped) return "stopped";
-      const r = await runWrangler(deps, bin, args, key);
-      return r !== null && r.code === 0 ? "ok" : "failed";
+      return deploy(bin, args, key);
     },
-    async remove(bin, target) {
+    async putWithSalt(bin, target, key, salt) {
+      if (out.stopped) return "stopped";
+      if (!isKey(key, "w") || !isSalt(salt) || !sameDir(bin, target)) return "failed";
+      const args = await secretArgs("bulk", target);
+      if (args === null) return "failed";
+      return deploy(bin, args, JSON.stringify({ [WRANGLER_SECRET]: key, [SALT_SECRET]: salt }));
+    },
+    async remove(bin, target, name = WRANGLER_SECRET) {
       if (out.stopped) return "stopped";
       if (!sameDir(bin, target)) return "failed";
-      const args = await secretArgs("delete", target);
+      const args = await secretArgs("delete", target, name);
       if (args === null) return "failed";
       if (out.stopped) return "stopped";
       const r = await runWrangler(deps, bin, args);
       return r !== null && r.code === 0 ? "ok" : "failed";
     },
-    async holds(bin, target) {
+    async holds(bin, target, name = WRANGLER_SECRET) {
       if (out.stopped) return "stopped";
       if (!sameDir(bin, target)) return "failed";
       const args = await secretArgs("list", target);
@@ -985,7 +1004,7 @@ export function createSecrets(deps: RunDeps, out: Output): Secrets {
       if (r === null || r.code !== 0) return "failed";
       const names = secretNames(r.stdout);
       if (names === null) return "failed";
-      return names.includes(WRANGLER_SECRET) ? "present" : "absent";
+      return names.includes(name) ? "present" : "absent";
     },
   };
 }

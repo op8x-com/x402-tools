@@ -3,6 +3,7 @@ import { mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "nod
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { generateKey } from "../src/account/keys.ts";
+import { newSalt } from "../src/account/salt.ts";
 import { createOutput } from "../src/account/output.ts";
 import { exec } from "../src/account/system.ts";
 import {
@@ -17,7 +18,7 @@ import {
 import type { WranglerBin } from "../src/account/wrangler.ts";
 import { recordingExec, tempDir, testDeps } from "./account-deps.ts";
 import type { TestDeps } from "./account-deps.ts";
-import { LOGGED_IN, LOGGED_IN_ACCOUNT, LOGGED_IN_EMAIL, LOGGED_OUT, createFakeWrangler } from "./fake-wrangler.ts";
+import { LOGGED_IN, LOGGED_IN_ACCOUNT, LOGGED_IN_EMAIL, LOGGED_OUT, createFakeWrangler, secretList } from "./fake-wrangler.ts";
 import type { FakeWrangler } from "./fake-wrangler.ts";
 
 const win = process.platform === "win32";
@@ -818,6 +819,71 @@ test("secret delete: argv after the table, no stdin data, exit code decides", as
   const d2 = testDeps({ exec: rec });
   await createSecrets(d2, output(d2)).remove(bin, { dir: fake.dir, name: "api", env: null });
   assert.equal(rec.calls[0]!.opts.input, undefined);
+});
+
+// --- secret bulk: the server key and the salt in one new version ----------------------------------
+
+test("secret bulk: K and the salt as one JSON object on stdin, never in argv or env; the notice once", async () => {
+  const { fake, deps, bin } = await secretSetup();
+  const k = generateKey("w");
+  const salt = newSalt();
+  fake.answer("bulk", { exit: 0, stdout: `wrangler says ${salt}\n`, stderr: `and ${k}\n` });
+  const secrets = createSecrets(deps, output(deps));
+  assert.equal(await secrets.putWithSalt(bin, { dir: fake.dir, name: "api", env: null }, k, salt), "ok");
+  assert.equal(await secrets.putWithSalt(bin, { dir: fake.dir, name: "api-staging", env: "staging" }, k, salt), "ok");
+  assert.equal(await secrets.putWithSalt(bin, { dir: fake.dir, name: "custom", env: "prod" }, k, salt), "ok");
+  const calls = fake.calls();
+  assert.deepEqual(
+    calls.map((c) => c.argv),
+    [
+      ["secret", "bulk", "--name", "api", ...cfg(fake)],
+      ["secret", "bulk", "--name", "api", "--env", "staging", ...cfg(fake)],
+      ["secret", "bulk", "--env", "prod", ...cfg(fake)],
+    ],
+  );
+  for (const c of calls) {
+    assert.deepEqual(JSON.parse(c.stdin), { OP8X_KEY: k, OP8X_SALT: salt });
+    assert.equal(c.stdinIsTTY, false);
+    assert.ok(!c.argv.some((a) => a.includes(k) || a.includes("op8x_s_")));
+    assert.ok(!Object.values(c.env).some((v) => v.includes(k) || v.includes("op8x_s_")));
+  }
+  assert.deepEqual(fake.held(), { OP8X_KEY: k, OP8X_SALT: salt });
+  assert.deepEqual(
+    jsonLines(deps).map((l) => l.id),
+    ["secret_put_deploys"],
+  );
+  assert.ok(!deps.stdout().includes("op8x_s_"));
+  assert.equal(deps.stderr(), "");
+});
+
+test("secret bulk: exit code decides; refused without a start for a bad key, a bad salt or a bad target", async () => {
+  const { fake, deps, bin } = await secretSetup();
+  const secrets = createSecrets(deps, output(deps));
+  const k = generateKey("w");
+  const salt = newSalt();
+  const api = { dir: fake.dir, name: "api", env: null };
+  assert.equal(await secrets.putWithSalt(bin, api, generateKey("r"), salt), "failed");
+  assert.equal(await secrets.putWithSalt(bin, api, k, `${salt}\n`), "failed");
+  assert.equal(await secrets.putWithSalt(bin, api, k, generateKey("w")), "failed");
+  assert.equal(await secrets.putWithSalt(bin, { ...api, name: "--name" }, k, salt), "failed");
+  assert.equal(await secrets.putWithSalt(bin, { ...api, dir: tempDir() }, k, salt), "failed");
+  assert.equal(fake.calls().length, 0);
+  fake.answer("bulk", { exit: 1 });
+  assert.equal(await secrets.putWithSalt(bin, api, k, salt), "failed");
+});
+
+test("secret delete and secret list take the secret's name: OP8X_SALT as well as OP8X_KEY", async () => {
+  const { fake, deps, bin } = await secretSetup();
+  const secrets = createSecrets(deps, output(deps));
+  const api = { dir: fake.dir, name: "api", env: null };
+  assert.equal(await secrets.remove(bin, api, "OP8X_SALT"), "ok");
+  assert.deepEqual(fake.calls().at(-1)!.argv, ["secret", "delete", "OP8X_SALT", "--name", "api", ...cfg(fake)]);
+  fake.answer("list", { exit: 0, stdout: secretList(["OP8X_KEY"]) });
+  assert.equal(await secrets.holds(bin, api, "OP8X_SALT"), "absent");
+  assert.equal(await secrets.holds(bin, api), "present");
+  fake.answer("list", { exit: 0, stdout: secretList(["OP8X_SALT"]) });
+  assert.equal(await secrets.holds(bin, api, "OP8X_SALT"), "present");
+  assert.equal(await secrets.holds(bin, api, "OP8X_KEY"), "absent");
 });
 
 // --- fixes after review: pinned configuration file, skipped target keys, linked single files -----
