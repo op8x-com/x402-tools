@@ -528,7 +528,8 @@ async function login(json: boolean, deps: Deps): Promise<number> {
 /**
  * op8x logout: POST sign-out {} with R, then the op8x file is removed, so the read token is revoked before it is forgotten. Offline, on a 5xx,
  * busy or any other unexpected answer the file stays, so a later logout can still revoke R; a 401
- * (R already invalid) removes it. With a local K the notice logout_removes_key comes first.
+ * (R already invalid) removes it. With a local K the notice logout_removes_key comes first, with a
+ * salt the notice logout_removes_salt.
  */
 async function logout(json: boolean, deps: Deps): Promise<number> {
   let held: AccountFile | null = null;
@@ -547,6 +548,7 @@ async function logout(json: boolean, deps: Deps): Promise<number> {
   out.end("ok");
   const withKey = s.file.write_key !== null || s.file.write_key_next !== null;
   if (withKey) out.notice("logout_removes_key");
+  if (s.file.salt !== null) out.notice("logout_removes_salt");
   if (out.stopped) return out.final("internal_error");
   try {
     await deleteAccount(deps);

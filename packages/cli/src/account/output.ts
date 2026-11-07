@@ -224,6 +224,8 @@ export const NOTICES = {
   secret_put_deploys: "wrangler secret put deploys the worker right away.",
   test_host: "Sending one test request to {host}.",
   logout_removes_key: "This computer holds the server key. It is deleted with the op8x file; your workers keep their copy.",
+  logout_removes_salt:
+    "This computer holds the account's salt. It is deleted with the op8x file; your workers keep their copy. A later op8x init here makes a new salt unless op8x import-key brings it back, and returning-buyer counts restart after a new salt.",
 } as const;
 
 export type NoticeId = keyof typeof NOTICES;
