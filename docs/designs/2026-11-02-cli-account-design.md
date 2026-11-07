@@ -17,11 +17,12 @@ changed by this design.
 The `@op8x/analytics` module in a seller's worker sends one metadata record per
 request to op8x. op8x accepts records only with a server key (`OP8X_KEY`).
 `op8x init` creates that key on the seller's computer, asks a human to allow
-the sign-in in a browser, puts the key into the worker with the project's own
-`wrangler` (or into a git-ignored file for Node hosts), and proves the
-connection with one test request. Later `op8x rotate` replaces the key in every
-worker the computer knows, and `op8x delete` deletes the account and removes
-the key from those workers.
+the sign-in in a browser, puts the key and the account's salt (`OP8X_SALT`)
+into the worker with the project's own `wrangler` (or into a git-ignored file
+for Node hosts), and proves the connection with one test request. Later
+`op8x rotate` replaces the key in every worker the computer knows, and
+`op8x delete` deletes the account and removes the key and the salt from those
+workers.
 
 The commands are written for two readers at once: a human in a terminal, and an
 agent that runs the command and reads its output. Every run ends in one named
@@ -30,8 +31,9 @@ that tells the reader what to do next.
 
 Goals:
 
-*   The server key never appears in output, logs, argv or the browser. The
-    human only opens a link and, for dangerous steps, reads a code from a mail.
+*   The server key and the salt never appear in output, logs, argv or the
+    browser. The human only opens a link and, for dangerous steps, reads a code
+    from a mail.
 *   Every run can be repeated after an interruption without losing a key.
 *   The CLI trusts only the project folder it runs in, and runs no program that
     the project could have planted next to it.
@@ -70,23 +72,25 @@ What each command does:
 
 *   **`init`** in a worker folder. On a computer without an op8x file: checks
     the project's wrangler and the Cloudflare login, signs the computer in
-    (browser link), stores the op8x file, puts the server key into the worker,
-    sends one test request. On a signed-in computer only the last two steps
-    run. A second `init` for the same worker updates its entry.
+    (browser link), stores the op8x file, puts the server key and the salt into
+    the worker, sends one test request. On a signed-in computer only the last
+    two steps run. A second `init` for the same worker updates its entry; every
+    worker of the account gets the same salt (see "Returning buyers").
 *   **`login`** signs this computer in to an existing account. If the account
-    is the one in the op8x file, the server key and the known workers stay; for
-    another account the file starts empty.
+    is the one in the op8x file, the server key, the salt and the known workers
+    stay; for another account the file starts empty.
 *   **`logout`** revokes this computer's access at op8x, then deletes the op8x
-    file. Workers keep their copy of the server key.
-*   **`import-key <path>`** takes the server key from the op8x file of another
-    computer, after `GET /tenant` with this computer's read token shows that it
-    is the account's current key. The key is never sent anywhere.
+    file. Workers keep their copy of the server key and the salt.
+*   **`import-key <path>`** takes the server key and the salt from the op8x
+    file of another computer, after `GET /tenant` with this computer's read
+    token shows that the key is the account's current key. Neither is sent
+    anywhere. A file without a salt keeps this computer's salt.
 *   **`rotate`** creates a new server key and puts it into every known worker.
-    The old key keeps working for 24 hours.
+    The old key keeps working for 24 hours. The salt stays as it is.
 *   **`rotate --now`** does the same and then stops the old key right away,
     after a quiet check and a code from a mail (see "Stopping the old key").
-*   **`delete`** deletes the account (code from a mail), removes `OP8X_KEY` from
-    every known worker, then removes the op8x file.
+*   **`delete`** deletes the account (code from a mail), removes `OP8X_KEY` and
+    `OP8X_SALT` from every known worker, then removes the op8x file.
 *   **`report`** prints `not_available_yet`.
 
 The help of an account command is printed on stderr together with a usage
@@ -134,9 +138,10 @@ and may show `agent_hint`. Times are ISO 8601 in UTC in JSON and
 | --- | --- | --- |
 | `code_already_sent` | A code was already sent in the last 10 minutes. Check your mail for it. | a repeated request for a mail code within 10 minutes; no new mail is sent |
 | `contact_unknown` | This computer does not know the contact address of this account. | the sign-in answer was lost and the CLI recovered the account without it |
-| `secret_put_deploys` | wrangler secret put deploys the worker right away. | before the first `wrangler secret put` of a run |
+| `secret_put_deploys` | wrangler secret put deploys the worker right away. | before the first `wrangler secret put` or `secret bulk` of a run |
 | `test_host` | Sending one test request to {host}. | before every test request |
 | `logout_removes_key` | This computer holds the server key. It is deleted with the op8x file; your workers keep their copy. | `logout` on a computer that holds the server key |
+| `logout_removes_salt` | This computer holds the account's salt. It is deleted with the op8x file; your workers keep their copy. A later op8x init here makes a new salt unless op8x import-key brings it back, and returning-buyer counts restart after a new salt. | `logout` on a computer that holds the salt |
 
 ### Step names
 
@@ -221,7 +226,7 @@ special case, listed after the first.
 | `no_account` | `login` for an address without an account | 1 | There is no op8x account for this address. Run op8x init to create one. |
 | `terms_draft` | accounts are not open yet | 1 | op8x accounts are not open yet. |
 | `granted_lost` | the sign-in finished, the answer was lost and could not be recovered | 1 | The sign-in finished but this computer missed the answer. Run op8x login. |
-| `server_key_missing` | this computer has no server key | 1 | This computer has no server key. Run op8x import-key <path to the op8x file of your other computer>, or run op8x rotate and then op8x init in every worker folder within 24 hours. While a rotation runs, the part after the comma reads: or run op8x rotate --now. |
+| `server_key_missing` | this computer has no server key | 1 | This computer has no server key. Run op8x import-key <path to the op8x file of your other computer>, or run op8x rotate and then op8x init in every worker folder within 24 hours. After a rotate on a new computer, returning-buyer counts restart. While a rotation runs, the part after the comma reads: or run op8x rotate --now. |
 | `key_mismatch` | the local key is not the account's current key | 1 | The key on this computer is not the account's current key. Run op8x rotate. |
 | `key_previous` | `import-key`: the file holds the old key | 1 | This key is the old one. Run op8x rotate. |
 | `partial` | a worker did not get the key, or sent no test event | 1 | The new key is not in every worker: {names}. Fix them and run the command again; nothing was stopped. |
@@ -234,7 +239,7 @@ special case, listed after the first.
 | `code_exhausted` | too many wrong codes | 1 | Too many wrong codes. Run the command again for a new code. |
 | `rate_limited` | too many requests | 1 | Too many requests. Try again after {retry_at}. |
 | `key_conflict` | a new key collided twice | 1 | Run the command again. |
-| `deleted_partial` | account deleted, but `OP8X_KEY` could not be removed everywhere | 1 | The account is deleted. Remove OP8X_KEY by hand from: {names}. |
+| `deleted_partial` | account deleted, but `OP8X_KEY` or `OP8X_SALT` could not be removed everywhere | 1 | The account is deleted. Remove OP8X_KEY and OP8X_SALT by hand from: {names}. |
 | `not_logged_in` | no op8x file, or only the rest of an interrupted delete | 1 | This computer is not signed in. Run op8x init or op8x login. |
 | `key_auth` | op8x refused this computer's read token | 1 | This computer's access is no longer valid. Run op8x login. |
 | `import_failed` | the file is missing, not an op8x file, or holds no server key; also an unreadable own op8x file | 1 | The file could not be read as an op8x file. |
@@ -263,13 +268,34 @@ escaped, so the human compares exactly what their screen shows.
 | Key | Prefix | Lives in | Sent to op8x |
 | --- | --- | --- | --- |
 | server key | `op8x_w_` | the op8x file and the worker (`OP8X_KEY`) | only as its SHA-256 hash |
+| salt | `op8x_s_` | the op8x file and the worker (`OP8X_SALT`) | never |
 | read token | `op8x_r_` | the op8x file | as `Authorization: Bearer` on account requests |
 | device secret | `op8x_d_` | memory, during one sign-in | as `Authorization: Bearer` when the CLI collects the sign-in answer |
 
 Each key is the prefix plus 43 base64url characters from 32 random bytes. The
 hash is SHA-256 over the whole string, prefix included, in lowercase hex; the
-fingerprint is its first 8 characters. The server key reaches the worker only
-on wrangler's stdin, or as the line `OP8X_KEY=…` in the `--env-file`.
+fingerprint is its first 8 characters. The salt has the same form; its 43
+characters must also be the canonical encoding of the 32 bytes (re-encoding them
+gives the same characters), the rule the analytics module checks. The server
+key and the salt reach the worker only on wrangler's stdin, or as the lines
+`OP8X_KEY=…` and `OP8X_SALT=…` in the `--env-file`.
+
+## Returning buyers
+
+The analytics module replaces each payer address with a pseudonym: an
+HMAC-SHA-256 keyed with the account's salt. The same payer gives the same
+pseudonym in every worker of the account, so repeat purchases can be counted
+without op8x seeing an address. The CLI only makes and stores the salt; it
+never computes a pseudonym.
+
+*   `init` makes the salt once per account (32 random bytes, `op8x_s_` plus 43
+    base64url characters), stores it in the op8x file before it puts anything,
+    and gives every worker the same salt. `rotate` never changes it.
+*   A second computer gets the salt with `import-key`, together with the
+    server key.
+*   A new salt starts new pseudonyms, so returning-buyer counts restart: after
+    a `logout` followed by a fresh `init`, or after a rotate on a new computer
+    that never imported the salt.
 
 ## The op8x file
 
@@ -296,6 +322,7 @@ Schema `op8x.account/1`, with every secret value replaced here:
   "read_token": "<read token>",
   "write_key": "<server key> or null",
   "write_key_next": "<next server key> or null",
+  "salt": "<salt> or null",
   "pending_step_up": null,
   "deleted": null,
   "workers": [
@@ -318,13 +345,17 @@ Schema `op8x.account/1`, with every secret value replaced here:
     after a lost rotation never makes a key current that the known workers do
     not hold. `import-key` drops it too once the imported key is the current
     one, and settles a waiting `replace_current` step.
+*   `salt` is the account's salt, or null until `init` makes one. Files of
+    older versions have no `salt` field; it reads as null. An invalid salt
+    makes the file invalid.
 *   `pending_step_up` is `{purpose, command, case, phase, force_stop, t_check,
     expires_at}` while a step waits for a mail code, else null.
 *   A worker is identified by `dir`, `name` and `env`, or by `env_file` alone.
     `url` is the test address or null. `verified_at` is the time op8x saw the
     test event.
 *   After `deleted_partial` the file keeps only the workers that still hold the
-    key: every account field is null and `deleted` is `{"action_id": "…"}`.
+    key or the salt: every account field (the salt too) is null and `deleted`
+    is `{"action_id": "…"}`.
     `init` and `login` treat this file as no file, `delete` finishes the
     removal, every other command ends with `not_logged_in`.
 
@@ -400,7 +431,8 @@ address. A code is never taken from argv.
 
 `rotate` stores the new key in `write_key_next`, sends its hash to op8x, then
 makes it `write_key` and puts it into every known worker (wrangler worker:
-`secret put`; env file: the `OP8X_KEY` line). Each worker with a test address
+`secret put`; env file: the `OP8X_KEY` line; the salt and the `OP8X_SALT`
+line stay as they are). Each worker with a test address
 gets a test request. The old key keeps working for 24 hours. A second run after
 `partial` sends no new rotation and only fixes the workers that are not done.
 
@@ -438,14 +470,17 @@ for the second code, the third takes the second code.
 ## Deleting the account
 
 `delete` asks for a code, sends `POST delete` with it, writes the rest file
-right away (no account fields, all workers), runs `secret delete` per wrangler
-worker and removes the `OP8X_KEY` line from each env file, saving the rest file
+right away (no account fields, all workers), runs `secret delete` for
+`OP8X_KEY`, then for `OP8X_SALT`, per wrangler worker and removes the
+`OP8X_KEY` and `OP8X_SALT` lines from each env file, saving the rest file
 after each worker, then deletes the op8x file. If a removal fails, the account
 is still deleted, the rest file keeps the failed workers and the run ends with
 `deleted_partial`; the next `delete` only retries those workers and sends
 nothing to op8x. On that retry a failed `secret delete` is followed by a
 read-only `secret list`: if `OP8X_KEY` is no longer there, the worker counts as
-done. If the op8x file cannot be removed or updated after the account is gone,
+done. A failed `secret delete` of `OP8X_SALT` is always followed by that check,
+because workers set up by older versions have no salt. If the op8x file cannot
+be removed or updated after the account is gone,
 the run ends with the `permissions_failed` variant that names the receipt and
 the file to delete by hand.
 
@@ -477,7 +512,7 @@ never runs a program by name from it.
     `WRANGLER_WRITE_LOGS=false` to that environment. wrangler reads the
     project's dotenv files itself, but a value already in its environment wins,
     so a dotenv file can neither turn off log sanitizing nor turn on the log
-    file, either of which could record the key sent with `secret put`.
+    file, either of which could record the key and the salt sent with `secret put` or `secret bulk`.
     `CLOUDFLARE_API_BASE_URL` is not pinned: wrangler's default depends on the
     configuration's `compliance_region`, so a fixed value would be wrong for
     some workers.
@@ -488,9 +523,10 @@ never runs a program by name from it.
 | Action | argv after `wrangler.js` | stdin |
 | --- | --- | --- |
 | check the login | `whoami --json` | empty |
-| put the key | `secret put OP8X_KEY` plus the target | the key, without a newline |
-| remove the key | `secret delete OP8X_KEY` plus the target | empty |
-| check for the key (only when a later `delete` finishes an interrupted one and `secret delete` failed) | `secret list` plus the target, then `--format json` | empty |
+| put the key and the salt (`init`; one new version of the worker) | `secret bulk` plus the target | `{"OP8X_KEY":"…","OP8X_SALT":"…"}` as JSON, without a newline |
+| put the key (`rotate`) | `secret put OP8X_KEY` plus the target | the key, without a newline |
+| remove the key, then the salt | `secret delete OP8X_KEY`, then `secret delete OP8X_SALT`, plus the target | empty |
+| check for the key or the salt (after a failed `secret delete` of the salt, or of the key when a later `delete` finishes an interrupted one) | `secret list` plus the target, then `--format json` | empty |
 
 The target is `--name <name>` without an environment; `--name <base> --env <X>`
 when the worker name is `<base>-<X>`; `--env <X>` alone when the name comes
@@ -536,8 +572,8 @@ route with a fixed domain (`route` before `routes`; a custom domain gives
 ### Output guard
 
 Before a line is written, the CLI checks that it holds none of the read token,
-the server key (current or next), the device secret, a mail code of the run or
-`OP8X_TEST_TOKEN`. A line that does is replaced by the final line
+the server key (current or next), the salt, the device secret, a mail code of
+the run or `OP8X_TEST_TOKEN`. A line that does is replaced by the final line
 `internal_error` (exit code 2), the original is written nowhere, and the run
 stops before its next side effect.
 
