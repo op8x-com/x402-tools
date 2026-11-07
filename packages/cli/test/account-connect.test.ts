@@ -15,9 +15,13 @@ import {
   upsertWorker,
   verifyWorker,
   withEnvKey,
+  withEnvValues,
+  withoutEnvKey,
   writeEnvKey,
+  EnvFileFormatError,
 } from "../src/account/connect.ts";
 import { generateKey } from "../src/account/keys.ts";
+import { newSalt } from "../src/account/salt.ts";
 import { createOutput } from "../src/account/output.ts";
 import { StoreError, systemRootOf } from "../src/account/store.ts";
 import type { WorkerEntry } from "../src/account/store.ts";
@@ -373,6 +377,76 @@ test("writeEnvKey: a folder in place of the file is permissions_failed and nothi
 });
 
 const SID = "S-1-5-21-1111111111-2222222222-3333333333-1001";
+
+test("withEnvValues: OP8X_KEY and OP8X_SALT replaced in place or appended in order, other bytes kept", () => {
+  const key = generateKey("w");
+  const salt = newSalt();
+  const both = [
+    ["OP8X_KEY", key],
+    ["OP8X_SALT", salt],
+  ] as const;
+  assert.equal(withEnvValues(null, both).toString(), `OP8X_KEY=${key}\nOP8X_SALT=${salt}\n`);
+  assert.equal(withEnvValues(Buffer.from("A=1\r\nB=2"), both).toString(), `A=1\r\nB=2\r\nOP8X_KEY=${key}\r\nOP8X_SALT=${salt}\r\n`);
+  assert.equal(
+    withEnvValues(Buffer.from("OP8X_SALT=old\nA=1\nexport OP8X_KEY=old\n"), both).toString(),
+    `OP8X_SALT=${salt}\nA=1\nOP8X_KEY=${key}\n`,
+  );
+  assert.equal(withEnvValues(Buffer.from("OP8X_SALTY=x\n"), both).toString(), `OP8X_SALTY=x\nOP8X_KEY=${key}\nOP8X_SALT=${salt}\n`);
+  // Only K given (rotate): the salt line stays as it is.
+  assert.equal(withEnvValues(Buffer.from(`OP8X_KEY=old\nOP8X_SALT=${salt}\n`), [["OP8X_KEY", key]]).toString(), `OP8X_KEY=${key}\nOP8X_SALT=${salt}\n`);
+});
+
+test("an env file with a carriage return that does not end a line is refused, not rewritten", () => {
+  const key = generateKey("w");
+  for (const text of ["OP8X_SALT=old\rDATABASE_URL=keep\r", "A=1\r\nB=2\rC=3\n", "\r"]) {
+    assert.throws(() => withEnvValues(Buffer.from(text), [["OP8X_KEY", key]]), EnvFileFormatError, JSON.stringify(text));
+    assert.throws(() => withoutEnvKey(Buffer.from(text)), EnvFileFormatError, JSON.stringify(text));
+  }
+  // CRLF and LF files stay fine.
+  assert.equal(withEnvValues(Buffer.from("A=1\r\n"), [["OP8X_KEY", key]]).toString(), `A=1\r\nOP8X_KEY=${key}\r\n`);
+  assert.equal(withoutEnvKey(Buffer.from("A=1\r\nOP8X_KEY=x\r\n"))?.toString(), "A=1\r\n");
+});
+
+test("an env file with a quoted value that spans lines is refused, not rewritten", () => {
+  const key = generateKey("w");
+  const bs = String.fromCharCode(92);
+  const bad = [
+    'CERT="line one\nOP8X_KEY=inside\nline three"\n',
+    "NOTE='first\nsecond'\n",
+    'export A = "open\r\nclose"\r\n',
+    'A=1\nB="never closed\n',
+    `ESC="ends with escaped quote${bs}"\nmore"\n`,
+  ];
+  for (const text of bad) {
+    assert.throws(() => withEnvValues(Buffer.from(text), [["OP8X_KEY", key]]), EnvFileFormatError, JSON.stringify(text));
+    assert.throws(() => withoutEnvKey(Buffer.from(text)), EnvFileFormatError, JSON.stringify(text));
+  }
+  // Quotes that close on their line, or sit inside a value, are fine.
+  const fine = `A="one line"\nB='also'\nC=it"s\nD="a ${bs}" b"\nE=\n`;
+  assert.equal(withEnvValues(Buffer.from(fine), [["OP8X_KEY", key]]).toString(), `${fine}OP8X_KEY=${key}\n`);
+  assert.equal(withoutEnvKey(Buffer.from(`${fine}OP8X_KEY=x\n`))?.toString(), fine);
+});
+
+test("withoutEnvKey: removes the OP8X_KEY and OP8X_SALT lines, keeps every other line", () => {
+  const salt = newSalt();
+  assert.equal(withoutEnvKey(Buffer.from(`A=1\nOP8X_KEY=k\r\nexport OP8X_SALT = ${salt}\nOP8X_SALTY=x\n`))?.toString(), "A=1\nOP8X_SALTY=x\n");
+  assert.equal(withoutEnvKey(Buffer.from(`OP8X_SALT=${salt}`))?.toString(), "");
+  assert.equal(withoutEnvKey(Buffer.from("A=1\n")), null);
+});
+
+test("writeEnvKey with a salt writes both lines in one protected write; without one it keeps the salt line", async () => {
+  const dir = tempDir();
+  const path = join(dir, "local.env");
+  writeFileSync(path, "PORT=1\n");
+  const key = generateKey("w");
+  const salt = newSalt();
+  await writeEnvKey(testDeps(), path, key, salt);
+  assert.equal(readFileSync(path, "utf8"), `PORT=1\nOP8X_KEY=${key}\nOP8X_SALT=${salt}\n`);
+  const next = generateKey("w");
+  await writeEnvKey(testDeps(), path, next);
+  assert.equal(readFileSync(path, "utf8"), `PORT=1\nOP8X_KEY=${next}\nOP8X_SALT=${salt}\n`);
+  assert.deepEqual(readdirSync(dir), ["local.env"]);
+});
 
 test("writeEnvKey on Windows (recorded exec): SID, ACL set and checked on the temp file before K goes in", async () => {
   const dir = tempDir();

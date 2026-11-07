@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { Hono } from "hono";
 import type { ExecutionContext, MiddlewareHandler } from "hono";
 import { analytics } from "../src/hono.ts";
-import { hashPayer } from "../src/hash.ts";
+import { readFileSync } from "node:fs";
+import { hashPayer, parseSalt, saltId } from "../src/hash.ts";
+import { SALT_INVALID } from "../src/key.ts";
 import type { AnalyticsOptions, AnalyticsRecord } from "../src/types.ts";
 import { resetWarnings } from "../src/warnings.ts";
 import { startCollector } from "./collector.ts";
@@ -389,20 +391,23 @@ test("the transport is created once per analytics() call: one warning for two fa
   }
 });
 
+// Generated test salt (bytes 0x00..0x1f); not a real secret.
+const SALT = "op8x_s_" + Buffer.from(Array.from({ length: 32 }, (_, i) => i)).toString("base64url");
+
 test("salt hashes the payer", async () => {
   const collector = await startCollector("ok");
   try {
-    const app = buildApp(analytics({ endpoint: collector.url, salt: "seller-salt" }));
+    const app = buildApp(analytics({ endpoint: collector.url, salt: SALT }));
     const { ctx, promises } = fakeCtx();
     await app.request("/paid", { headers: { "PAYMENT-SIGNATURE": b64(v2Payment) } }, {}, ctx);
     await settleWithin(promises, 3000);
-    assert.equal(collector.records[0]?.payment?.payer, await hashPayer("seller-salt", PAYER));
+    assert.equal(collector.records[0]?.payment?.payer, await hashPayer(parseSalt(SALT)!, PAYER));
   } finally {
     await collector.close();
   }
 });
 
-for (const salt of ["", "   ", 5, null, {}] as unknown as string[]) {
+for (const salt of ["", "   ", 5, null, {}, "seller-salt"] as unknown as string[]) {
   test(`blank or non-string salt ${JSON.stringify(salt)}: no payer, one warning on first request`, async (t) => {
     const warn = t.mock.method(console, "warn", () => {});
     const collector = await startCollector("ok");
@@ -416,7 +421,7 @@ for (const salt of ["", "   ", 5, null, {}] as unknown as string[]) {
       await app.request("/paid", { headers: { "PAYMENT-SIGNATURE": b64(v2Payment) } }, {}, ctx);
       await settleWithin(promises, 3000);
       const salted = warn.mock.calls.filter(
-        (c) => c.arguments[0] === "op8x.analytics: salt must be a non-empty string, payer hashing disabled",
+        (c) => c.arguments[0] === SALT_INVALID,
       );
       assert.equal(salted.length, 1);
       assert.equal(collector.records.length, 2);
@@ -854,7 +859,7 @@ test("per-request analytics() instances warn once per isolate", async (t) => {
   const { ctx, promises } = fakeCtx();
   for (let i = 0; i < 100; i++) await app.request("/json", undefined, {}, ctx);
   await settleWithin(promises, 3000);
-  const salted = warn.mock.calls.filter((c) => String(c.arguments[0]).includes("salt must be"));
+  const salted = warn.mock.calls.filter((c) => String(c.arguments[0]).includes("must look like op8x_s_"));
   assert.equal(salted.length, 1);
   assert.equal(warn.mock.callCount(), 1);
 });
@@ -937,4 +942,237 @@ test("op8x-test: an invalid value never appears in the record or the log", async
   const text = String(lines[0]?.arguments[1]);
   assert.ok(!text.includes(BAD_NONCE));
   assert.ok(!text.includes("test_nonce"));
+});
+
+// Salt from the Worker environment, read on every request.
+const SALT_B = "op8x_s_" + Buffer.from(Array.from({ length: 32 }, (_, i) => 255 - i)).toString("base64url");
+const NO_FIELDS = { payer: undefined, payer_alg: undefined, payer_salt_id: undefined };
+
+async function expectedFields(salt: string, address: string) {
+  const bytes = parseSalt(salt)!;
+  return { payer: await hashPayer(bytes, address), payer_alg: "op8x.payer.v1", payer_salt_id: await saltId(bytes) };
+}
+
+function pick(p: AnalyticsRecord["payment"]) {
+  return { payer: p?.payer, payer_alg: p?.payer_alg, payer_salt_id: p?.payer_salt_id };
+}
+
+async function paidOnce(mw: MiddlewareHandler, env: Record<string, unknown>, n = 1) {
+  const app = buildApp(mw);
+  const { ctx, promises } = fakeCtx();
+  for (let i = 0; i < n; i++) {
+    await (await app.request("/paid", { headers: { "PAYMENT-SIGNATURE": b64(v2Payment) } }, env, ctx)).arrayBuffer();
+  }
+  await settleWithin(promises, 3000);
+}
+
+test("salt from c.env sets payer, payer_alg and payer_salt_id", async () => {
+  const collector = await startCollector("ok");
+  try {
+    await paidOnce(analytics({ endpoint: collector.url }), { OP8X_SALT: SALT });
+    assert.deepEqual(pick(collector.records[0]?.payment), await expectedFields(SALT, PAYER));
+  } finally {
+    await collector.close();
+  }
+});
+
+test("the salt option wins over c.env", async () => {
+  const collector = await startCollector("ok");
+  try {
+    await paidOnce(analytics({ endpoint: collector.url, salt: SALT }), { OP8X_SALT: SALT_B });
+    assert.deepEqual(pick(collector.records[0]?.payment), await expectedFields(SALT, PAYER));
+  } finally {
+    await collector.close();
+  }
+});
+
+test("an invalid salt option disables pseudonyms even when c.env holds a valid salt", async (t) => {
+  const warn = t.mock.method(console, "warn", () => {});
+  const collector = await startCollector("ok");
+  try {
+    await paidOnce(analytics({ endpoint: collector.url, salt: "op8x_s_nope" }), { OP8X_SALT: SALT });
+    assert.deepEqual(pick(collector.records[0]?.payment), NO_FIELDS);
+    assert.equal(warn.mock.calls.filter((c) => c.arguments[0] === SALT_INVALID).length, 1);
+  } finally {
+    await collector.close();
+  }
+});
+
+test("a salt changed in c.env applies to the next request", async () => {
+  const collector = await startCollector("ok");
+  try {
+    const app = buildApp(analytics({ endpoint: collector.url }));
+    const { ctx, promises } = fakeCtx();
+    const go = async (env: Record<string, unknown>) => {
+      await (await app.request("/paid", { headers: { "PAYMENT-SIGNATURE": b64(v2Payment) } }, env, ctx)).arrayBuffer();
+      await settleWithin(promises, 3000);
+    };
+    await go({ OP8X_SALT: SALT });
+    await go({ OP8X_SALT: SALT_B });
+    await go({});
+    assert.deepEqual(pick(collector.records[0]?.payment), await expectedFields(SALT, PAYER));
+    assert.deepEqual(pick(collector.records[1]?.payment), await expectedFields(SALT_B, PAYER));
+    assert.deepEqual(pick(collector.records[2]?.payment), NO_FIELDS);
+    assert.notEqual(collector.records[0]?.payment?.payer, collector.records[1]?.payment?.payer);
+  } finally {
+    await collector.close();
+  }
+});
+
+for (const bad of ["op8x_s_" + "A".repeat(42), "op8x_s_" + "A".repeat(42) + "B", "seller-salt", "", 5, { toString: () => SALT }]) {
+  test(`invalid env salt ${typeof bad === "string" ? JSON.stringify(bad) : typeof bad}: no pseudonym, exactly one warning, never the value`, async (t) => {
+    const warn = t.mock.method(console, "warn", () => {});
+    const collector = await startCollector("ok");
+    try {
+      await paidOnce(analytics({ endpoint: collector.url }), { OP8X_SALT: bad }, 3);
+      assert.equal(collector.records.length, 3);
+      for (const r of collector.records) assert.deepEqual(pick(r.payment), NO_FIELDS);
+      const texts = warn.mock.calls.map((c) => String(c.arguments[0]));
+      assert.equal(texts.filter((m) => m === SALT_INVALID).length, 1);
+      assert.ok(SALT_INVALID.startsWith("op8x.analytics: the salt (OP8X_SALT or the salt option) must look like op8x_s_"));
+      if (typeof bad === "string" && bad !== "") assert.ok(texts.every((m) => !m.includes(bad)));
+    } finally {
+      await collector.close();
+    }
+  });
+}
+
+test("no salt anywhere: no pseudonym fields and no warning", async (t) => {
+  const warn = t.mock.method(console, "warn", () => {});
+  const collector = await startCollector("ok");
+  try {
+    await paidOnce(analytics({ endpoint: collector.url }), {}, 2);
+    assert.equal(warn.mock.callCount(), 0);
+    for (const r of collector.records) assert.deepEqual(pick(r.payment), NO_FIELDS);
+  } finally {
+    await collector.close();
+  }
+});
+
+test("a throwing env getter fails open without a warning", async (t) => {
+  const warn = t.mock.method(console, "warn", () => {});
+  const collector = await startCollector("ok");
+  try {
+    const hostile = {
+      get OP8X_SALT(): string {
+        throw new Error("boom");
+      },
+    };
+    await paidOnce(analytics({ endpoint: collector.url }), hostile);
+    assert.equal(collector.records.length, 1);
+    assert.deepEqual(pick(collector.records[0]?.payment), NO_FIELDS);
+    assert.equal(warn.mock.callCount(), 0);
+  } finally {
+    await collector.close();
+  }
+});
+
+test("a hashing failure sends the event without any pseudonym field", async (t) => {
+  t.mock.method(crypto.subtle, "importKey", async () => {
+    throw new Error("import failed");
+  });
+  const collector = await startCollector("ok");
+  try {
+    await paidOnce(analytics({ endpoint: collector.url }), { OP8X_SALT: SALT });
+    assert.equal(collector.records.length, 1);
+    assert.equal(collector.records[0]?.payment?.decodable, true);
+    assert.deepEqual(pick(collector.records[0]?.payment), NO_FIELDS);
+  } finally {
+    await collector.close();
+  }
+});
+
+test("the key import only happens for payment events", async (t) => {
+  const imp = t.mock.method(crypto.subtle, "importKey");
+  const collector = await startCollector("ok");
+  try {
+    const app = buildApp(analytics({ endpoint: collector.url }));
+    const { ctx, promises } = fakeCtx();
+    await (await app.request("/json", undefined, { OP8X_SALT: SALT }, ctx)).arrayBuffer();
+    await (await app.request("/items/1", undefined, { OP8X_SALT: SALT }, ctx)).arrayBuffer();
+    await settleWithin(promises, 3000);
+    assert.equal(collector.records.length, 2);
+    assert.equal(imp.mock.callCount(), 0);
+  } finally {
+    await collector.close();
+  }
+});
+
+test("the buyer's response is identical with and without a salt (valid, invalid or failing to hash)", async (t) => {
+  t.mock.method(console, "warn", () => {});
+  const realImport = crypto.subtle.importKey.bind(crypto.subtle);
+  let failHash = false;
+  t.mock.method(crypto.subtle, "importKey", (...args: Parameters<typeof realImport>) => {
+    if (failHash) throw new Error("import failed");
+    return realImport(...args);
+  });
+  const collector = await startCollector("ok");
+  try {
+    const shots = [];
+    for (const [options, env, fail] of [
+      [{}, {}, false],
+      [{}, { OP8X_SALT: SALT }, false],
+      [{ salt: SALT }, {}, false],
+      [{}, { OP8X_SALT: "op8x_s_bad" }, false],
+      [{}, { OP8X_SALT: SALT }, true],
+    ] as [AnalyticsOptions, Record<string, unknown>, boolean][]) {
+      failHash = fail;
+      const app = buildApp(analytics({ endpoint: collector.url, ...options }));
+      const { ctx, promises } = fakeCtx();
+      const res = await app.request("/paid", { headers: { "PAYMENT-SIGNATURE": b64(v2Payment) } }, env, ctx);
+      shots.push(await snapshot(res));
+      await settleWithin(promises, 3000);
+    }
+    for (const s of shots.slice(1)) assert.deepEqual(s, shots[0]);
+  } finally {
+    await collector.close();
+  }
+});
+
+test("neither the log nor the sent body contains the salt", async (t) => {
+  const warn = t.mock.method(console, "warn", () => {});
+  const log = t.mock.method(console, "log", () => {});
+  const collector = await startCollector("ok");
+  try {
+    await paidOnce(analytics({ endpoint: collector.url, log: true }), { OP8X_SALT: SALT });
+    await paidOnce(analytics({ endpoint: collector.url, log: true }), { OP8X_SALT: "op8x_s_" + "Z".repeat(43) });
+    const logged = [...log.mock.calls, ...warn.mock.calls].map((c) => c.arguments.map(String).join(" ")).join("\n");
+    assert.ok(logged.includes("op8x.analytics"), "something was logged");
+    assert.ok(!/op8x_s_[A-Za-z0-9_-]{8}/.test(logged), "no salt-shaped text in the log");
+    assert.ok(!JSON.stringify(collector.requests.map((r) => r.body)).includes("op8x_s_"));
+    assert.ok(logged.includes("must look like op8x_s_"), "the invalid salt gave the fixed warning");
+    assert.ok(collector.requests.every((r) => !JSON.stringify(r.headers).includes("op8x_s_")));
+  } finally {
+    await collector.close();
+  }
+});
+
+interface VectorFile {
+  salts: { salt: string; salt_id: string; payers: { note: string; address: string; payer: string }[] }[];
+}
+const vectorFile = JSON.parse(readFileSync(new URL("../docs/payer-hash-vectors.json", import.meta.url), "utf8")) as VectorFile;
+
+test("every published vector address, as a payment, gives exactly the published pseudonym", async () => {
+  const collector = await startCollector("ok");
+  try {
+    for (const v of vectorFile.salts) {
+      assert.ok(v.payers.length >= 6);
+      for (const p of v.payers) {
+        const app = new Hono();
+        app.use("*", analytics({ endpoint: collector.url }));
+        app.get("/paid", (c) => c.json({ ok: true }, 200, { "PAYMENT-RESPONSE": b64({ ...v2Receipt, payer: p.address }) }));
+        const { ctx, promises } = fakeCtx();
+        await app.request("/paid", { headers: { "PAYMENT-SIGNATURE": b64(v2Payment) } }, { OP8X_SALT: v.salt }, ctx);
+        await settleWithin(promises, 3000);
+        const got = collector.records[collector.records.length - 1]?.payment;
+        assert.equal(got?.payer, p.payer, p.note);
+        assert.equal(got?.payer_alg, "op8x.payer.v1");
+        assert.equal(got?.payer_salt_id, v.salt_id, p.note);
+      }
+    }
+    const ids = new Set(collector.records.map((r) => r.payment?.payer_salt_id));
+    assert.deepEqual([...ids].sort(), vectorFile.salts.map((v) => v.salt_id).sort());
+  } finally {
+    await collector.close();
+  }
 });

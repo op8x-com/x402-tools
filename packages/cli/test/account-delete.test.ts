@@ -3,7 +3,9 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { TestContext } from "node:test";
+import { DELETE_USAGE } from "../src/account/delete.ts";
 import { generateKey, keyFingerprint } from "../src/account/keys.ts";
+import { newSalt } from "../src/account/salt.ts";
 import { accountPath, writeAccount } from "../src/account/store.ts";
 import type { AccountFile, ActiveAccount, PendingStepUp, WorkerEntry } from "../src/account/store.ts";
 import { exec as realExec } from "../src/account/system.ts";
@@ -100,6 +102,7 @@ async function setup(t: TestContext, o: SetupOptions = {}): Promise<Setup> {
     read_token: read,
     write_key: key,
     write_key_next: null,
+    salt: null,
     pending_step_up: null,
     deleted: null,
     workers: [...workers.map((w) => w.entry), ...(o.extraWorkers ?? [])],
@@ -145,7 +148,9 @@ function assertNoSecret(s: Setup, secrets: (string | null | undefined)[]): void 
   for (const v of secrets) if (typeof v === "string") assert.equal(all.includes(v), false, "a secret reached the output");
 }
 
-const deleteArgv = (w: KnownWorker) => ["secret", "delete", "OP8X_KEY", "--name", w.name, "--config", join(w.wrangler.dir, "wrangler.toml")];
+const deleteArgv = (w: KnownWorker, name = "OP8X_KEY") => ["secret", "delete", name, "--name", w.name, "--config", join(w.wrangler.dir, "wrangler.toml")];
+/** The server key, then the salt. */
+const deleteBoth = (w: KnownWorker) => [deleteArgv(w), deleteArgv(w, "OP8X_SALT")];
 
 const ALL_OK: [string, string][] = [
   ["code", "ok"],
@@ -175,9 +180,8 @@ test("delete with a TTY: step-up, POST delete {code}, secret delete per worker, 
   assert.equal(del.headers.authorization, `Bearer ${s.read}`);
   assert.equal(wranglerAtDelete, 0, "no secret delete before the account is deleted");
   for (const w of s.workers) {
-    assert.deepEqual(w.deletes(), [deleteArgv(w)]);
-    const call = w.wrangler.calls().find((c) => c.argv[1] === "delete")!;
-    assert.equal(call.stdin, "");
+    assert.deepEqual(w.deletes(), deleteBoth(w));
+    for (const call of w.wrangler.calls().filter((c) => c.argv[1] === "delete")) assert.equal(call.stdin, "");
   }
   assert.equal(s.file(), null);
   assert.equal(s.fake.tenant(s.tenant.name).deleted, true);
@@ -222,7 +226,7 @@ test("delete without a TTY: step_up_needed with the stored step, then --code-std
   assert.deepEqual(routes(s), ["delete"]);
   assert.equal(s.final().state, "deleted");
   assert.equal(s.file(), null);
-  for (const w of s.workers) assert.equal(w.deletes().length, 1);
+  for (const w of s.workers) assert.equal(w.deletes().length, 2);
   assertNoSecret(s, [s.read, s.key, s.fake.lastCode(s.tenant.name, "delete")]);
 });
 
@@ -427,7 +431,7 @@ test("deleted_partial: a failed secret delete leaves the remainder file; delete 
     { name: "api2", env: null, env_file: null, status: "failed" },
     { name: "api3", env: null, env_file: null, status: "failed" },
   ]);
-  assert.equal(final.agent_hint, "The account is deleted. Remove OP8X_KEY by hand from: api2, api3.");
+  assert.equal(final.agent_hint, "The account is deleted. Remove OP8X_KEY and OP8X_SALT by hand from: api2, api3.");
   const receipt = final.receipt as Line;
   assert.equal(receipt.tenant, s.tenant.name);
   assert.equal(s.workers[2]!.deletes().length, 0, "no wrangler start for an unreadable configuration");
@@ -439,6 +443,7 @@ test("deleted_partial: a failed secret delete leaves the remainder file; delete 
     read_token: null,
     write_key: null,
     write_key_next: null,
+    salt: null,
     pending_step_up: null,
     deleted: { action_id: receipt.action_id },
     workers: [s.workers[1]!.entry, s.workers[2]!.entry],
@@ -458,8 +463,9 @@ test("deleted_partial: a failed secret delete leaves the remainder file; delete 
   assert.equal(s.final().state, "deleted_partial");
   assert.deepEqual(s.final().receipt, { action_id: receipt.action_id, tenant: null, ended_at: null });
   assert.deepEqual((s.file() as AccountFile).workers, [s.workers[2]!.entry]);
-  assert.equal(s.workers[0]!.deletes().length, 1, "a removed worker is not touched again");
-  assert.equal(s.workers[1]!.deletes().length, 2);
+  assert.equal(s.workers[0]!.deletes().length, 2, "a removed worker is not touched again");
+  // The failed OP8X_KEY delete of the first run, then OP8X_KEY and OP8X_SALT.
+  assert.equal(s.workers[1]!.deletes().length, 3);
 
   s.workers[2]!.wrangler.file("wrangler.toml", 'name = "api3"\n');
   assert.equal(await s.remove("--code-stdin"), 0);
@@ -468,10 +474,10 @@ test("deleted_partial: a failed secret delete leaves the remainder file; delete 
   assert.deepEqual(s.final().receipt, { action_id: receipt.action_id, tenant: null, ended_at: null });
   assert.equal(s.final().agent_hint, `The account is deleted. Receipt: ${String(receipt.action_id)}.`);
   assert.equal(s.file(), null);
-  assert.deepEqual(s.workers[2]!.deletes(), [deleteArgv(s.workers[2]!)]);
+  assert.deepEqual(s.workers[2]!.deletes(), deleteBoth(s.workers[2]!));
 });
 
-test("delete removes only the OP8X_KEY line of an --env-file target; a file that is gone counts as removed", async (t) => {
+test("delete removes only the OP8X_KEY and OP8X_SALT lines of an --env-file target; a file that is gone counts as removed", async (t) => {
   const project = tempDir("op8x-node-");
   const path = join(project, "secrets.local");
   const gone = join(project, "gone.local");
@@ -487,14 +493,14 @@ test("delete removes only the OP8X_KEY line of an --env-file target; a file that
     key_fingerprint: keyFingerprint(key),
   });
   const s = await setup(t, { workers: 1, tty: true, extraWorkers: [entry(path), entry(gone)] });
-  const content = `PORT=8787\r\nOP8X_KEY=${s.key}\r\n# note ä\r\nexport OP8X_KEY = old\nLAST=1`;
+  const content = `PORT=8787\r\nOP8X_KEY=${s.key}\r\nOP8X_SALT=${newSalt()}\r\n# note ä\r\nexport OP8X_KEY = old\nLAST=1`;
   writeFileSync(path, Buffer.from(content, "latin1"));
   assert.equal(await s.remove(), 0);
   assert.equal(s.final().state, "deleted");
   assert.deepEqual(readFileSync(path), Buffer.from("PORT=8787\r\n# note ä\r\nLAST=1", "latin1"));
   assert.equal(existsSync(gone), false);
   assert.equal(s.file(), null);
-  assert.equal(s.workers[0]!.deletes().length, 1);
+  assert.equal(s.workers[0]!.deletes().length, 2);
 });
 
 test("delete: an env file that cannot be read stays in the remainder file", async (t) => {
@@ -513,7 +519,7 @@ test("delete: an env file that cannot be read stays in the remainder file", asyn
   assert.equal(await s.remove(), 1);
   assert.equal(s.final().state, "deleted_partial");
   assert.deepEqual(s.final().workers, [{ name: null, env: null, env_file: project, status: "failed" }]);
-  assert.equal(s.final().agent_hint, `The account is deleted. Remove OP8X_KEY by hand from: ${project}.`);
+  assert.equal(s.final().agent_hint, `The account is deleted. Remove OP8X_KEY and OP8X_SALT by hand from: ${project}.`);
   assert.deepEqual((s.file() as AccountFile).workers, [entry]);
 });
 
@@ -536,6 +542,7 @@ test("rotate on the remainder file: not_logged_in, nothing sent", async (t) => {
     read_token: null,
     write_key: null,
     write_key_next: null,
+    salt: null,
     pending_step_up: null,
     deleted: { action_id: "0b4e2f1a-1111-4222-8333-444455556666" },
     workers: [],
@@ -620,7 +627,7 @@ test("each removed worker leaves the remainder file at once: a run that breaks o
   assert.equal(s.runRequests().length, 0);
   assert.equal(s.final().state, "deleted");
   assert.equal(s.file(), null);
-  assert.equal(s.workers[0]!.deletes().length, 1, "a removed worker is not touched again");
+  assert.equal(s.workers[0]!.deletes().length, 2, "a removed worker is not touched again");
 });
 
 test("remainder run: a secret removed by hand counts as removed (secret list, read only); present or unknown stays", async (t) => {
@@ -634,6 +641,7 @@ test("remainder run: a secret removed by hand counts as removed (secret list, re
     read_token: null,
     write_key: null,
     write_key_next: null,
+    salt: null,
     pending_step_up: null,
     deleted: { action_id: "0b4e2f1a-1111-4222-8333-444455556666" },
     workers: [w.entry],
@@ -728,4 +736,63 @@ test("delete leaves no temp file next to the env file", async (t) => {
   assert.equal(await s.remove(), 0);
   assert.equal(readFileSync(path, "utf8"), "A=1\n");
   assert.deepEqual(readdirSync(project), ["secrets.local"]);
+});
+
+// --- the salt -----------------------------------------------------------------------------------
+
+test("delete with a salt: OP8X_SALT goes from every worker after OP8X_KEY; the salt shows nowhere", async (t) => {
+  const s = await setup(t, { tty: true, file: { salt: newSalt() } });
+  assert.equal(await s.remove(), 0);
+  assert.equal(s.final().state, "deleted");
+  for (const w of s.workers) {
+    assert.deepEqual(w.deletes(), deleteBoth(w));
+    for (const c of w.wrangler.calls()) {
+      assert.equal(JSON.stringify(c.argv).includes("op8x_s_"), false);
+      assert.equal(c.stdin.includes("op8x_s_"), false);
+    }
+  }
+  assert.equal(s.file(), null);
+  assert.equal(s.deps.stdout().includes("op8x_s_"), false);
+  assert.equal(s.deps.stderr().includes("op8x_s_"), false);
+  for (const r of s.fake.requests) assert.equal(JSON.stringify(r).includes("op8x_s_"), false);
+});
+
+test("a worker set up without a salt: a failed OP8X_SALT delete with OP8X_SALT absent from secret list counts as removed", async (t) => {
+  const s = await setup(t, { workers: 1, tty: true });
+  const w = s.workers[0]!;
+  w.wrangler.answer("delete:OP8X_SALT", { exit: 1 });
+  w.wrangler.answer("list", { exit: 0, stdout: secretList(["OTHER_SECRET"]) });
+  assert.equal(await s.remove(), 0);
+  assert.equal(s.final().state, "deleted");
+  const list = w.wrangler.calls().filter((c) => c.argv[1] === "list");
+  assert.equal(list.length, 1);
+  assert.deepEqual(list[0]!.argv, ["secret", "list", "--name", "api1", "--config", join(w.wrangler.dir, "wrangler.toml"), "--format", "json"]);
+  assert.equal(s.file(), null);
+});
+
+test("OP8X_SALT that cannot be removed: deleted_partial names the worker; the next run retries both", async (t) => {
+  const s = await setup(t, { workers: 1, tty: true, file: { salt: newSalt() } });
+  const w = s.workers[0]!;
+  w.wrangler.answer("delete:OP8X_SALT", { exit: 1 });
+  w.wrangler.answer("list", { exit: 0, stdout: secretList(["OP8X_SALT"]) });
+  assert.equal(await s.remove(), 1);
+  const final = s.final();
+  assert.equal(final.state, "deleted_partial");
+  assert.equal(final.agent_hint, "The account is deleted. Remove OP8X_KEY and OP8X_SALT by hand from: api1.");
+  assert.deepEqual(final.workers, [{ name: "api1", env: null, env_file: null, status: "failed" }]);
+  const left = s.file() as AccountFile;
+  assert.deepEqual(left.workers, [w.entry]);
+  assert.equal(left.salt, null, "the remainder file holds no salt");
+
+  // The human removes it by hand; the next run finds OP8X_KEY gone too (already removed).
+  w.wrangler.answer("delete", { exit: 1 });
+  w.wrangler.answer("list", { exit: 0, stdout: secretList([]) });
+  assert.equal(await s.remove(), 0);
+  assert.equal(s.final().state, "deleted");
+  assert.equal(s.file(), null);
+  assert.equal(s.deps.stdout().includes("op8x_s_"), false);
+});
+
+test("the help of delete names both secrets it removes", () => {
+  assert.ok(DELETE_USAGE.replace(/\s+/g, " ").includes("removes OP8X_KEY and OP8X_SALT from every worker"));
 });

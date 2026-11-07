@@ -309,3 +309,30 @@ test("neutralize: control, format and separator characters as escapes, everythin
   assert.equal(neutralize(`plain "text" \u00e9 \u{1F600}  two`), `plain "text" \u00e9 \u{1F600}  two`);
   assert.equal(neutralize(printEscaped("a\u001b \u00a0b")), printEscaped("a\u001b \u00a0b"));
 });
+
+test("printEscaped reads only the code points it can print, not the whole value", () => {
+  const original = String.prototype[Symbol.iterator];
+  let steps = 0;
+  String.prototype[Symbol.iterator] = function (this: string) {
+    const it = original.call(this);
+    return {
+      next: () => {
+        if (this.length > 1000) steps += 1;
+        return it.next();
+      },
+      [Symbol.iterator]() {
+        return this;
+      },
+    } as StringIterator<string>;
+  };
+  let printed: string;
+  try {
+    printed = printEscaped("a".repeat(100_000), 10);
+  } finally {
+    String.prototype[Symbol.iterator] = original;
+  }
+  assert.equal(printed, `"${"a".repeat(10)}\u2026"`);
+  assert.ok(steps <= 12, `read ${steps} code points`);
+  assert.equal(printEscaped("a".repeat(10), 10), `"${"a".repeat(10)}"`);
+  assert.equal(printEscaped("\u{1F600}".repeat(11), 10), `"${String.raw`\u{1F600}`}\u2026"`);
+});

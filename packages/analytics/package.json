@@ -1,6 +1,6 @@
 {
   "name": "@op8x/analytics",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Fail-open request analytics for x402 sellers: records 402 challenges, payments and receipts as metadata.",
   "license": "MIT",
   "type": "module",

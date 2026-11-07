@@ -9,9 +9,9 @@ import type { AccountFile, ActiveAccount, WorkerEntry } from "./store.ts";
 // Steps shared by the account commands: reading the op8x file, the signed-in checks, and the
 // resumption of write_key_next (init, rotate).
 
-/** The secrets of an op8x file, for the output guard. */
+/** The secrets of an op8x file (R, K, the next K, the salt), for the output guard. */
 export function fileSecrets(file: AccountFile | null): (string | null)[] {
-  return file === null ? [] : [file.read_token, file.write_key, file.write_key_next];
+  return file === null ? [] : [file.read_token, file.write_key, file.write_key_next, file.salt];
 }
 
 type Loaded = { ok: true; file: AccountFile | null } | { ok: false; state: FinalState };

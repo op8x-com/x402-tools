@@ -6,6 +6,7 @@ import { test } from "node:test";
 import type { TestContext } from "node:test";
 import { createApi } from "../src/account/api.ts";
 import { generateKey, keyFingerprint, keyHash } from "../src/account/keys.ts";
+import { newSalt } from "../src/account/salt.ts";
 import { accountPath, writeAccount } from "../src/account/store.ts";
 import type { ActiveAccount, PendingStepUp, WorkerEntry } from "../src/account/store.ts";
 import { exec as realExec, readHiddenFrom } from "../src/account/system.ts";
@@ -128,6 +129,7 @@ async function setup(t: TestContext, o: SetupOptions = {}): Promise<Setup> {
     read_token: read,
     write_key: localKey,
     write_key_next: null,
+    salt: null,
     pending_step_up: null,
     deleted: null,
     workers: entries,
@@ -487,6 +489,56 @@ test("rotate rewrites the OP8X_KEY line of an --env-file target and keeps the ot
   assert.deepEqual(s.final().workers, [{ name: null, env: null, env_file: path, status: "no_url" }]);
   assert.equal(s.file().workers[0]!.key_fingerprint, keyFingerprint(key));
   assertNoSecret(s, [key]);
+});
+
+// --- the salt stays ---------------------------------------------------------------------------------
+
+test("rotate leaves the salt as it is: same salt in the op8x file, only secret put OP8X_KEY, no salt anywhere", async (t) => {
+  const salt = newSalt();
+  const s = await setup(t, { file: { salt } });
+  assert.equal(await s.rotate(), 0);
+  assert.equal(s.final().state, "key_rotated");
+  assert.equal(s.file().salt, salt);
+  for (const w of s.workers) {
+    const secretCalls = w.wrangler.calls().filter((c) => c.argv[0] === "secret");
+    assert.deepEqual(
+      secretCalls.map((c) => c.argv.slice(0, 3)),
+      [["secret", "put", "OP8X_KEY"]],
+    );
+    for (const c of w.wrangler.calls()) {
+      assert.equal(c.stdin.includes("op8x_s_"), false);
+      assert.equal(JSON.stringify(c.argv).includes("op8x_s_"), false);
+    }
+  }
+  assert.equal(s.deps.stdout().includes("op8x_s_"), false);
+  assert.equal(s.deps.stderr().includes("op8x_s_"), false);
+});
+
+test("rotate rewrites only the OP8X_KEY line of an env file: the OP8X_SALT line stays", async (t) => {
+  const gitDir = tempDir("op8x-gitbin-");
+  writeFileSync(join(gitDir, process.platform === "win32" ? "git.exe" : "git"), "");
+  const project = tempDir("op8x-node-");
+  const path = join(project, "secrets.local");
+  const salt = newSalt();
+  const s = await setup(t, { workers: 0, file: { salt }, deps: { exec: recordingExec(gitExec()), platform: process.platform } });
+  s.deps.env = { ...s.deps.env, PATH: gitDir };
+  writeFileSync(path, `OP8X_KEY=${s.oldKey}\nOP8X_SALT=${salt}\n`);
+  const entry: WorkerEntry = {
+    dir: project,
+    name: null,
+    env: null,
+    env_file: path,
+    url: null,
+    deployed_at: "2026-11-01T10:00:00Z",
+    verified_at: null,
+    key_fingerprint: keyFingerprint(s.oldKey),
+  };
+  await writeAccount(s.deps, { ...s.file(), workers: [entry] });
+  assert.equal(await s.rotate(), 0);
+  const key = s.file().write_key!;
+  assert.equal(readFileSync(path, "utf8"), `OP8X_KEY=${key}\nOP8X_SALT=${salt}\n`);
+  assert.equal(s.file().salt, salt);
+  assert.equal(s.deps.stdout().includes("op8x_s_"), false);
 });
 
 // --- rotate --now -----------------------------------------------------------------------------------

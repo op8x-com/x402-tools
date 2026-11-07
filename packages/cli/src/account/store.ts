@@ -3,6 +3,7 @@ import { chmod, mkdir, open, readFile, rename as fsRename, unlink, writeFile } f
 import { basename, dirname, join, win32 } from "node:path";
 import type { Deps } from "../cli.ts";
 import { isKey } from "./keys.ts";
+import { isSalt } from "./salt.ts";
 
 // The op8x file (account.json, schema op8x.account/1) and the one routine that writes secret files.
 // Error messages never repeat file content: the file holds keys.
@@ -53,12 +54,17 @@ export interface ActiveAccount {
   read_token: string;
   write_key: string | null;
   write_key_next: string | null;
+  /**
+   * The account's salt (OP8X_SALT in every worker), or null until init makes one. A file of an
+   * older version has no salt field and reads as null.
+   */
+  salt: string | null;
   pending_step_up: PendingStepUp | null;
   deleted: null;
   workers: WorkerEntry[];
 }
 
-/** What is left after deleted_partial: the account is gone, these workers still hold OP8X_KEY. */
+/** What is left after deleted_partial: the account is gone, these workers still hold OP8X_KEY and OP8X_SALT. */
 export interface DeletedRemainder {
   schema: typeof ACCOUNT_SCHEMA;
   collector: string;
@@ -67,6 +73,7 @@ export interface DeletedRemainder {
   read_token: null;
   write_key: null;
   write_key_next: null;
+  salt: null;
   pending_step_up: null;
   deleted: { action_id: string };
   workers: WorkerEntry[];
@@ -100,10 +107,12 @@ function invalid(what: string): never {
   throw new StoreError("schema_invalid", `The op8x file is not a valid ${ACCOUNT_SCHEMA} file (${what}).`);
 }
 
-function object(v: unknown, fields: string[], what: string): Obj {
+/** `v` must hold exactly `fields`, plus any of `optional`. */
+function object(v: unknown, fields: string[], what: string, optional: string[] = []): Obj {
   if (typeof v !== "object" || v === null || Array.isArray(v)) invalid(what);
   const keys = Object.keys(v);
-  if (keys.length !== fields.length || !fields.every((f) => Object.hasOwn(v, f))) invalid(`${what} fields`);
+  const extra = optional.filter((f) => Object.hasOwn(v, f)).length;
+  if (keys.length !== fields.length + extra || !fields.every((f) => Object.hasOwn(v, f))) invalid(`${what} fields`);
   return v as Obj;
 }
 
@@ -168,7 +177,9 @@ export function parseAccount(text: string): AccountFile {
   } catch {
     invalid("not JSON");
   }
-  const a = object(v, ACCOUNT_FIELDS, "top level");
+  // salt is optional: files of older versions have none.
+  const a = object(v, ACCOUNT_FIELDS, "top level", ["salt"]);
+  if (!Object.hasOwn(a, "salt")) a.salt = null;
   if (a.schema !== ACCOUNT_SCHEMA) invalid("schema");
   if (!isHttpUrl(a.collector)) invalid("collector");
   checkWorkers(a.workers);
@@ -178,11 +189,12 @@ export function parseAccount(text: string): AccountFile {
     if (!isKey(a.read_token, "r")) invalid("read_token");
     if (!orNull((k) => isKey(k, "w"))(a.write_key)) invalid("write_key");
     if (!orNull((k) => isKey(k, "w"))(a.write_key_next)) invalid("write_key_next");
+    if (!orNull(isSalt)(a.salt)) invalid("salt");
     checkPending(a.pending_step_up);
   } else {
     const d = object(a.deleted, ["action_id"], "deleted");
     if (!isString(d.action_id)) invalid("deleted.action_id");
-    for (const f of ["account", "contact_hint", "read_token", "write_key", "write_key_next", "pending_step_up"]) {
+    for (const f of ["account", "contact_hint", "read_token", "write_key", "write_key_next", "salt", "pending_step_up"]) {
       if (a[f] !== null) invalid(`${f} after deletion`);
     }
   }

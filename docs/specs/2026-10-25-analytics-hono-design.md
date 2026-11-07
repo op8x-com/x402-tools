@@ -80,7 +80,7 @@ interface AnalyticsOptions {
   endpoint?: string;   // https URL (http allowed only for localhost/127.0.0.1), no username or password; omitted = no network sends
   key?: string;        // write key; see the write-key document
   log?: boolean;       // default false; one console.log line per record
-  salt?: string;       // enables payer hashing; omitted = no payer field at all
+  salt?: string;       // op8x salt (op8x_s_ + 43 base64url chars); wins over OP8X_SALT in c.env; no salt = no pseudonym fields
   timeoutMs?: number;  // default 2000, clamped to 100..10000
   chainCheck?: boolean; // default false; true adds receipt.transaction for an on-chain settlement check
 }
@@ -93,7 +93,7 @@ Invalid options never throw. Warnings, all prefixed `op8x.analytics:`:
 | Neither `endpoint` nor `log: true` | `no endpoint and log disabled, nothing is recorded` | On a request; once per isolate. The middleware then does no work at all. |
 | Invalid `endpoint` (unparsable, wrong scheme, username or password in the URL), `log` not `true` | `invalid endpoint, sending disabled` | On a request; once per isolate. No work at all, as above. |
 | Invalid `endpoint`, `log: true` | `invalid endpoint, sending disabled` | From the transport on the first record of each `analytics()` instance, rate-limited to one per 60 s per isolate. Records are still logged. |
-| `salt` set but not a string with non-whitespace content | `salt must be a non-empty string, payer hashing disabled` | On the first recorded request of the instance, once per isolate. Never emitted while the middleware is idle (rows 1 and 2). |
+| `salt` option or `OP8X_SALT` set but not a valid op8x salt | `the salt (OP8X_SALT or the salt option) must look like op8x_s_… (32 random bytes); payer pseudonyms disabled` (never contains the value) | On the first recorded request of the instance, once per isolate. Never emitted while the middleware is idle (rows 1 and 2). |
 | Setting up the middleware throws | `setup failed, analytics disabled` | When `analytics()` is called, once per isolate. Requests then pass through untouched. |
 | Send fails (network, timeout, non-2xx) | `send failed (network)`, `send failed (timeout)`, `send failed (status <code>)` | At most one per 60 s per isolate per kind (network, timeout, status), so all non-2xx codes share one budget; the line names the status that triggered it (see Transport). |
 | Matched routes unreadable (second hono copy) | `route unavailable (duplicate hono copy?)` | On a request; once per isolate. The record gets route `""`. |
@@ -142,7 +142,9 @@ interface PaymentInfo {
   network?: string;
   amount?: string;            // v2 accepted.amount
   asset?: string;
-  payer?: string;             // hex HMAC-SHA-256(salt, trimmed lowercase address), first 32 hex chars; only with salt
+  payer?: string;             // first 32 hex chars of HMAC-SHA-256 keyed with the 32 decoded salt bytes over "op8x.payer.v1", 0x00 and the normalized address; only with a valid salt
+  payer_alg?: string;         // "op8x.payer.v1"; always with payer
+  payer_salt_id?: string;     // 8 hex chars identifying the salt; always with payer
 }
 
 interface ReceiptInfo {
@@ -166,7 +168,7 @@ Rules for `type`:
 | no | 402 | `challenge.issued` |
 | no | other | `request.unpaid` |
 
-The payer address comes from the receipt's `payer`, falling back to `payload.authorization.from` in the payment payload. It is trimmed and lowercased (by the caller in `record.ts` and again inside `hashPayer`, so direct callers of the exported `hashPayer` get the same result), hashed before it leaves `src/hash.ts`, and only when `salt` is set; the receipt's `payer` is used even when the payment header is undecodable.
+The payer address comes from the receipt's `payer`, falling back to `payload.authorization.from` in the payment payload. It is passed on unchanged and normalized only inside `hashPayer`: ASCII whitespace (space, tab, LF, CR, FF, VT) is stripped at both ends, and the result is lowercased only when it is an EVM address (`0x` plus 40 hex digits); other addresses, such as Solana, keep their case. It is hashed before it leaves `src/hash.ts`, and only when a valid salt is available (the `salt` option, else `OP8X_SALT` from the Worker environment, read per request); the receipt's `payer` is used even when the payment header is undecodable.
 
 Never read or recorded: `cf-connecting-ip`, `x-forwarded-for`, `x-real-ip`, any IP source; the URL path and query; cookies and `authorization`; the `payload` part of payment headers except `authorization.from` for hashing; the receipt's `transaction` unless `chainCheck` is true (only `receipt.hasTransaction` is derived from it); response bodies other than the 402 challenge, and of that only the fields above.
 

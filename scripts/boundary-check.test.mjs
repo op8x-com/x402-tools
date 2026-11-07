@@ -205,3 +205,100 @@ test("a path rule still applies to a listed entry that cannot be read", () => {
   assert.equal(r.status, 1, r.stderr);
   assert.match(r.stderr, /docs\/private\/a\.md: path reserved for the private repository \(#1\)/);
 });
+
+// --- scoped terms --------------------------------------------------------------------------------
+
+const scopedRules = parseRules(`
+plain
+in:packages/ secret plan
+in:docs/a.md draft
+path:private/
+`);
+
+test("parseRules reads in:<prefix> <term> lines as scoped terms and leaves other rules alone", () => {
+  assert.deepEqual(scopedRules.terms, ["plain"]);
+  assert.deepEqual(scopedRules.paths, ["private/"]);
+  assert.deepEqual(scopedRules.scoped, [
+    { prefix: "packages/", term: "secret plan" },
+    { prefix: "docs/a.md", term: "draft" },
+  ]);
+  assert.deepEqual(parseRules("in:packages/ x\n").terms, []);
+  assert.deepEqual(rules.scoped, []);
+});
+
+test("a scoped term matches only in files whose path starts with its prefix, on the same word boundaries", () => {
+  const files = [
+    { path: "packages/cli/a.ts", content: "ok\nthe Secret\nPlan\nsecretplan\n(secret plan)\n" },
+    { path: "apps/b.ts", content: "secret plan\n" },
+    { path: "docs/a.md", content: "a draft\n" },
+    { path: "docs/b.md", content: "a draft\n" },
+    { path: "x/packages/c.ts", content: "secret plan\n" },
+  ];
+  assert.deepEqual(scanFiles(files, scopedRules), [
+    { path: "packages/cli/a.ts", line: 2, rule: 0, kind: "scoped" },
+    { path: "packages/cli/a.ts", line: 5, rule: 0, kind: "scoped" },
+    { path: "docs/a.md", line: 1, rule: 1, kind: "scoped" },
+  ]);
+});
+
+test("plain terms and path rules keep working next to scoped terms", () => {
+  const files = [
+    { path: "apps/b.ts", content: "a plain word\n" },
+    { path: "private/x.ts", content: "" },
+  ];
+  assert.deepEqual(scanFiles(files, scopedRules), [
+    { path: "apps/b.ts", line: 1, rule: 0, kind: "term" },
+    { path: "private/x.ts", line: 0, rule: 0, kind: "path" },
+  ]);
+});
+
+test("formatFinding names a scoped term and its prefix locally and only its number when redacted", () => {
+  const finding = { path: "packages/a.ts", line: 3, rule: 0, kind: "scoped" };
+  assert.equal(formatFinding(finding, scopedRules, false), 'packages/a.ts:3: internal term "secret plan" (in packages/)');
+  assert.equal(formatFinding(finding, scopedRules, true), "packages/a.ts:3: internal term in:#1");
+});
+
+test("a malformed in: line is a configuration error that does not echo the rule", () => {
+  for (const text of ["in:\n", "in:packages/\n", "in: term\n", "in:packages/   \n", "ok\nin:packages/\n"]) {
+    assert.throws(() => parseRules(text), (err) => err instanceof Error && /malformed rule on line \d+/i.test(err.message) && !err.message.includes("packages"), JSON.stringify(text));
+  }
+});
+
+test("main exits 2 on a malformed in: line", () => {
+  const r = runCheck(["README.md"], undefined, { rulesText: "in:packages/\n" });
+  assert.equal(r.status, 2, r.stderr);
+  assert.match(r.stderr, /malformed rule on line 1/i);
+});
+
+test("main reports a scoped term inside its prefix and ignores it outside", () => {
+  const inside = runCheck(["README.md", "packages/a.md"], undefined, { rulesText: "in:packages/ hello\n" });
+  assert.equal(inside.status, 1, inside.stderr);
+  assert.match(inside.stderr, /packages\/a\.md:1: internal term "hello" \(in packages\/\)/);
+  const outside = runCheck(["README.md", "docs/a.md"], undefined, { rulesText: "in:packages/ hello\n" });
+  assert.equal(outside.status, 0, outside.stderr);
+});
+
+test("in: is detected case-insensitively", () => {
+  for (const kw of ["IN:", "In:", "iN:"]) {
+    assert.deepEqual(parseRules(`${kw}packages/ Hello
+`).scoped, [{ prefix: "packages/", term: "hello" }], kw);
+    assert.deepEqual(parseRules(`${kw}packages/ Hello
+`).terms, [], kw);
+  }
+});
+
+test("an in: prefix that starts with ./, / or a quote, or has a backslash, is a configuration error naming only the line", () => {
+  for (const prefix of ["./packages/", "/packages/", "\\packages\\", "packages\\sub/", '"packages/"', "'packages/'", "`packages/`"]) {
+    const text = `ok
+in:${prefix} term
+`;
+    assert.throws(() => parseRules(text), (err) => err instanceof Error && /malformed rule on line 2/i.test(err.message) && !err.message.includes("packages") && !err.message.includes("term"), prefix);
+  }
+});
+
+test("main exits 2 on an in: prefix with ./ and does not echo it", () => {
+  const r = runCheck(["README.md"], undefined, { rulesText: "in:./secretdir/ hello\n" });
+  assert.equal(r.status, 2, r.stderr);
+  assert.match(r.stderr, /malformed rule on line 1/i);
+  assert.equal(r.stderr.includes("secretdir"), false);
+});

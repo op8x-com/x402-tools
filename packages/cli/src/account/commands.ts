@@ -8,12 +8,14 @@ import { collectorBase, collectorMismatch, createApi } from "./api.ts";
 import type { Api } from "./api.ts";
 import { fileSecrets, loadFile, resumeNextKey, settleReplacedNext, settledNext, signedIn, storeState, workerName, writeSlot } from "./common.ts";
 import type { Save } from "./common.ts";
-import { envFileAllowed, isoNow, upsertWorker, verifyWorker, workerLine, writeEnvKey } from "./connect.ts";
+import { EnvFileFormatError, envFileAllowed, isoNow, upsertWorker, verifyWorker, workerLine, writeEnvKey } from "./connect.ts";
 import { deviceKeys, deviceLogin } from "./device.ts";
 import type { DeviceFailure, DeviceKeys } from "./device.ts";
 import { keyFingerprint } from "./keys.ts";
-import { createOutput, finalLine } from "./output.ts";
+import { createOutput, finalLine, jsonStrings, oneLineJson } from "./output.ts";
+import { DOCS_BASE, renderReportView } from "./report-view.ts";
 import { ROTATE_USAGE, rotate } from "./rotate.ts";
+import { newSalt } from "./salt.ts";
 import { DELETE_USAGE, deleteCommand } from "./delete.ts";
 import type { AccountCommand, FinalState, Output } from "./output.ts";
 import { ACCOUNT_SCHEMA, accountPath, deleteAccount, parseAccount, writeAccount } from "./store.ts";
@@ -29,8 +31,11 @@ interface CommandSpec {
   options: ParseArgsOptionsConfig;
   /** Positionals after the command word (only import-key takes one). */
   positionals: number;
-  /** False if a value breaks a pattern, an exclusion or a condition of the options table. */
-  valid: (values: Values) => boolean;
+  /**
+   * False if a value breaks a pattern, an exclusion or a condition of the options table. `names`
+   * lists every option as given, repeats included.
+   */
+  valid: (values: Values, names: string[]) => boolean;
   run: (values: Values, deps: Deps, args: string[]) => Promise<number>;
 }
 
@@ -63,7 +68,7 @@ Options:
   --env <name>         the wrangler environment to set up
   --name <worker>      the worker name, in place of the name in the wrangler configuration
   --url <url>          an https address the op8x module handles, for the test request
-  --env-file <path>    write the server key to this git-ignored file instead of wrangler
+  --env-file <path>    write the server key and the salt to this git-ignored file instead of wrangler
   --json               print JSON Lines
 `;
 
@@ -85,21 +90,23 @@ Options:
 
 const IMPORT_USAGE = `Usage: op8x import-key <path> [--json]
 
-Takes the server key from the op8x file of your other computer, after checking that it is the
-account's current key.
+Takes the server key and the salt from the op8x file of your other computer, after checking
+that the key is the account's current key.
 
 Options:
   --json               print JSON Lines
 `;
 
-const REPORT_USAGE = `Usage: op8x report [--week | --month] [--json]
+const REPORT_USAGE = `Usage: op8x report [--days <n> | --week | --month] [--json]
 
-The numbers of your op8x account. Not available in this version yet.
+The numbers of your op8x account for the last 7 UTC days (today included), or the period you pick.
+Definitions: ${DOCS_BASE}/metrics/
 
 Options:
+  --days <n>           the last n days, 1 to 30
   --week               the last 7 days
   --month              the last 30 days
-  --json               print JSON Lines
+  --json               print the op8x.metrics/1 document as op8x sends it (an error as one JSON line)
 `;
 
 const JSON_ONLY: ParseArgsOptionsConfig = { json: { type: "boolean" } };
@@ -162,11 +169,11 @@ const COMMANDS: Record<AccountCommand, CommandSpec> = {
   },
   report: {
     usage: REPORT_USAGE,
-    options: { json: { type: "boolean" }, week: { type: "boolean" }, month: { type: "boolean" } },
+    options: { json: { type: "boolean" }, days: { type: "string" }, week: { type: "boolean" }, month: { type: "boolean" } },
     positionals: 0,
-    // --week and --month not both.
-    valid: (v) => !(v.week === true && v.month === true),
-    run: (v, deps) => report(v.json === true, deps),
+    // At most one of --days, --week and --month, each once; --days 1..30 in digits.
+    valid: (v, names) => names.filter((n) => n === "days" || n === "week" || n === "month").length <= 1 && (v.days === undefined || reportDays(v.days) !== null),
+    run: (v, deps) => report(v.json === true, deps, v.week === true ? 7 : v.month === true ? 30 : (reportDays(v.days) ?? 7)),
   },
 };
 
@@ -183,14 +190,17 @@ export async function runAccount(command: AccountCommand, argv: string[], io: Io
   const spec = COMMANDS[command];
   let values: Values;
   let positionals: string[];
+  let names: string[];
   try {
-    ({ values, positionals } = parseArgs({ args: argv, strict: true, allowPositionals: true, options: spec.options }));
+    const parsed = parseArgs({ args: argv, strict: true, allowPositionals: true, options: spec.options, tokens: true });
+    ({ values, positionals } = parsed);
+    names = parsed.tokens.flatMap((t) => (t.kind === "option" ? [t.name] : []));
   } catch {
     // The parser message names the rejected input, so it is not shown.
     return usageError(command, io, argv.includes("--json"));
   }
   const json = values.json === true;
-  if (positionals.length !== 1 + spec.positionals || !spec.valid(values)) return usageError(command, io, json);
+  if (positionals.length !== 1 + spec.positionals || !spec.valid(values, names)) return usageError(command, io, json);
   if (!deps) {
     io.out(json ? finalLine(command, "internal_error", 2) : "op8x stopped because of an internal error. Please report this.\n");
     return 2;
@@ -233,13 +243,18 @@ type Place =
  * and write_sha256), the op8x file is written right after granted and before wrangler; server_key
  * ignored ends with server_key_missing (only a key the collector accepted is ever used). On a
  * signed-in computer only key and test: write_key_next is settled first, then K must be the
- * account's current key. Step key puts K (wrangler secret put, or the line OP8X_KEY=… in the
+ * account's current key. Step key takes the account's salt from the op8x file (an op8x file
+ * without one is read again, in case another init made one meanwhile; else it gets a new salt,
+ * saved before anything is put), then puts K and the salt (one
+ * wrangler secret bulk with both on stdin, or the lines OP8X_KEY=… and OP8X_SALT=… in the
  * --env-file); step test sends one test request with a nonce and waits for the collector to see it
  * (connected, whose hint names the account's address so the human can check it is theirs).
+ * server_key_missing ends the run before a salt is made.
  */
 async function init(json: boolean, deps: Deps, o: InitOptions): Promise<number> {
   let keys: DeviceKeys | null = null;
   let held: AccountFile | null = null;
+  let madeSalt: string | null = null;
   const loaded = await loadFile(deps);
   if (loaded.ok) held = loaded.file;
   const signed = held !== null && held.deleted === null ? held : null;
@@ -250,7 +265,7 @@ async function init(json: boolean, deps: Deps, o: InitOptions): Promise<number> 
     json,
     deps,
     steps,
-    secrets: () => [keys?.device, keys?.read, keys?.write, ...fileSecrets(held)],
+    secrets: () => [keys?.device, keys?.read, keys?.write, madeSalt, ...fileSecrets(held)],
   });
   const stopped = () => out.final("internal_error");
 
@@ -307,6 +322,7 @@ async function init(json: boolean, deps: Deps, o: InitOptions): Promise<number> 
       read_token: keys.read,
       write_key: accepted ? keys.write : null,
       write_key_next: null,
+      salt: null,
       pending_step_up: null,
       deleted: null,
       workers: [],
@@ -339,13 +355,40 @@ async function init(json: boolean, deps: Deps, o: InitOptions): Promise<number> 
     }
   }
 
-  // Step key: K into the worker.
+  // Step key: K and the account's salt into the worker. A new salt is saved first, so a failed
+  // put leaves it in the op8x file and every later init puts the same one.
   const entry: WorkerEntry =
     place.kind === "env_file"
       ? { dir: dirname(place.path), name: null, env: null, env_file: place.path, url: o.url ?? null, deployed_at: "", verified_at: null, key_fingerprint: "" }
       : { dir: place.target.dir, name: place.target.name, env: place.target.env, env_file: null, url: o.url ?? place.target.url, deployed_at: "", verified_at: null, key_fingerprint: "" };
-  const put = await putKey(deps, out, place, key);
+  let salt = file!.salt;
+  if (salt === null) {
+    // Another init on this computer may have made the salt since this run read the op8x file:
+    // read it again right before a new one is made, and take that one.
+    // This only narrows the window: two inits that both read before either saves can still create
+    // two salts (the later save wins). Closing that needs a lock file.
+    const again = await loadFile(deps);
+    const theirs = again.ok && again.file !== null && again.file.deleted === null && again.file.account === file!.account ? again.file.salt : null;
+    if (theirs !== null) {
+      salt = theirs;
+      file = { ...file!, salt };
+      held = file;
+    } else {
+      salt = newSalt();
+      madeSalt = salt;
+      const savedSalt = await save({ ...file!, salt });
+      if (savedSalt !== null) {
+        out.end("failed");
+        return out.final(savedSalt);
+      }
+    }
+  }
+  const put = await putKey(deps, out, place, key, salt);
   if (put === "stopped") return stopped();
+  if (put === "unsupported") {
+    out.end("failed");
+    return out.final("env_file_unsupported");
+  }
   if (put === "failed") {
     out.end("failed");
     return place.kind === "env_file"
@@ -404,15 +447,18 @@ async function findPlace(deps: Deps, o: InitOptions): Promise<FoundPlace> {
   return { ok: true, place: { kind: "wrangler", bin: found.bin, target: target.target } };
 }
 
-/** K into the place: wrangler secret put (notice secret_put_deploys first), or the env file. */
-async function putKey(deps: Deps, out: Output, place: Place, key: string): Promise<SecretResult> {
+/**
+ * K and the salt into the place: one wrangler secret bulk (notice secret_put_deploys first), or
+ * both lines in one write of the env file ("unsupported": an env file op8x does not rewrite).
+ */
+async function putKey(deps: Deps, out: Output, place: Place, key: string, salt: string): Promise<SecretResult | "unsupported"> {
   if (out.stopped) return "stopped";
-  if (place.kind === "wrangler") return createSecrets(deps, out).put(place.bin, place.target, key);
+  if (place.kind === "wrangler") return createSecrets(deps, out).putWithSalt(place.bin, place.target, key, salt);
   try {
-    await writeEnvKey(deps, place.path, key);
+    await writeEnvKey(deps, place.path, key, salt);
     return "ok";
-  } catch {
-    return "failed";
+  } catch (e) {
+    return e instanceof EnvFileFormatError ? "unsupported" : "failed";
   }
 }
 
@@ -441,8 +487,8 @@ async function currentKey(deps: Deps, api: Api, out: Output, file: ActiveAccount
 
 /**
  * op8x login: the device login with mode login (no write_sha256). On a computer with an op8x file
- * of the same account R and the contact are replaced and a waiting step is cleared; K, the next K
- * and the workers stay. Granted for another account, the file is replaced as if there was none.
+ * of the same account R and the contact are replaced and a waiting step is cleared; K, the next K,
+ * the salt and the workers stay. Granted for another account, the file is replaced as if there was none.
  * A remainder file (deleted) counts as no file and is replaced, without the
  * collector check. Ends with connected, which names the account's address so the human can check
  * that it is theirs.
@@ -467,7 +513,7 @@ async function login(json: boolean, deps: Deps): Promise<number> {
     return failWith(out, r.fail);
   }
   if (out.stopped) return out.final("internal_error");
-  // Same account: K, the next K and the workers stay; a waiting step goes (its codes are bound to
+  // Same account: K, the next K, the salt and the workers stay; a waiting step goes (its codes are bound to
   // the old R). Another account: the old K is not this account's, so the file starts over.
   const same = kept !== null && kept.account === r.account;
   let next: ActiveAccount =
@@ -481,6 +527,7 @@ async function login(json: boolean, deps: Deps): Promise<number> {
           read_token: keys.read,
           write_key: null,
           write_key_next: null,
+          salt: null,
           pending_step_up: null,
           deleted: null,
           workers: [],
@@ -507,7 +554,8 @@ async function login(json: boolean, deps: Deps): Promise<number> {
 /**
  * op8x logout: POST sign-out {} with R, then the op8x file is removed, so the read token is revoked before it is forgotten. Offline, on a 5xx,
  * busy or any other unexpected answer the file stays, so a later logout can still revoke R; a 401
- * (R already invalid) removes it. With a local K the notice logout_removes_key comes first.
+ * (R already invalid) removes it. With a local K the notice logout_removes_key comes first, with a
+ * salt the notice logout_removes_salt.
  */
 async function logout(json: boolean, deps: Deps): Promise<number> {
   let held: AccountFile | null = null;
@@ -526,6 +574,7 @@ async function logout(json: boolean, deps: Deps): Promise<number> {
   out.end("ok");
   const withKey = s.file.write_key !== null || s.file.write_key_next !== null;
   if (withKey) out.notice("logout_removes_key");
+  if (s.file.salt !== null) out.notice("logout_removes_salt");
   if (out.stopped) return out.final("internal_error");
   try {
     await deleteAccount(deps);
@@ -540,11 +589,12 @@ async function logout(json: boolean, deps: Deps): Promise<number> {
 const MAX_IMPORT_BYTES = 1024 * 1024;
 
 /**
- * K from the op8x file at `path`, or null if the file is missing, not a regular file, too big,
- * not a valid op8x file, or has no K. Nothing about the file (content, parser message) leaves
- * this function, since the file may hold other secrets. Opened without blocking, so a FIFO cannot hang the command.
+ * K and the salt (null if it has none) from the op8x file at `path`, or null if the file is
+ * missing, not a regular file, too big, not a valid op8x file (an invalid salt included), or has
+ * no K. Nothing about the file (content, parser message) leaves this function, since the file may
+ * hold other secrets. Opened without blocking, so a FIFO cannot hang the command.
  */
-async function readKeyFile(path: string): Promise<string | null> {
+async function readKeyFile(path: string): Promise<{ key: string; salt: string | null } | null> {
   let handle;
   try {
     handle = await open(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
@@ -564,7 +614,8 @@ async function readKeyFile(path: string): Promise<string | null> {
       chunks.push(buf.subarray(0, bytesRead));
     }
     const file = parseAccount(Buffer.concat(chunks).toString("utf8"));
-    return file.deleted === null ? file.write_key : null;
+    if (file.deleted !== null || file.write_key === null) return null;
+    return { key: file.write_key, salt: file.salt };
   } catch {
     return null;
   } finally {
@@ -573,21 +624,26 @@ async function readKeyFile(path: string): Promise<string | null> {
 }
 
 /**
- * op8x import-key <path>: takes only K from the op8x file of another computer, and only if it is the account's current key. K never leaves
- * this computer: GET /tenant with R, then K's fingerprint is compared with the account's keys.
- * Current → stored (imported); previous → key_previous; else key_mismatch.
+ * op8x import-key <path>: takes K and the salt from the op8x file of another computer, and only
+ * if K is the account's current key. K never leaves this computer: GET /tenant with R, then K's
+ * fingerprint is compared with the account's keys. Current → stored (imported); previous →
+ * key_previous; else key_mismatch. The other file's salt replaces this computer's (a different
+ * one gives notice import_replaces_salt); a file without one keeps this computer's salt (if
+ * neither has one, the next init makes it).
  */
 async function importKey(json: boolean, deps: Deps, path: string): Promise<number> {
   let held: AccountFile | null = null;
-  let imported: string | null = null;
-  const out = createOutput({ command: "import-key", json, deps, steps: 1, secrets: () => [...fileSecrets(held), imported] });
+  let read: { key: string; salt: string | null } | null = null;
+  const out = createOutput({ command: "import-key", json, deps, steps: 1, secrets: () => [...fileSecrets(held), read?.key, read?.salt] });
   const s = await signedIn(deps, out, (f) => {
     held = f;
   });
   if (!s.ok) return s.exit;
 
-  imported = await readKeyFile(resolve(deps.cwd, path));
-  if (imported === null) return out.final("import_failed");
+  read = await readKeyFile(resolve(deps.cwd, path));
+  if (read === null) return out.final("import_failed");
+  const imported = read.key;
+  const salt = read.salt ?? s.file.salt;
 
   out.start("check_key");
   const r = await createApi(deps, s.base).tenant(s.file.read_token);
@@ -606,19 +662,50 @@ async function importKey(json: boolean, deps: Deps, path: string): Promise<numbe
   // sent later), and a waiting replace_current step is settled with it. Other waiting steps stay.
   const settled = s.file.pending_step_up?.purpose === "replace_current" ? settledNext(s.file, r.value) : s.file;
   try {
-    await writeAccount(deps, { ...settled, write_key: imported, write_key_next: null });
+    await writeAccount(deps, { ...settled, write_key: imported, write_key_next: null, salt });
   } catch (e) {
     out.end("failed");
     return out.final(storeState(e));
   }
   out.end("ok");
+  if (s.file.salt !== null && salt !== s.file.salt) out.notice("import_replaces_salt");
   return out.final("imported");
 }
 
 // --- report -----------------------------------------------------------------------------------
 
-/** op8x report [--week | --month]: a placeholder until the numbers exist (not_available_yet). */
-async function report(json: boolean, deps: Deps): Promise<number> {
-  const out = createOutput({ command: "report", json, deps, steps: 0, secrets: () => [] });
-  return out.final("not_available_yet");
+/** The value of --days as a number 1..30 (digits only), or null. */
+function reportDays(v: Value): number | null {
+  if (typeof v !== "string" || !/^\d{1,3}$/.test(v)) return null;
+  const n = Number(v);
+  return n >= 1 && n <= 30 ? n : null;
+}
+
+/**
+ * op8x report [--days <n> | --week | --month]: GET /tenant/report with R. Success: with --json
+ * the op8x.metrics/1 document as received or as one equivalent line (oneLineJson; only its schema is
+ * checked), else the terminal
+ * view; every other end is one final line (with --json one op8x.cli/1 line). No steps.
+ */
+async function report(json: boolean, deps: Deps, days: number): Promise<number> {
+  let held: AccountFile | null = null;
+  const out = createOutput({ command: "report", json, deps, steps: 0, secrets: () => fileSecrets(held) });
+  const s = await signedIn(deps, out, (f) => {
+    held = f;
+  });
+  if (!s.ok) return s.exit;
+  const r = await createApi(deps, s.base).report(s.file.read_token, days);
+  if (!r.ok) return out.error(r.error);
+  // The view cuts long strings and --json may print a decoded copy, so the guard checks the body
+  // as received and every decoded string of it before anything is printed. A secret split across
+  // two strings is not caught here (the line guard still checks every printed line).
+  if (!out.guard([r.value.text, ...jsonStrings(r.value.doc)])) return out.final("internal_error");
+  let printed: string;
+  try {
+    printed = json ? oneLineJson(r.value.text, r.value.doc) : renderReportView(r.value.doc);
+  } catch {
+    // A document this version cannot print is its own fault, never an unhandled rejection.
+    return out.final("internal_error");
+  }
+  return out.document(printed);
 }

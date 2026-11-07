@@ -1,0 +1,77 @@
+op8x report · last 7 days (2026-10-27 to 2026-11-02, UTC, today so far)
+
+Is my API sending data?                                 ok
+  Last event                 2026-11-02 14:04 UTC
+  Events today               412
+  Events last 24 hours       655
+  Active days (previous 7)   7 of 7
+
+Buyers on the way to paying (per route)
+  "GET /forecast/:city"
+    Unpaid requests          1,203
+    Price offers (402)       4,210   from x402 clients: 18.0 % (758 of 4,210)
+    Payment attempts         mainnet 38 · testnet 4
+      mainnet: paid 31 · possibly paid 1 · rejected 1 · no confirmation 5 (with a new price offer: 4)
+               delivered 30 · not delivered 1 · delivery unknown 0
+      testnet: paid 4 · possibly paid 0 · rejected 0 · no confirmation 0 (with a new price offer: 0)
+               delivered 4 · not delivered 0 · delivery unknown 0
+    Paid per 100 offers      0.7 (31 of 4,210)
+    Error texts              "insufficient_funds: payer balance too low"
+                             "payment verification failed: invalid signature"
+  "POST /alerts"
+    Unpaid requests          0
+    Price offers (402)       14   from x402 clients: 9 of 14 (too few for a percentage)
+    Payment attempts         mainnet 2
+      mainnet: paid 2 · possibly paid 0 · rejected 0 · no confirmation 0 (with a new price offer: 0)
+               delivered 2 · not delivered 0 · delivery unknown 0
+    Paid per 100 offers      too few offers (14 of 20 needed)
+  Other requests             37
+  More routes not shown      0
+
+Wallets
+  Paying wallets             9 since 2026-10-27
+  Payments                   33 (without wallet id: 0)
+  Returning wallets          3 of 9 (too few for a percentage)
+
+Revenue (as reported by payments)
+  USDC                       0.342 from 33 payments   declared test amount 0
+  Without amount 0 · unknown asset 0 · unknown network 0 · testnet 4
+
+Data basis                                              no known gaps
+  Left out as tests          3 (op8x checks 3 · declared tests 0)
+  Attempts marked as test    0
+  Incomplete days            none
+  Dropped (daily cap) 0 · dropped (invalid) 0 · unreadable 0 · odd timestamps 0
+  Not visible to op8x        refused keys (401), overload (503),
+                             aborted requests, oversize (413), disk guard (429),
+                             counter loss on restart,
+                             op8x outages are not included, modules without key,
+                             module timeouts
+
+Findings
+  ! funnel.not_delivered  "GET /forecast/:city"
+    Buyers paid and received an error response, unless you cancelled or refunded
+    these payments. Check the input before settlement so that wrong input costs
+    nothing, and store the result before settlement so that a buyer does not pay
+    twice on a retry.
+    https://docs.op8x.com/findings/funnel.not_delivered/
+
+  ! funnel.possibly_paid  "GET /forecast/:city"
+    For these payments your server reports an error but names a transaction.
+    Money may have moved. Check the transactions in your wallet.
+    https://docs.op8x.com/findings/funnel.possibly_paid/
+
+  ! funnel.rejected  "GET /forecast/:city"
+    Your server reported payments as failed. Its text about this is in the
+    report under `data`.
+    https://docs.op8x.com/findings/funnel.rejected/
+
+  ! funnel.no_confirmation  "GET /forecast/:city"
+    These payment attempts lack a readable confirmation from your server.
+    Possible causes: your server already rejected the payment during
+    verification and quoted a price again (see “of these, with a new price
+    offer”), a timeout at the facilitator, or an older op8x module. Whether they
+    were paid is unknown.
+    https://docs.op8x.com/findings/funnel.no_confirmation/
+
+Definitions: https://docs.op8x.com/metrics/ (definitions 2026-11-06)

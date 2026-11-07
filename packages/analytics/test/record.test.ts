@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { buildRecord, type RecordInput } from "../src/record.ts";
+import { hashPayer, parseSalt, saltId } from "../src/hash.ts";
+import type { PayerHasher } from "../src/types.ts";
 import {
   b64,
   PAYER,
@@ -30,7 +33,7 @@ function input(over: Over = {}): RecordInput {
   };
 }
 
-const fakeHash = async (a: string) => `h(${a})`;
+const fakeHash: PayerHasher = { hash: async (a: string) => `h(${a})`, saltId: "abcd1234" };
 
 test("type table and base fields", async () => {
   const unpaid = await buildRecord(input({ req: { "user-agent": "curl/8" } }));
@@ -205,7 +208,7 @@ test("delivery by status", async () => {
   assert.equal((await buildRecord(input({ status: 500, req }))).delivery, "failed");
 });
 
-test("payer: receipt first, else authorization.from, lowercased; no hash fn means none", async () => {
+test("payer: receipt first, else authorization.from, passed on as is; no hasher means none", async () => {
   const req = { "payment-signature": b64(v2Payment) };
   const none = await buildRecord(input({ req }));
   assert.equal(none.payment?.payer, undefined);
@@ -216,26 +219,38 @@ test("payer: receipt first, else authorization.from, lowercased; no hash fn mean
     }),
     fakeHash,
   );
-  assert.equal(fromReceipt.payment?.payer, "h(0xabcdef)");
+  assert.equal(fromReceipt.payment?.payer, "h(0xABCDEF)");
   const fromAuth = await buildRecord(
     input({ req: { "payment-signature": b64({ ...v2Payment, payload: { authorization: { from: "0xAAbb" } } }) } }),
     fakeHash,
   );
-  assert.equal(fromAuth.payment?.payer, "h(0xaabb)");
+  assert.equal(fromAuth.payment?.payer, "h(0xAAbb)");
   const noPayment = await buildRecord(input({ res: { "payment-response": b64(v2Receipt) } }), fakeHash);
   assert.equal(noPayment.payment, undefined);
 });
 
 test("hashPayer failure omits payer, never rejects", async () => {
   const req = { "payment-signature": b64(v2Payment) };
-  const rejecting = await buildRecord(input({ req }), async () => {
-    throw new Error("boom");
+  const rejecting = await buildRecord(input({ req }), {
+    hash: async () => {
+      throw new Error("boom");
+    },
+    saltId: "abcd1234",
   });
   assert.equal(rejecting.payment?.payer, undefined);
-  const throwing = await buildRecord(input({ req }), (() => {
-    throw new Error("boom");
-  }) as unknown as (a: string) => Promise<string>);
+  assert.equal(rejecting.payment?.payer_alg, undefined);
+  assert.equal(rejecting.payment?.payer_salt_id, undefined);
+  const throwing = await buildRecord(input({ req }), {
+    hash: (() => {
+      throw new Error("boom");
+    }) as unknown as (a: string) => Promise<string>,
+    saltId: "abcd1234",
+  });
   assert.equal(throwing.payment?.payer, undefined);
+  assert.equal(throwing.payment?.payer_salt_id, undefined);
+  const empty = await buildRecord(input({ req }), { hash: async () => "", saltId: "abcd1234" });
+  assert.equal(empty.payment?.payer, undefined);
+  assert.equal(empty.payment?.payer_alg, undefined);
 });
 
 test("__proto__ keys do not pollute or leak", async () => {
@@ -284,7 +299,7 @@ test("privacy: serialised record contains no forbidden value", async () => {
         }),
       },
     }),
-    async () => "abcd1234",
+    { hash: async () => "abcd1234", saltId: "ffff0000" },
   );
   const json = JSON.stringify(r);
   for (const s of secrets) assert.ok(!json.includes(s), `leaked ${s}`);
@@ -296,7 +311,7 @@ test("empty or whitespace receipt payer falls back to authorization.from", async
   const req = { "payment-signature": b64({ ...v2Payment, payload: { authorization: { from: "0xFROMAUTH" } } }) };
   for (const payer of ["", "   "]) {
     const r = await buildRecord(input({ req, res: { "payment-response": b64({ ...v2Receipt, payer }) } }), fakeHash);
-    assert.equal(r.payment?.payer, "h(0xfromauth)");
+    assert.equal(r.payment?.payer, "h(0xFROMAUTH)");
   }
 });
 
@@ -328,7 +343,13 @@ test("__proto__ keys in payment and receipt payloads are harmless", async () => 
 test("undecodable payment header still hashes the receipt payer (only with a hash fn)", async () => {
   const over: Over = { req: { "x-payment": "!!!notbase64" }, res: { "payment-response": b64(v2Receipt) } };
   const hashed = await buildRecord(input(over), fakeHash);
-  assert.deepEqual(hashed.payment, { header: "X-PAYMENT", decodable: false, payer: `h(${PAYER})` });
+  assert.deepEqual(hashed.payment, {
+    header: "X-PAYMENT",
+    decodable: false,
+    payer: `h(${PAYER})`,
+    payer_alg: "op8x.payer.v1",
+    payer_salt_id: "abcd1234",
+  });
   const plain = await buildRecord(input(over));
   assert.deepEqual(plain.payment, { header: "X-PAYMENT", decodable: false });
 });
@@ -537,4 +558,65 @@ test("test_nonce: the value appears in no other field", async () => {
   const { test_nonce, ...rest } = r;
   assert.equal(test_nonce, NONCE);
   assert.ok(!JSON.stringify(rest).includes(NONCE));
+});
+
+test("pseudonym fields come together, only on payment events", async () => {
+  const paid = await buildRecord(input({ req: { "payment-signature": b64(v2Payment) } }), fakeHash);
+  assert.equal(paid.payment?.payer, `h(${PAYER})`);
+  assert.equal(paid.payment?.payer_alg, "op8x.payer.v1");
+  assert.equal(paid.payment?.payer_salt_id, "abcd1234");
+  const challenge = await buildRecord(input({ status: 402 }), fakeHash);
+  assert.equal(challenge.payment, undefined);
+  const unpaid = await buildRecord(input(), fakeHash);
+  assert.ok(!JSON.stringify(unpaid).includes("payer"));
+  const noAddress = await buildRecord(input({ req: { "payment-signature": b64({ x402Version: 2 }) } }), fakeHash);
+  assert.equal(noAddress.payment?.payer, undefined);
+  assert.equal(noAddress.payment?.payer_alg, undefined);
+  assert.equal(noAddress.payment?.payer_salt_id, undefined);
+});
+
+interface VectorFile {
+  salts: { salt: string; salt_id: string; payers: { note: string; address: string; payer: string }[] }[];
+}
+const vectorFile = JSON.parse(readFileSync(new URL("../docs/payer-hash-vectors.json", import.meta.url), "utf8")) as VectorFile;
+
+test("buildRecord yields exactly the published vectors, for payment-header and receipt payers", async () => {
+  for (const v of vectorFile.salts) {
+    const bytes = parseSalt(v.salt)!;
+    const hasher: PayerHasher = { hash: (a) => hashPayer(bytes, a), saltId: await saltId(bytes) };
+    for (const p of v.payers) {
+      const viaAuth = await buildRecord(
+        input({ req: { "payment-signature": b64({ ...v2Payment, payload: { authorization: { from: p.address } } }) } }),
+        hasher,
+      );
+      // An all-whitespace address is not an address; the vectors have none.
+      assert.equal(viaAuth.payment?.payer, p.payer, p.note);
+      assert.equal(viaAuth.payment?.payer_alg, "op8x.payer.v1");
+      assert.equal(viaAuth.payment?.payer_salt_id, v.salt_id);
+      const viaReceipt = await buildRecord(
+        input({
+          req: { "payment-signature": b64(v2Payment) },
+          res: { "payment-response": b64({ ...v2Receipt, payer: p.address }) },
+        }),
+        hasher,
+      );
+      assert.equal(viaReceipt.payment?.payer, p.payer, p.note);
+    }
+  }
+});
+
+test("buildRecord stays fast for an address with long inner whitespace, with and without a salt", async () => {
+  const bytes = parseSalt(vectorFile.salts[0]!.salt)!;
+  const hasher: PayerHasher = { hash: (a) => hashPayer(bytes, a), saltId: await saltId(bytes) };
+  for (const ws of [" ", "\t"]) {
+    // A tab is two bytes in the JSON header, which is capped at 16 KiB.
+    const address = "a" + ws.repeat(ws === "	" ? 8000 : 16000) + "a";
+    const req = { "payment-signature": b64({ payload: { authorization: { from: address } } }) };
+    const start = performance.now();
+    const unsalted = await buildRecord(input({ req }));
+    const salted = await buildRecord(input({ req }), hasher);
+    assert.ok(performance.now() - start < 250, "both records under 250 ms");
+    assert.equal(unsalted.payment?.payer, undefined);
+    assert.equal(salted.payment?.payer, await hashPayer(bytes, address));
+  }
 });

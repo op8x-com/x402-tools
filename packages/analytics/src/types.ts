@@ -9,7 +9,12 @@ export interface AnalyticsOptions {
   key?: string;
   /** Default false; one console.log line per record. */
   log?: boolean;
-  /** Enables payer hashing; omitted = no payer field at all. */
+  /**
+   * Seller salt for payer pseudonyms: `op8x_s_` plus 43 base64url characters (32 random bytes),
+   * made by `npx @op8x/cli init`. Wins over `OP8X_SALT` from the Worker environment, which the
+   * Hono middleware reads on every request when this option is not set. A value that is not a
+   * valid salt disables pseudonyms (one warning); without any salt there are no pseudonym fields.
+   */
   salt?: string;
   /** Default 2000, clamped to 100..10000. */
   timeoutMs?: number;
@@ -49,8 +54,12 @@ export interface PaymentInfo {
   /** v2 accepted.amount */
   amount?: string;
   asset?: string;
-  /** Hex HMAC-SHA-256(salt, lowercase address), first 32 hex chars; only with salt. */
+  /** First 32 hex chars of HMAC-SHA-256 keyed with the salt over the payer address; only with a valid salt. */
   payer?: string;
+  /** Construction of `payer` (`op8x.payer.v1`); present exactly when `payer` is. */
+  payer_alg?: string;
+  /** 8 hex chars identifying the salt; present exactly when `payer` is. */
+  payer_salt_id?: string;
 }
 
 export interface ReceiptInfo {
@@ -91,4 +100,10 @@ export interface AnalyticsRecord {
   delivery?: "ok" | "failed";
   /** Value of the op8x-test request header, only when it is exactly 43 base64url characters. */
   test_nonce?: string;
+}
+
+/** Pseudonymizes payer addresses with one salt; `saltId` is sent along with every pseudonym. */
+export interface PayerHasher {
+  hash(address: string): Promise<string>;
+  saltId: string;
 }

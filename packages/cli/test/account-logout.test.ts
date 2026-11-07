@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 import type { TestContext } from "node:test";
 import { generateKey } from "../src/account/keys.ts";
+import { newSalt } from "../src/account/salt.ts";
 import { accountPath, writeAccount } from "../src/account/store.ts";
 import type { AccountFile, ActiveAccount } from "../src/account/store.ts";
 import { run } from "../src/cli.ts";
@@ -12,7 +13,7 @@ import type { Canned, FakeCollector } from "./fake-collector.ts";
 
 type Line = Record<string, unknown>;
 
-async function setup(t: TestContext, o: { env?: Record<string, string>; key?: boolean; next?: boolean; collector?: string } = {}) {
+async function setup(t: TestContext, o: { env?: Record<string, string>; key?: boolean; next?: boolean; salt?: boolean; collector?: string } = {}) {
   const fake: FakeCollector = await startFakeCollector();
   t.after(() => fake.close());
   const deps = testDeps({
@@ -35,6 +36,7 @@ async function setup(t: TestContext, o: { env?: Record<string, string>; key?: bo
     read_token: r,
     write_key: k,
     write_key_next: next,
+    salt: o.salt ? newSalt() : null,
     pending_step_up: null,
     deleted: null,
     workers: [],
@@ -148,6 +150,7 @@ test("logout without a file or on a remainder file: not_logged_in, nothing sent"
     read_token: null,
     write_key: null,
     write_key_next: null,
+    salt: null,
     pending_step_up: null,
     deleted: { action_id: "0b4e2f1a-1111-4222-8333-444455556666" },
     workers: [],
@@ -193,4 +196,39 @@ test("logout takes no option but --json and no positional", async (t) => {
     assert.equal(s.exists(), true);
     assert.equal(s.fake.requests.length, 0);
   }
+});
+
+test("logout with a salt: notice logout_removes_salt, which says returning-buyer counts restart after a new salt", async (t) => {
+  const s = await setup(t, { key: true, salt: true });
+  assert.equal(await run(["logout", "--json"], s.deps), 0);
+  const notices = s.lines().filter((l) => l.event === "notice");
+  assert.deepEqual(
+    notices.map((l) => l.id),
+    ["logout_removes_key", "logout_removes_salt"],
+  );
+  assert.match(String(notices[1]!.text), /returning-buyer counts restart after a new salt/);
+  assert.equal(s.final().state, "logged_out");
+  assert.equal(s.exists(), false);
+  assert.equal(s.deps.stdout().includes("op8x_s_"), false);
+  assert.equal(s.deps.stderr().includes("op8x_s_"), false);
+  for (const r of s.fake.requests) assert.equal(JSON.stringify(r).includes("op8x_s_"), false);
+
+  // Without a salt there is no such notice.
+  const n = await setup(t, { key: true });
+  assert.equal(await run(["logout", "--json"], n.deps), 0);
+  assert.equal(n.lines().some((l) => l.id === "logout_removes_salt"), false);
+
+  // Text mode: the sentence, no salt.
+  const x = await setup(t, { salt: true });
+  assert.equal(await run(["logout"], x.deps), 0);
+  assert.match(x.deps.stdout(), /returning-buyer counts restart after a new salt/);
+  assert.equal(x.deps.stdout().includes("op8x_s_"), false);
+});
+
+test("logout offline keeps the file and shows no salt notice", async (t) => {
+  const s = await setup(t, { salt: true });
+  s.fake.respond("sign_out", "drop");
+  assert.equal(await run(["logout", "--json"], s.deps), 2);
+  assert.equal(s.lines().some((l) => l.event === "notice"), false);
+  assert.equal(s.exists(), true);
 });

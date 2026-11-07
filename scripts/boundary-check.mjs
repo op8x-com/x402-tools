@@ -5,8 +5,11 @@
 //   1. --rules <file>
 //   2. the BOUNDARY_TERMS environment variable (newline-separated; set as a CI secret)
 //   3. .boundary-rules in the repository root (local, git-ignored)
-// One rule per line: a term (matched case-insensitively on word boundaries) or "path:<prefix>".
-// Lines starting with # are comments.
+// One rule per line:
+//   <term>               matched case-insensitively on word boundaries in every file
+//   in:<prefix> <term>   the same, but only in files whose repository path starts with <prefix>
+//   path:<prefix>        a path (exact file, or a folder ending in /) reserved for private repos
+// Lines starting with # are comments. A malformed in: line (the keyword in any case) is a configuration error, also a prefix that starts with ./ / \ or a quote, or has a backslash.
 //
 // Usage: node scripts/boundary-check.mjs [--staged | --all] [--redact] [--rules <file>]
 // Exit codes: 0 clean, 1 findings, 2 configuration or git error.
@@ -48,14 +51,24 @@ export function checkTopLevel(paths, allowed = ALLOWED_TOP_LEVEL) {
 export function parseRules(text) {
   const terms = [];
   const paths = [];
-  for (const raw of text.split(/\r?\n/)) {
+  const scoped = [];
+  text.split(/\r?\n/).forEach((raw, i) => {
     const line = raw.trim();
-    if (!line || line.startsWith("#")) continue;
+    if (!line || line.startsWith("#")) return;
     if (line.startsWith("path:")) paths.push(line.slice("path:".length).trim());
-    else terms.push(line.toLowerCase());
-  }
-  if (terms.length === 0 && paths.length === 0) throw new Error("No rules found in the boundary rule set.");
-  return { terms, paths };
+    else if (/^in:/i.test(line)) {
+      // The message names only the line number: the rules themselves are not public.
+      const m = /^in:(\S+)\s+(\S.*)$/i.exec(line);
+      if (!m) throw new Error(`Malformed rule on line ${i + 1}: expected "in:<prefix> <term>".`);
+      // A prefix is a repository path as git prints it: relative, with forward slashes, unquoted.
+      if (/^(\.\/|\/|\\|["'`])/.test(m[1]) || m[1].includes("\\")) {
+        throw new Error(`Malformed rule on line ${i + 1}: the prefix of an in: rule must be a repository path like src/ (no ./, leading /, backslash or quote).`);
+      }
+      scoped.push({ prefix: m[1], term: m[2].toLowerCase() });
+    } else terms.push(line.toLowerCase());
+  });
+  if (terms.length === 0 && paths.length === 0 && scoped.length === 0) throw new Error("No rules found in the boundary rule set.");
+  return { terms, paths, scoped };
 }
 
 function escapeRegExp(s) {
@@ -77,6 +90,7 @@ function lineAt(content, index) {
 
 export function scanFiles(files, rules) {
   const patterns = rules.terms.map(termPattern);
+  const scoped = (rules.scoped ?? []).map(({ prefix, term }) => ({ prefix, re: termPattern(term) }));
   const findings = [];
   for (const { path, content } of files) {
     const pathRule = rules.paths.findIndex((p) => path === p || (p.endsWith("/") && path.startsWith(p)));
@@ -86,7 +100,11 @@ export function scanFiles(files, rules) {
     patterns.forEach((re, rule) => {
       for (const m of content.matchAll(re)) termFindings.push({ path, line: lineAt(content, m.index), rule, kind: "term" });
     });
-    termFindings.sort((a, b) => a.line - b.line || a.rule - b.rule);
+    scoped.forEach(({ prefix, re }, rule) => {
+      if (!path.startsWith(prefix)) return;
+      for (const m of content.matchAll(re)) termFindings.push({ path, line: lineAt(content, m.index), rule, kind: "scoped" });
+    });
+    termFindings.sort((a, b) => a.line - b.line || a.kind.localeCompare(b.kind) || a.rule - b.rule);
     findings.push(...termFindings);
   }
   return findings;
@@ -103,6 +121,10 @@ export function formatFinding(f, rules, redact) {
     return `${printable(f.path)}: top-level entry ${printable(f.entry)} is not allowed; if it belongs in this repository, add it to ALLOWED_TOP_LEVEL in scripts/boundary-check.mjs`;
   }
   if (f.kind === "path") return `${f.path}: path reserved for the private repository (#${f.rule + 1})`;
+  if (f.kind === "scoped") {
+    const s = rules.scoped[f.rule];
+    return redact ? `${f.path}:${f.line}: internal term in:#${f.rule + 1}` : `${f.path}:${f.line}: internal term "${s.term}" (in ${s.prefix})`;
+  }
   const label = redact ? `#${f.rule + 1}` : `"${rules.terms[f.rule]}"`;
   return `${f.path}:${f.line}: internal term ${label}`;
 }

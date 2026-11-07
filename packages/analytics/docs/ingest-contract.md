@@ -69,7 +69,9 @@ A collector may store a `scheme`, `network` or `asset` value that does not have 
 | `payment.network` | string | when known | Network of the payment. |
 | `payment.amount` | string | when known | Amount of the payment (v2). |
 | `payment.asset` | string | when known | Asset of the payment. |
-| `payment.payer` | string | with the `salt` option | First 32 hex characters (lowercase) of HMAC-SHA-256 over the lowercase payer address, keyed with the seller's salt. |
+| `payment.payer` | string | with a valid salt | First 32 hex characters (lowercase) of HMAC-SHA-256 keyed with the seller's salt, from the `salt` option or the Worker secret `OP8X_SALT`. See "Payer pseudonym". |
+| `payment.payer_alg` | string | with `payment.payer` | `op8x.payer.v1`, the construction of `payment.payer`. New in 0.0.3: the module sends it with every pseudonym. |
+| `payment.payer_salt_id` | string | with `payment.payer` | 8 lowercase hex characters identifying the salt, so series made with different salts are not mixed. New in 0.0.3: the module sends it with every pseudonym. |
 | `receipt` | object | with a receipt header | The receipt the seller returned. |
 | `receipt.header` | string | with `receipt` | `PAYMENT-RESPONSE` or `X-PAYMENT-RESPONSE`. |
 | `receipt.decodable` | boolean | with `receipt` | Whether the header could be decoded. |
@@ -80,6 +82,21 @@ A collector may store a `scheme`, `network` or `asset` value that does not have 
 | `receipt.transaction` | string | with the `chainCheck` option | Public transaction hash, so the collector can confirm settlement on-chain. A collector uses it only for that check and does not keep it. |
 | `delivery` | string | with `payment` | `ok` when the final status is below 400, else `failed`. |
 | `test_nonce` | string | with a valid `op8x-test` header | Value of the request header `op8x-test`, sent only when it is exactly 43 base64url characters. See "Connection test nonce". |
+
+## Payer pseudonym
+
+- `payment.payer`, `payment.payer_alg` and `payment.payer_salt_id` belong together. A consumer counts a pseudonym only when all three are present.
+- The salt is a string of the form `op8x_s_` followed by 43 base64url characters (`A-Z`, `a-z`, `0-9`, `-`, `_`), which decode to exactly 32 bytes. The encoding must be canonical: encoding the 32 bytes again gives the same string. Any other value is not a salt and disables payer hashing. The module takes the salt from the `salt` option; without that option it reads the Worker secret `OP8X_SALT` on every request, so a rotated secret applies to the next request. An invalid option is not replaced by the environment.
+- Key: the 32 decoded bytes. `payment.payer` is the first 32 lowercase hex characters of HMAC-SHA-256 over the UTF-8 bytes of `op8x.payer.v1`, one `0x00` byte, and the payer address. The address is first stripped of ASCII whitespace at both ends: space, tab (U+0009), line feed, carriage return, form feed and vertical tab (U+000B), and nothing else. A no-break space, for example, is kept. The stripped address is then lowercased only when it matches `0x` plus 40 hex digits (EVM). Other addresses, such as Solana, keep their case, because their case is significant. This normalization is part of the construction; the module applies it nowhere else.
+- Source of the address: the payer in the receipt (`PAYMENT-RESPONSE` or `X-PAYMENT-RESPONSE`) when it is a non-empty string after stripping; otherwise the payment's `authorization.from`. An address that is empty after stripping gets no pseudonym.
+- The message is encoded as UTF-8 as defined by the WHATWG Encoding standard, so a lone surrogate becomes U+FFFD. There is no Unicode normalization.
+- Only a lowercase `0x` prefix followed by exactly 40 hex digits counts as an EVM address. `0X...` and everything else are hashed as they are, case-sensitive.
+- The salt string must be exact: it is not trimmed, so a trailing newline makes it invalid.
+- `authorization.from` is a claim by the buyer until the payment settles, and the module reads it from an unsigned header. A consumer should therefore count pseudonyms only for paid attempts: a readable receipt with `receipt.success` true.
+- `payment.payer_salt_id` is the first 8 lowercase hex characters of HMAC-SHA-256 over the UTF-8 bytes of `op8x.salt-id.v1`, keyed with the same 32 bytes. It tells salts apart and reveals nothing usable about the salt.
+- Test vectors (salts, salt ids, addresses, pseudonyms, and invalid salts) are in [`payer-hash-vectors.json`](payer-hash-vectors.json). An implementation must reproduce every one.
+- The salt never leaves the seller's server. Only the pseudonym, the algorithm name and the salt id are sent.
+- Changing the salt starts a new pseudonym series: the same payer then gets a different `payment.payer` and a different `payment.payer_salt_id`.
 
 ## Connection test nonce
 

@@ -143,7 +143,7 @@ The text report ends with the block "Not checked by op8x check"; the JSON report
 
 ## Analytics account
 
-The account commands connect a worker that runs [`@op8x/analytics`](https://github.com/op8x-com/x402-tools/tree/main/packages/analytics) to op8x. `op8x init` creates the server key `OP8X_KEY` on your computer, asks you to allow the sign-in in your browser, puts the key into the worker with your project's own wrangler, and sends one test request to prove that records arrive. Nobody copies the key by hand, and the CLI never prints it.
+The account commands connect a worker that runs [`@op8x/analytics`](https://github.com/op8x-com/x402-tools/tree/main/packages/analytics) to op8x. `op8x init` creates the server key `OP8X_KEY` on your computer, asks you to allow the sign-in in your browser, puts the key and the account's salt `OP8X_SALT` into the worker with your project's own wrangler (one `wrangler secret bulk`, so one new version), and sends one test request to prove that records arrive. Nobody copies the key or the salt by hand, and the CLI never prints either.
 
 Before the first run, in the worker's project folder:
 
@@ -169,12 +169,42 @@ npx @op8x/cli rotate                                                       # new
 npx @op8x/cli rotate --now                                                 # stop the old key now (asks for a code from a mail)
 npx @op8x/cli rotate --now --force-stop                                    # stop it even if a worker may still use it (a leaked key)
 npx @op8x/cli login                                                        # sign this computer in to an existing account
-npx @op8x/cli import-key <path>                                            # take the key from the op8x file of your other computer
+npx @op8x/cli import-key <path>                                            # take the key and the salt from the op8x file of your other computer
 npx @op8x/cli logout                                                       # sign this computer out and delete its op8x file
-npx @op8x/cli delete                                                       # delete the account and remove OP8X_KEY from every known worker
+npx @op8x/cli delete                                                       # delete the account and remove OP8X_KEY and OP8X_SALT from every known worker
 ```
 
-`op8x report` exists but answers `not_available_yet` in this version.
+### Report
+
+```sh
+npx @op8x/cli report              # the last 7 days (UTC, today included)
+npx @op8x/cli report --days 14    # 1 to 30 days; or --week (7), --month (30)
+npx @op8x/cli report --json       # the op8x.metrics/1 document as op8x sends it
+```
+
+`op8x report` shows the numbers op8x has for your account: whether your API sends data, per route how many requests got a price offer and how many payments were attempted, paid and delivered, paying and returning wallets, the revenue your server reported, and what the numbers leave out. It computes nothing itself. The beginning of a view:
+
+```text
+op8x report · last 7 days (2026-10-27 to 2026-11-02, UTC, today so far)
+
+Is my API sending data?                                 ok
+  Last event                 2026-11-02 14:04 UTC
+  Events today               412
+  Events last 24 hours       655
+  Active days (previous 7)   7 of 7
+
+Buyers on the way to paying (per route)
+  "GET /forecast/:city"
+    Unpaid requests          1,203
+    Price offers (402)       4,210   from x402 clients: 18.0 % (758 of 4,210)
+    Payment attempts         mainnet 38 · testnet 4
+      mainnet: paid 31 · possibly paid 1 · rejected 1 · no confirmation 5 (with a new price offer: 4)
+               delivered 30 · not delivered 1 · delivery unknown 0
+```
+
+It ends with every finding in full, each with a link under `https://docs.op8x.com/findings/`, and the link to the definitions of every number: [docs.op8x.com/metrics](https://docs.op8x.com/metrics/). Routes, error texts and asset addresses come from your traffic, so the view prints them in double quotes and escaped (control characters, terminal escape sequences and invisible or right-to-left characters as `\u{XXXX}`), at most 100 characters.
+
+With `--json` stdout holds one line and nothing else: the collector's document unchanged, or an equivalent one-line JSON with unsafe characters (control and format characters, line and paragraph separators) escaped. The CLI checks only its `schema` (`op8x.metrics/1`). Before anything is printed, the CLI checks the document for its own keys and the salt, also inside decoded strings, and stops with `internal_error` if it finds one. An error is one `op8x.cli/1` line as for the other commands; a document of a newer format ends with `schema_unsupported` (update `@op8x/cli`). When op8x is busy, the CLI waits as long as its `Retry-After` header says, for up to 2 minutes and at most 12 requests.
 
 ### Node hosts
 
@@ -185,17 +215,26 @@ echo ".env.op8x" >> .gitignore
 npx @op8x/cli init --env-file .env.op8x --url http://127.0.0.1:3000/paid
 ```
 
-The CLI refuses a file that git does not ignore, a tracked file, a file outside a git repository and `.dev.vars`. It adds or replaces the line `OP8X_KEY=…` and leaves every other line as it is. Load the file as the environment and pass the key to the module as the `key` option (outside Workers the module does not read `OP8X_KEY` itself):
+The CLI refuses a file that git does not ignore, a tracked file, a file outside a git repository and `.dev.vars`. It adds or replaces the lines `OP8X_KEY=…` and `OP8X_SALT=…` and leaves every other line as it is. A file with a carriage return that does not end a line (CR without LF), or with a quoted value that spans lines, is refused with `env_file_unsupported` and left as it is. Load the file as the environment and pass both to the module as the `key` and `salt` options (outside Workers the module does not read them itself):
 
 ```sh
 node --env-file=.env.op8x server.js
 ```
 
 ```ts
-app.use(analytics({ endpoint: "https://ingest.op8x.com/v1/events", key: process.env.OP8X_KEY }));
+app.use(analytics({ endpoint: "https://ingest.op8x.com/v1/events", key: process.env.OP8X_KEY, salt: process.env.OP8X_SALT }));
 ```
 
-`rotate` rewrites the line, and `delete` removes it.
+`rotate` rewrites the `OP8X_KEY` line and keeps the salt, and `delete` removes both lines.
+
+### Returning buyers
+
+`@op8x/analytics` 0.0.3 and later can count returning buyers: it replaces each payer address with a keyed hash of the address under the account's salt, so the same buyer gets the same pseudonym in every worker and op8x never sees the address. The CLI makes the salt once per account (32 random bytes, `op8x_s_` plus 43 base64url characters), keeps it in the op8x file and puts the same salt into every worker it sets up. It never computes a pseudonym.
+
+- `rotate` changes only the server key; the salt stays.
+- On another computer, `import-key` brings the salt along with the key. If that computer already had a different salt, `import-key` replaces it and says so: workers set up there keep the old salt until you run `init` in their folder again, and returning-buyer counts restart in them.
+- `logout` deletes the local copy of the salt. A later `init` without `import-key` makes a new one, and returning-buyer counts restart after a new salt.
+- After a rotate on a new computer, returning-buyer counts restart.
 
 ### For agents
 
@@ -209,14 +248,16 @@ A code is never read from argv: with a terminal the CLI asks for it without echo
 
 ### CI and containers
 
-The op8x file is not in the project. It lives in your user's config folder: `$XDG_CONFIG_HOME/op8x/account.json` (when `XDG_CONFIG_HOME` is an absolute path) or `~/.config/op8x/account.json`, on Windows `%APPDATA%\op8x\account.json`, readable only by your user. A fresh container or CI runner has none. There, sign in with `op8x login` and then either take the key with `op8x import-key <path to the op8x file of the computer that has it>`, or run `op8x rotate` and then `op8x init` in every worker folder within 24 hours. Do not bake the op8x file into an image or commit it.
+The op8x file is not in the project. It lives in your user's config folder: `$XDG_CONFIG_HOME/op8x/account.json` (when `XDG_CONFIG_HOME` is an absolute path) or `~/.config/op8x/account.json`, on Windows `%APPDATA%\op8x\account.json`, readable only by your user. A fresh container or CI runner has none. There, sign in with `op8x login` and then either take the key and the salt with `op8x import-key <path to the op8x file of the computer that has it>`, or run `op8x rotate` and then `op8x init` in every worker folder within 24 hours (this gives the workers a new salt). Do not bake the op8x file into an image or commit it.
 
 ### What the CLI trusts and sends
 
-The CLI uses only `node_modules/wrangler` of the folder it runs in, starts it with its own Node.js without a shell, passes it a fixed list of environment variables (plus `WRANGLER_LOG_SANITIZE=true` and `WRANGLER_WRITE_LOGS=false`, so no dotenv file can make wrangler log the key) and never shows its output. Helper programs on Windows (`icacls.exe`, `whoami.exe`, `rundll32.exe`) run by absolute path from `System32`. To op8x it sends only the hashes of the keys it creates and its name and version; after the sign-in it authenticates with the read token from the op8x file and sends the codes you enter and the requests for test nonces. It never sends the server key itself and never the bodies of your traffic. The test request is one `GET` to your `--url` with the header `op8x-test: <nonce>` and nothing secret. The full contract (states, exit codes, file schema, requests) is in [docs/designs/2026-11-02-cli-account-design.md](https://github.com/op8x-com/x402-tools/blob/main/docs/designs/2026-11-02-cli-account-design.md).
+The CLI uses only `node_modules/wrangler` of the folder it runs in, starts it with its own Node.js without a shell, passes it a fixed list of environment variables (plus `WRANGLER_LOG_SANITIZE=true` and `WRANGLER_WRITE_LOGS=false`, so no dotenv file can make wrangler log the key or the salt) and never shows its output. Helper programs on Windows (`icacls.exe`, `whoami.exe`, `rundll32.exe`) run by absolute path from `System32`. To op8x it sends only the hashes of the keys it creates and its name and version; after the sign-in it authenticates with the read token from the op8x file and sends the codes you enter, the requests for test nonces and the period of a report. It never sends the server key itself, never the salt and never the bodies of your traffic. The test request is one `GET` to your `--url` with the header `op8x-test: <nonce>` and nothing secret. The full contract (states, exit codes, file schema, requests) is in [docs/designs/2026-11-02-cli-account-design.md](https://github.com/op8x-com/x402-tools/blob/main/docs/designs/2026-11-02-cli-account-design.md).
 
 ## Related
 
 For listing checks (Bazaar metadata, `/.well-known/x402`, OpenAPI), run [`x402-listing-check`](https://www.npmjs.com/package/x402-listing-check). What `op8x check` leaves out is listed under "What op8x check does not check" above.
+
+Documentation: [docs.op8x.com](https://docs.op8x.com).
 
 MIT · [op8x.com](https://op8x.com)

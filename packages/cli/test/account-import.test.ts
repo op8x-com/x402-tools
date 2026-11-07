@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import type { TestContext } from "node:test";
 import { generateKey } from "../src/account/keys.ts";
+import { newSalt } from "../src/account/salt.ts";
 import { accountPath, writeAccount } from "../src/account/store.ts";
 import type { AccountFile, ActiveAccount, PendingStepUp } from "../src/account/store.ts";
 import { run } from "../src/cli.ts";
@@ -30,6 +31,7 @@ async function setup(t: TestContext, o: { collector?: string; local?: "none" | "
     read_token: r,
     write_key: null,
     write_key_next: null,
+    salt: null,
     pending_step_up: null,
     deleted: null,
     workers: [],
@@ -258,4 +260,91 @@ test("import-key needs exactly one path", async (t) => {
   assert.equal(await run(["--json", "import-key"], s.deps), 4);
   assert.equal(s.final().state, "usage_error");
   assert.equal(s.final().command, "import-key");
+});
+
+// --- the salt ---------------------------------------------------------------------------------
+
+/** The other computer's op8x file with K and a salt. */
+function otherWithSalt(s: Awaited<ReturnType<typeof setup>>, key: string, salt: string | null): string {
+  const path = s.other(key);
+  const file = JSON.parse(readFileSync(path, "utf8")) as ActiveAccount;
+  writeFileSync(path, JSON.stringify({ ...file, salt }));
+  return path;
+}
+
+test("import-key takes K and the salt from the other file; neither shows in any output", async (t) => {
+  const s = await setup(t);
+  const salt = newSalt();
+  assert.equal(await run(["import-key", otherWithSalt(s, s.current, salt), "--json"], s.deps), 0);
+  assert.equal(s.final().state, "imported");
+  const f = JSON.parse(s.read()) as ActiveAccount;
+  assert.equal(f.write_key, s.current);
+  assert.equal(f.salt, salt);
+  assert.equal(s.deps.stdout().includes("op8x_s_"), false);
+  assert.equal(s.deps.stderr().includes("op8x_s_"), false);
+  for (const r of s.fake.requests) assert.equal(JSON.stringify(r).includes("op8x_s_"), false);
+});
+
+test("import-key from a file without a salt keeps this computer's salt; with neither the salt stays null", async (t) => {
+  const s = await setup(t);
+  const mine = newSalt();
+  await writeAccount(s.deps, { ...s.local, salt: mine });
+  assert.equal(await run(["import-key", otherWithSalt(s, s.current, null), "--json"], s.deps), 0);
+  assert.equal((JSON.parse(s.read()) as ActiveAccount).salt, mine);
+
+  const n = await setup(t);
+  assert.equal(await run(["import-key", n.other(n.current), "--json"], n.deps), 0);
+  assert.equal((JSON.parse(n.read()) as ActiveAccount).salt, null);
+});
+
+const REPLACES_SALT = "The salt was replaced by the one from the imported file. Workers set up on this computer keep the old one until you run op8x init in their folder again; returning-buyer counts restart there.";
+
+test("import-key replaces this computer's salt with the other file's salt and says so (notice import_replaces_salt)", async (t) => {
+  const s = await setup(t);
+  await writeAccount(s.deps, { ...s.local, salt: newSalt() });
+  const theirs = newSalt();
+  assert.equal(await run(["import-key", otherWithSalt(s, s.current, theirs), "--json"], s.deps), 0);
+  assert.equal((JSON.parse(s.read()) as ActiveAccount).salt, theirs);
+  const notices = s.lines().filter((l) => l.event === "notice");
+  assert.deepEqual(notices, [{ schema: "op8x.cli/1", command: "import-key", final: false, event: "notice", id: "import_replaces_salt", text: REPLACES_SALT }]);
+  assert.equal(s.final().state, "imported");
+
+  const tx = await setup(t);
+  await writeAccount(tx.deps, { ...tx.local, salt: newSalt() });
+  assert.equal(await run(["import-key", otherWithSalt(tx, tx.current, newSalt())], tx.deps), 0);
+  assert.ok(tx.deps.stdout().includes(`${REPLACES_SALT}\n`), tx.deps.stdout());
+});
+
+test("import-key says nothing about the salt when it stays: same salt, no local salt, or none in the other file", async (t) => {
+  const same = newSalt();
+  const cases: [string | null, string | null][] = [
+    [same, same],
+    [null, newSalt()],
+    [newSalt(), null],
+  ];
+  for (const [mine, theirs] of cases) {
+    const s = await setup(t);
+    await writeAccount(s.deps, { ...s.local, salt: mine });
+    assert.equal(await run(["import-key", otherWithSalt(s, s.current, theirs), "--json"], s.deps), 0);
+    assert.deepEqual(s.lines().filter((l) => l.event === "notice"), []);
+  }
+});
+
+test("import-key with an invalid salt in the other file: import_failed, the salt not printed, the file stays", async (t) => {
+  const s = await setup(t);
+  const before = s.read();
+  const bad = `op8x_s_${"A".repeat(42)}B`;
+  assert.equal(await run(["import-key", otherWithSalt(s, s.current, bad), "--json"], s.deps), 1);
+  assert.equal(s.final().state, "import_failed");
+  assert.equal(s.deps.stdout().includes(bad), false);
+  assert.equal(s.read(), before);
+  assert.deepEqual(s.fake.requests, []);
+});
+
+test("a key that is not current: the other file's salt is not taken either", async (t) => {
+  const s = await setup(t);
+  const before = s.read();
+  assert.equal(await run(["import-key", otherWithSalt(s, s.previous, newSalt()), "--json"], s.deps), 1);
+  assert.equal(s.final().state, "key_previous");
+  assert.equal(s.read(), before);
 });

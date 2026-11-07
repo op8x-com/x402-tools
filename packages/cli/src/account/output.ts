@@ -67,10 +67,11 @@ export const EXIT_CODES = {
   import_failed: 1,
   config_unreadable: 1,
   permissions_failed: 1,
-  not_available_yet: 1,
+  env_file_unsupported: 1,
   network_error: 2,
   busy: 2,
   unexpected_response: 2,
+  schema_unsupported: 2,
   internal_error: 2,
   usage_error: 4,
   invalid_input: 4,
@@ -165,7 +166,7 @@ const HINTS: Record<FinalState | "waiting_for_human", ((v: HintVars, mode: Mode)
   server_key_missing: (v) =>
     v.rotation_running === true
       ? "This computer has no server key. Run op8x import-key <path to the op8x file of your other computer>, or run op8x rotate --now."
-      : "This computer has no server key. Run op8x import-key <path to the op8x file of your other computer>, or run op8x rotate and then op8x init in every worker folder within 24 hours.",
+      : "This computer has no server key. Run op8x import-key <path to the op8x file of your other computer>, or run op8x rotate and then op8x init in every worker folder within 24 hours. After a rotate on a new computer, returning-buyer counts restart.",
   key_mismatch: () => "The key on this computer is not the account's current key. Run op8x rotate.",
   key_previous: () => "This key is the old one. Run op8x rotate.",
   partial: (v) => `The new key is not in every worker: ${list(v.names)}. Fix them and run the command again; nothing was stopped.`,
@@ -181,7 +182,7 @@ const HINTS: Record<FinalState | "waiting_for_human", ((v: HintVars, mode: Mode)
   code_exhausted: () => "Too many wrong codes. Run the command again for a new code.",
   rate_limited: (v, m) => `Too many requests. Try again after ${time(v.retry_at, m)}.`,
   key_conflict: () => "Run the command again.",
-  deleted_partial: (v) => `The account is deleted. Remove OP8X_KEY by hand from: ${list(v.names)}.`,
+  deleted_partial: (v) => `The account is deleted. Remove OP8X_KEY and OP8X_SALT by hand from: ${list(v.names)}.`,
   not_logged_in: () => "This computer is not signed in. Run op8x init or op8x login.",
   key_auth: () => "This computer's access is no longer valid. Run op8x login.",
   import_failed: () => "The file could not be read as an op8x file.",
@@ -190,11 +191,12 @@ const HINTS: Record<FinalState | "waiting_for_human", ((v: HintVars, mode: Mode)
     v.after_delete_path === undefined
       ? "The op8x file could not be protected; nothing was written."
       : `The account is deleted (receipt ${text(v.action_id)}), but the op8x file could not be updated. Delete it by hand: ${text(v.after_delete_path)}.`,
-  not_available_yet: () => "Numbers are not available in this version yet.",
   network_error: () => "Check the connection and run the command again.",
   busy: () => "The service is busy; try again in a minute.",
   unexpected_response: (v) =>
     `op8x got an answer it does not expect (status ${text(v.status)}, code ${text(v.code)}). Update op8x and run the command again; if it stays, please report it.`,
+  schema_unsupported: () =>
+    "The report has a format this version of op8x cannot read. Update @op8x/cli (npx @op8x/cli@latest report) and run the command again.",
   internal_error: () => "op8x stopped because of an internal error. Please report this.",
   // The help of the command goes to stderr instead.
   usage_error: null,
@@ -205,6 +207,7 @@ const HINTS: Record<FinalState | "waiting_for_human", ((v: HintVars, mode: Mode)
       ? "There is no step waiting for a code. Run the command without --code-stdin."
       : `The waiting step belongs to op8x ${text(v.command)}. Run that same command with --code-stdin, or run this one without --code-stdin.`,
   env_file_not_ignored: () => "Use a file that git ignores (and not .dev.vars).",
+  env_file_unsupported: () => "The env file has a carriage return that does not end a line, or a quoted value that spans lines, which op8x does not rewrite. Save it with LF or CRLF line endings and each value on one line, then run the command again.",
   collector_url_not_allowed: () => "OP8X_COLLECTOR_URL may only point to 127.0.0.1, localhost or [::1].",
   collector_mismatch: () =>
     "The op8x file on this computer was made for a different service address. Unset OP8X_COLLECTOR_URL, or set it to the address the file was made for.",
@@ -221,9 +224,13 @@ export function agentHint(state: FinalState | "waiting_for_human", vars: HintVar
 export const NOTICES = {
   code_already_sent: "A code was already sent in the last 10 minutes. Check your mail for it.",
   contact_unknown: "This computer does not know the contact address of this account.",
-  secret_put_deploys: "wrangler secret put deploys the worker right away.",
+  secret_put_deploys: "Changing the worker's secrets with wrangler deploys it right away.",
   test_host: "Sending one test request to {host}.",
   logout_removes_key: "This computer holds the server key. It is deleted with the op8x file; your workers keep their copy.",
+  logout_removes_salt:
+    "This computer holds the account's salt. It is deleted with the op8x file; your workers keep their copy. A later op8x init here makes a new salt unless op8x import-key brings it back, and returning-buyer counts restart after a new salt.",
+  import_replaces_salt:
+    "The salt was replaced by the one from the imported file. Workers set up on this computer keep the old one until you run op8x init in their folder again; returning-buyer counts restart there.",
 } as const;
 
 export type NoticeId = keyof typeof NOTICES;
@@ -253,6 +260,17 @@ export interface Output {
   final: (state: FinalState, o?: { extra?: Record<string, unknown>; hint?: HintVars }) => number;
   /** The final line of an API error, with the fields its state carries. */
   error: (e: ApiError, o?: { extra?: Record<string, unknown>; hint?: HintVars }) => number;
+  /**
+   * The result of a run that ends with a document instead of a final line (op8x report): `text`
+   * as it is, through the guard, then nothing more. Returns 0, or 2 if the guard replaced it.
+   */
+  document: (text: string) => number;
+  /**
+   * Checks values that are not printed as they are (the decoded strings of a document) with the
+   * same guard as a line. True if none holds a secret; else the internal_error line is written,
+   * the output stops and false is returned.
+   */
+  guard: (values: Iterable<string>) => boolean;
 }
 
 export interface OutputOptions {
@@ -267,6 +285,50 @@ export interface OutputOptions {
 
 /** Shorter values are no secret of the CLI (keys are 50 characters) and would match almost any line. */
 const MIN_SECRET = 8;
+
+/**
+ * Every string of a parsed JSON value, object keys included. Iterative, so a deeply nested
+ * document cannot overflow the stack.
+ */
+export function jsonStrings(root: unknown): string[] {
+  const found: string[] = [];
+  const todo: unknown[] = [root];
+  while (todo.length > 0) {
+    const v = todo.pop();
+    if (typeof v === "string") found.push(v);
+    else if (Array.isArray(v)) for (const x of v) todo.push(x);
+    else if (typeof v === "object" && v !== null) {
+      for (const [k, x] of Object.entries(v)) {
+        found.push(k);
+        todo.push(x);
+      }
+    }
+  }
+  return found;
+}
+
+/** Characters a terminal may act on or hide: control, format and line or paragraph separators. */
+const UNSAFE_IN_JSON = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+const UNSAFE_IN_JSON_ALL = new RegExp(UNSAFE_IN_JSON.source, "gu");
+
+/** A character as JSON escapes of its UTF-16 code units (a surrogate pair outside the BMP). */
+function jsonEscape(c: string): string {
+  let e = "";
+  for (let i = 0; i < c.length; i += 1) e += `\\u${c.charCodeAt(i).toString(16).padStart(4, "0")}`;
+  return e;
+}
+
+/**
+ * The document for --json: the text as received if it is one line without any control, format
+ * or separator character; else the same document as one line of JSON with each such character
+ * written as a JSON escape. Throws if the document cannot be serialized (nested too deeply).
+ */
+export function oneLineJson(text: string, doc: unknown): string {
+  if (!UNSAFE_IN_JSON.test(text)) return text;
+  const line = JSON.stringify(doc);
+  if (typeof line !== "string") throw new Error("the document cannot be serialized");
+  return line.replace(UNSAFE_IN_JSON_ALL, jsonEscape);
+}
 
 /** Every string in a JSON value (keys too) cleaned of control and format characters. */
 function cleanDeep(v: unknown): unknown {
@@ -319,14 +381,25 @@ export function createOutput(o: OutputOptions): Output {
       ? `${JSON.stringify({ schema: CLI_SCHEMA, command, final: true, state: "internal_error", exit_code: 2, agent_hint: internalHint })}\n`
       : `${internalHint}\n`;
 
+  /** True if one of `texts` holds a secret of the run. */
+  function holdsSecret(texts: Iterable<string>): boolean {
+    const secrets = [...o.secrets(), deps.env.OP8X_TEST_TOKEN].filter((s): s is string => typeof s === "string" && s.length >= MIN_SECRET);
+    for (const t of texts) if (secrets.some((s) => t.includes(s))) return true;
+    return false;
+  }
+
+  /** Writes the internal_error line instead of what was refused; nothing more is written. */
+  function refuse(): void {
+    stopped = true;
+    finalExit = 2;
+    deps.out(internalLine());
+  }
+
   /** Writes one line through the guard; false if the guard replaced it (the output then stops with exit 2). */
   function write(line: string): boolean {
     if (stopped) return false;
-    const secrets = [...o.secrets(), deps.env.OP8X_TEST_TOKEN];
-    if (secrets.some((s) => typeof s === "string" && s.length >= MIN_SECRET && line.includes(s))) {
-      stopped = true;
-      finalExit = 2;
-      deps.out(internalLine());
+    if (holdsSecret([line])) {
+      refuse();
       return false;
     }
     deps.out(line);
@@ -416,6 +489,19 @@ export function createOutput(o: OutputOptions): Output {
       else write(`${message}\n`);
     },
     final,
+    document: (text) => {
+      if (stopped) return finalExit ?? 2;
+      const ok = write(text.endsWith("\n") ? text : `${text}\n`);
+      stopped = true;
+      finalExit = ok ? 0 : 2;
+      return finalExit;
+    },
+    guard: (values) => {
+      if (stopped) return false;
+      if (!holdsSecret(values)) return true;
+      refuse();
+      return false;
+    },
     error: (e, f = {}) => {
       const { state, ...fields } = e;
       return final(state, { ...f, extra: { ...fields, ...(f.extra ?? {}) } });
