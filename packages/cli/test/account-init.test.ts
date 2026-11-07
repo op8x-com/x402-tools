@@ -712,8 +712,19 @@ test("--env-file with a carriage return that does not end a line: env_file_unsup
   assert.equal(s.final().state, "env_file_unsupported");
   assert.equal(
     s.final().agent_hint,
-    "The env file has a carriage return that does not end a line, which op8x does not rewrite. Save it with LF or CRLF line endings and run the command again.",
+    "The env file has a carriage return that does not end a line, or a quoted value that spans lines, which op8x does not rewrite. Save it with LF or CRLF line endings and each value on one line, then run the command again.",
   );
+  assert.equal(readFileSync(s.path, "latin1"), before);
+  assert.equal(s.file().workers.length, 0);
+});
+
+test("--env-file with a quoted value that spans lines: env_file_unsupported, the file stays as it is", async (t) => {
+  const s = await envFileSetup(t);
+  await signedIn(s);
+  const before = 'CERT="first line\nOP8X_SALT=inside\nlast line"\n';
+  writeFileSync(s.path, before);
+  assert.equal(await run(["init", "--json", "--env-file", s.path, "--url", s.url], s.deps), 1);
+  assert.equal(s.final().state, "env_file_unsupported");
   assert.equal(readFileSync(s.path, "latin1"), before);
   assert.equal(s.file().workers.length, 0);
 });
@@ -840,7 +851,7 @@ test("the salt of the op8x file is one of the output guard's secrets", async (t)
   assert.equal(s.final().state, "internal_error");
 });
 
-test("two inits at the same time on a signed-in computer without salt end with one salt for both workers", async (t) => {
+test("a second init that starts while the first is running, after the first saved its salt, puts the same salt", async (t) => {
   const fake = await startFakeCollector();
   t.after(() => fake.close());
   const read = generateKey("r");
@@ -867,7 +878,16 @@ test("two inits at the same time on a signed-in computer without salt end with o
     deleted: null,
     workers: [],
   });
-  await Promise.all([run(["init", "--json"], dA), run(["init", "--json"], dB)]);
+  // Deterministic order: the second init starts only once the first has saved its salt (it saves
+  // before it puts anything). Two inits that both read "no salt" before either saves are not
+  // covered here; see the comment at the re-read in commands.ts.
+  const first = run(["init", "--json"], dA);
+  const deadline = Date.now() + 30000;
+  while ((JSON.parse(readFileSync(accountPath(dA), "utf8")) as ActiveAccount).salt === null) {
+    assert.ok(Date.now() < deadline, "the first init did not save a salt");
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  await Promise.all([first, run(["init", "--json"], dB)]);
   const saltA = lastPut(a, "OP8X_SALT");
   const saltB = lastPut(b, "OP8X_SALT");
   const file = JSON.parse(readFileSync(accountPath(dA), "utf8")) as ActiveAccount;

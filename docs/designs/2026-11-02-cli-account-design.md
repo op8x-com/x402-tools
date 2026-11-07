@@ -258,7 +258,7 @@ special case, listed after the first.
 | `code_missing` | op8x says the code was not sent | 4 | Internal error: the code was not sent. Please report this. |
 | `no_pending_step` | `--code-stdin` without a waiting step, or for another command | 4 | There is no step waiting for a code. Run the command without --code-stdin. For another command: The waiting step belongs to op8x {command}. Run that same command with --code-stdin, or run this one without --code-stdin. |
 | `env_file_not_ignored` | `--env-file` is not ignored by git, is tracked, is outside a repository, or is `.dev.vars` | 4 | Use a file that git ignores (and not .dev.vars). |
-| `env_file_unsupported` | the `--env-file` holds a carriage return that does not end a line (CR without LF); nothing is written | 1 | The env file has a carriage return that does not end a line, which op8x does not rewrite. Save it with LF or CRLF line endings and run the command again. |
+| `env_file_unsupported` | the `--env-file` holds a carriage return that does not end a line (CR without LF), or a quoted value that spans lines; nothing is written | 1 | The env file has a carriage return that does not end a line, or a quoted value that spans lines, which op8x does not rewrite. Save it with LF or CRLF line endings and each value on one line, then run the command again. |
 | `collector_url_not_allowed` | `OP8X_COLLECTOR_URL` points elsewhere than loopback | 4 | OP8X_COLLECTOR_URL may only point to 127.0.0.1, localhost or [::1]. |
 | `collector_mismatch` | the op8x file was made for another service address | 4 | The op8x file on this computer was made for a different service address. Unset OP8X_COLLECTOR_URL, or set it to the address the file was made for. |
 
@@ -314,11 +314,10 @@ and refuses to write if it holds anything else. The file is written to a
 temporary file in the same folder and renamed. If protection fails, nothing is
 written (`permissions_failed`). The `--env-file` is written the same way
 (without changing its folder). An `--env-file` that holds a carriage return
-that does not end a line (CR without LF) is not rewritten: `init` ends with
-`env_file_unsupported`, and `rotate` and `delete` list that worker as failed.
-Other lines, multi-line quoted values included, are kept byte for byte; a line
-inside such a value that starts with `OP8X_KEY=` or `OP8X_SALT=` is treated as
-a line of its own.
+that does not end a line (CR without LF), or a quoted value that spans lines
+(an opening `"` or `'` after `NAME=` whose closing quote is not on the same
+line), is not rewritten: `init` ends with `env_file_unsupported`, and `rotate`
+and `delete` list that worker as failed. Other lines are kept byte for byte.
 
 Schema `op8x.account/1`, with every secret value replaced here:
 

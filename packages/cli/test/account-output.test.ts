@@ -101,7 +101,7 @@ const CATALOG: [FinalState, number, string | null, Parameters<typeof agentHint>[
   [
     "env_file_unsupported",
     1,
-    "The env file has a carriage return that does not end a line, which op8x does not rewrite. Save it with LF or CRLF line endings and run the command again.",
+    "The env file has a carriage return that does not end a line, or a quoted value that spans lines, which op8x does not rewrite. Save it with LF or CRLF line endings and each value on one line, then run the command again.",
   ],
   ["collector_url_not_allowed", 4, "OP8X_COLLECTOR_URL may only point to 127.0.0.1, localhost or [::1]."],
   [

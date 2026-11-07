@@ -207,7 +207,7 @@ const HINTS: Record<FinalState | "waiting_for_human", ((v: HintVars, mode: Mode)
       ? "There is no step waiting for a code. Run the command without --code-stdin."
       : `The waiting step belongs to op8x ${text(v.command)}. Run that same command with --code-stdin, or run this one without --code-stdin.`,
   env_file_not_ignored: () => "Use a file that git ignores (and not .dev.vars).",
-  env_file_unsupported: () => "The env file has a carriage return that does not end a line, which op8x does not rewrite. Save it with LF or CRLF line endings and run the command again.",
+  env_file_unsupported: () => "The env file has a carriage return that does not end a line, or a quoted value that spans lines, which op8x does not rewrite. Save it with LF or CRLF line endings and each value on one line, then run the command again.",
   collector_url_not_allowed: () => "OP8X_COLLECTOR_URL may only point to 127.0.0.1, localhost or [::1].",
   collector_mismatch: () =>
     "The op8x file on this computer was made for a different service address. Unset OP8X_COLLECTOR_URL, or set it to the address the file was made for.",

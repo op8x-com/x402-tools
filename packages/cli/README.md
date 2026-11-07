@@ -215,7 +215,7 @@ echo ".env.op8x" >> .gitignore
 npx @op8x/cli init --env-file .env.op8x --url http://127.0.0.1:3000/paid
 ```
 
-The CLI refuses a file that git does not ignore, a tracked file, a file outside a git repository and `.dev.vars`. It adds or replaces the lines `OP8X_KEY=…` and `OP8X_SALT=…` and leaves every other line as it is. A file with a carriage return that does not end a line (CR without LF) is refused with `env_file_unsupported` and left as it is. Load the file as the environment and pass both to the module as the `key` and `salt` options (outside Workers the module does not read them itself):
+The CLI refuses a file that git does not ignore, a tracked file, a file outside a git repository and `.dev.vars`. It adds or replaces the lines `OP8X_KEY=…` and `OP8X_SALT=…` and leaves every other line as it is. A file with a carriage return that does not end a line (CR without LF), or with a quoted value that spans lines, is refused with `env_file_unsupported` and left as it is. Load the file as the environment and pass both to the module as the `key` and `salt` options (outside Workers the module does not read them itself):
 
 ```sh
 node --env-file=.env.op8x server.js

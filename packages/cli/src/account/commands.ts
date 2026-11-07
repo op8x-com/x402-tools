@@ -365,6 +365,8 @@ async function init(json: boolean, deps: Deps, o: InitOptions): Promise<number> 
   if (salt === null) {
     // Another init on this computer may have made the salt since this run read the op8x file:
     // read it again right before a new one is made, and take that one.
+    // This only narrows the window: two inits that both read before either saves can still create
+    // two salts (the later save wins). Closing that needs a lock file.
     const again = await loadFile(deps);
     const theirs = again.ok && again.file !== null && again.file.deleted === null && again.file.account === file!.account ? again.file.salt : null;
     if (theirs !== null) {

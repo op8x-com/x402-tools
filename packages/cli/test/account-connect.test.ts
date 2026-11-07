@@ -407,6 +407,26 @@ test("an env file with a carriage return that does not end a line is refused, no
   assert.equal(withoutEnvKey(Buffer.from("A=1\r\nOP8X_KEY=x\r\n"))?.toString(), "A=1\r\n");
 });
 
+test("an env file with a quoted value that spans lines is refused, not rewritten", () => {
+  const key = generateKey("w");
+  const bs = String.fromCharCode(92);
+  const bad = [
+    'CERT="line one\nOP8X_KEY=inside\nline three"\n',
+    "NOTE='first\nsecond'\n",
+    'export A = "open\r\nclose"\r\n',
+    'A=1\nB="never closed\n',
+    `ESC="ends with escaped quote${bs}"\nmore"\n`,
+  ];
+  for (const text of bad) {
+    assert.throws(() => withEnvValues(Buffer.from(text), [["OP8X_KEY", key]]), EnvFileFormatError, JSON.stringify(text));
+    assert.throws(() => withoutEnvKey(Buffer.from(text)), EnvFileFormatError, JSON.stringify(text));
+  }
+  // Quotes that close on their line, or sit inside a value, are fine.
+  const fine = `A="one line"\nB='also'\nC=it"s\nD="a ${bs}" b"\nE=\n`;
+  assert.equal(withEnvValues(Buffer.from(fine), [["OP8X_KEY", key]]).toString(), `${fine}OP8X_KEY=${key}\n`);
+  assert.equal(withoutEnvKey(Buffer.from(`${fine}OP8X_KEY=x\n`))?.toString(), fine);
+});
+
 test("withoutEnvKey: removes the OP8X_KEY and OP8X_SALT lines, keeps every other line", () => {
   const salt = newSalt();
   assert.equal(withoutEnvKey(Buffer.from(`A=1\nOP8X_KEY=k\r\nexport OP8X_SALT = ${salt}\nOP8X_SALTY=x\n`))?.toString(), "A=1\nOP8X_SALTY=x\n");
