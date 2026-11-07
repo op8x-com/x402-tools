@@ -12,7 +12,7 @@ import { envFileAllowed, isoNow, upsertWorker, verifyWorker, workerLine, writeEn
 import { deviceKeys, deviceLogin } from "./device.ts";
 import type { DeviceFailure, DeviceKeys } from "./device.ts";
 import { keyFingerprint } from "./keys.ts";
-import { createOutput, finalLine } from "./output.ts";
+import { createOutput, finalLine, jsonStrings, oneLineJson } from "./output.ts";
 import { DOCS_BASE, renderReportView } from "./report-view.ts";
 import { ROTATE_USAGE, rotate } from "./rotate.ts";
 import { newSalt } from "./salt.ts";
@@ -664,7 +664,8 @@ function reportDays(v: Value): number | null {
 
 /**
  * op8x report [--days <n> | --week | --month]: GET /tenant/report with R. Success: with --json
- * the op8x.metrics/1 document exactly as received (only its schema is checked), else the terminal
+ * the op8x.metrics/1 document as received or as one equivalent line (oneLineJson; only its schema is
+ * checked), else the terminal
  * view; every other end is one final line (with --json one op8x.cli/1 line). No steps.
  */
 async function report(json: boolean, deps: Deps, days: number): Promise<number> {
@@ -676,13 +677,16 @@ async function report(json: boolean, deps: Deps, days: number): Promise<number> 
   if (!s.ok) return s.exit;
   const r = await createApi(deps, s.base).report(s.file.read_token, days);
   if (!r.ok) return out.error(r.error);
-  if (json) return out.document(r.value.text);
-  let view: string;
+  // The view cuts long strings and --json may print a decoded copy, so the guard checks the body
+  // as received and every decoded string of it before anything is printed. A secret split across
+  // two strings is not caught here (the line guard still checks every printed line).
+  if (!out.guard([r.value.text, ...jsonStrings(r.value.doc)])) return out.final("internal_error");
+  let printed: string;
   try {
-    view = renderReportView(r.value.doc);
+    printed = json ? oneLineJson(r.value.text, r.value.doc) : renderReportView(r.value.doc);
   } catch {
-    // A document the view cannot handle is a fault of this version, never an unhandled rejection.
+    // A document this version cannot print is its own fault, never an unhandled rejection.
     return out.final("internal_error");
   }
-  return out.document(view);
+  return out.document(printed);
 }

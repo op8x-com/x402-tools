@@ -24,6 +24,7 @@ const doc = (name: string) => JSON.parse(fixture(name)) as Record<string, unknow
 /** The compact JSON the collector sends. */
 const compact = (name: string) => JSON.stringify(doc(name));
 const ESC = String.fromCodePoint(0x1b);
+const BACKSLASH = String.fromCodePoint(0x5c);
 
 async function setup(t: TestContext, o: { collector?: string; signedIn?: boolean } = {}) {
   const fake: FakeCollector = await startFakeCollector();
@@ -439,4 +440,85 @@ test("report: an error inside the view ends as internal_error (exit 2), never as
   }
   assert.equal(code, 2);
   assert.equal(s.deps.stdout(), "op8x stopped because of an internal error. Please report this.\n");
+});
+
+// --- the output guard on the document ---------------------------------------------------------
+
+const INTERNAL = "op8x stopped because of an internal error. Please report this.\n";
+
+test("report in text mode refuses a document that holds a secret anywhere, even past the 100 characters the view prints", async (t) => {
+  const s = await setup(t);
+  const k = s.file.write_key as string;
+  const text = `${"x".repeat(60)}${k}`;
+  s.fake.reportBody = JSON.stringify({
+    schema: "op8x.metrics/1",
+    data: { routes: { r: "GET /a" }, texts: { t: text } },
+    funnel: { routes: [{ route_ref: "r", text_refs: ["t"] }] },
+  });
+  assert.equal(await run(["report"], s.deps), 2);
+  assert.equal(s.deps.stdout(), INTERNAL);
+  assert.equal(s.deps.stdout().includes(k.slice(0, 12)), false);
+});
+
+test("report refuses a secret that is only visible after JSON decoding (an escaped underscore), with and without --json", async (t) => {
+  for (const json of [true, false]) {
+    const s = await setup(t);
+    const r = s.file.read_token;
+    const escaped = r.replace("_", `${BACKSLASH}u005f`);
+    assert.notEqual(escaped, r);
+    s.fake.reportBody = `{"schema":"op8x.metrics/1","x":"${escaped}"}`;
+    assert.equal(await run(json ? ["report", "--json"] : ["report"], s.deps), 2);
+    if (json) oneCliLine(s, "internal_error", 2);
+    else assert.equal(s.deps.stdout(), INTERNAL);
+    assert.equal(s.deps.stdout().includes(escaped), false);
+  }
+});
+
+test("report refuses a secret in a key of the document", async (t) => {
+  const s = await setup(t);
+  s.fake.reportBody = JSON.stringify({ schema: "op8x.metrics/1", data: { routes: { [s.file.read_token]: "GET /a" } } });
+  assert.equal(await run(["report"], s.deps), 2);
+  assert.equal(s.deps.stdout(), INTERNAL);
+});
+
+test("report --json prints a document with line breaks or unsafe characters as one equivalent line, those characters escaped", async (t) => {
+  const s = await setup(t);
+  const c = (cp: number) => String.fromCodePoint(cp);
+  s.fake.reportBody = `{"schema":"op8x.metrics/1",${c(0x0a)}${c(0x09)}"data":{"routes":{"a":"${c(0x9b)}31m${c(0x9d)}8;;https://evil/${c(0x9c)}${c(0x202e)}abc${c(0x2028)}${c(0x2029)}${c(0x200b)}"}}}`;
+  assert.equal(await run(["report", "--json"], s.deps), 0);
+  const out = s.deps.stdout();
+  assert.equal(out.endsWith("\n"), true);
+  assert.equal(out.split("\n").length, 2);
+  assert.deepEqual(JSON.parse(out), JSON.parse(s.fake.reportBody));
+  assert.deepEqual(
+    Array.from(out).filter((c) => !(c === "\n" || (c >= " " && c <= "~"))),
+    [],
+  );
+  assert.ok(out.includes(String.raw`\u009b31m`));
+  assert.ok(out.includes(String.raw`\u202e`));
+});
+
+test("report --json escapes unsafe characters outside the Basic Multilingual Plane as surrogate pairs", async (t) => {
+  const s = await setup(t);
+  // U+E0041 TAG LATIN CAPITAL LETTER A is a format character.
+  s.fake.reportBody = `{"schema":"op8x.metrics/1","x":"a${String.fromCodePoint(0xe0041)}b"}`;
+  assert.equal(await run(["report", "--json"], s.deps), 0);
+  assert.equal(s.deps.stdout(), `{"schema":"op8x.metrics/1","x":"a\\udb40\\udc41b"}${"\n"}`);
+});
+
+test("report: a deeply nested document is checked without overflowing the stack", async (t) => {
+  const deep = "[".repeat(200_000) + "]".repeat(200_000);
+  for (const json of [false, true]) {
+    const s = await setup(t);
+    // In --json mode the line break forces the one-line form, which cannot be built: internal_error.
+    s.fake.reportBody = `{"schema":"op8x.metrics/1",${json ? "\n" : ""}"window":{"days":${deep}}}`;
+    const code = await run(json ? ["report", "--json"] : ["report"], s.deps);
+    if (json) {
+      assert.equal(code, 2);
+      oneCliLine(s, "internal_error", 2);
+    } else {
+      assert.equal(code, 0);
+      assert.ok(s.deps.stdout().startsWith("op8x report · last (array) days"));
+    }
+  }
 });

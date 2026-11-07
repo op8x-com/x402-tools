@@ -581,6 +581,13 @@ the run or `OP8X_TEST_TOKEN`. A line that does is replaced by the final line
 `internal_error` (exit code 2), the original is written nowhere, and the run
 stops before its next side effect.
 
+`report` checks the document before it prints anything: the body as received
+and every string of the decoded document (object keys included), so a secret
+past the 100 characters the view prints, or one that is only visible after
+JSON decoding (such as a read token with an escaped underscore), ends with `internal_error` as well. Known
+limit: a secret split across two strings of the document is not found by this
+check; only the line guard sees what is printed.
+
 ## Report
 
 `op8x report` sends `GET /api/v1/tenant/report?days=<n>` with the read token
@@ -593,12 +600,19 @@ file it ends with `not_logged_in` and sends nothing.
 *   **Busy.** `503 busy` is retried after the seconds of the `Retry-After`
     header (whole seconds, at least 1, at most 60; without a valid header after
     10 seconds), for up to 2 minutes in all, then `busy`.
-*   **`--json`.** On success stdout holds exactly the `op8x.metrics/1` document
-    as op8x sent it, followed by a newline. The CLI checks only its `schema`;
-    another schema is `schema_unsupported`. Fields and values the CLI does not
-    know pass through unchanged. Every other end is one `op8x.cli/1` final
-    line, as for the other commands. The output guard applies to the document
-    too.
+*   **`--json`.** On success stdout holds exactly one line: the collector's
+    `op8x.metrics/1` document unchanged, or an equivalent one-line JSON with
+    unsafe characters escaped, followed by a newline. The document is printed
+    as received if it is one line without any control character (category Cc,
+    tabs and line breaks included), format character (Cf) or line or paragraph
+    separator (Zl, Zp); otherwise the CLI prints the parsed document
+    serialized again on one line, with each such character written as a JSON
+    `\uXXXX` escape (outside the Basic Multilingual Plane as a surrogate pair).
+    A document that cannot be serialized again (nested too deeply) ends with
+    `internal_error`. The CLI checks only its `schema`; another schema is
+    `schema_unsupported`. Fields and values the CLI does not know pass through.
+    Every other end is one `op8x.cli/1` final line, as for the other
+    commands. The output guard applies to the document too.
 *   **Text.** A view with one block per part of the document (liveness, the
     routes from price offer to delivery, wallets, revenue as reported, data
     basis), then every finding with its full text and its link

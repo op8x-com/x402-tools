@@ -261,6 +261,12 @@ export interface Output {
    * as it is, through the guard, then nothing more. Returns 0, or 2 if the guard replaced it.
    */
   document: (text: string) => number;
+  /**
+   * Checks values that are not printed as they are (the decoded strings of a document) with the
+   * same guard as a line. True if none holds a secret; else the internal_error line is written,
+   * the output stops and false is returned.
+   */
+  guard: (values: Iterable<string>) => boolean;
 }
 
 export interface OutputOptions {
@@ -275,6 +281,50 @@ export interface OutputOptions {
 
 /** Shorter values are no secret of the CLI (keys are 50 characters) and would match almost any line. */
 const MIN_SECRET = 8;
+
+/**
+ * Every string of a parsed JSON value, object keys included. Iterative, so a deeply nested
+ * document cannot overflow the stack.
+ */
+export function jsonStrings(root: unknown): string[] {
+  const found: string[] = [];
+  const todo: unknown[] = [root];
+  while (todo.length > 0) {
+    const v = todo.pop();
+    if (typeof v === "string") found.push(v);
+    else if (Array.isArray(v)) for (const x of v) todo.push(x);
+    else if (typeof v === "object" && v !== null) {
+      for (const [k, x] of Object.entries(v)) {
+        found.push(k);
+        todo.push(x);
+      }
+    }
+  }
+  return found;
+}
+
+/** Characters a terminal may act on or hide: control, format and line or paragraph separators. */
+const UNSAFE_IN_JSON = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+const UNSAFE_IN_JSON_ALL = new RegExp(UNSAFE_IN_JSON.source, "gu");
+
+/** A character as JSON escapes of its UTF-16 code units (a surrogate pair outside the BMP). */
+function jsonEscape(c: string): string {
+  let e = "";
+  for (let i = 0; i < c.length; i += 1) e += `\\u${c.charCodeAt(i).toString(16).padStart(4, "0")}`;
+  return e;
+}
+
+/**
+ * The document for --json: the text as received if it is one line without any control, format
+ * or separator character; else the same document as one line of JSON with each such character
+ * written as a JSON escape. Throws if the document cannot be serialized (nested too deeply).
+ */
+export function oneLineJson(text: string, doc: unknown): string {
+  if (!UNSAFE_IN_JSON.test(text)) return text;
+  const line = JSON.stringify(doc);
+  if (typeof line !== "string") throw new Error("the document cannot be serialized");
+  return line.replace(UNSAFE_IN_JSON_ALL, jsonEscape);
+}
 
 /** Every string in a JSON value (keys too) cleaned of control and format characters. */
 function cleanDeep(v: unknown): unknown {
@@ -327,14 +377,25 @@ export function createOutput(o: OutputOptions): Output {
       ? `${JSON.stringify({ schema: CLI_SCHEMA, command, final: true, state: "internal_error", exit_code: 2, agent_hint: internalHint })}\n`
       : `${internalHint}\n`;
 
+  /** True if one of `texts` holds a secret of the run. */
+  function holdsSecret(texts: Iterable<string>): boolean {
+    const secrets = [...o.secrets(), deps.env.OP8X_TEST_TOKEN].filter((s): s is string => typeof s === "string" && s.length >= MIN_SECRET);
+    for (const t of texts) if (secrets.some((s) => t.includes(s))) return true;
+    return false;
+  }
+
+  /** Writes the internal_error line instead of what was refused; nothing more is written. */
+  function refuse(): void {
+    stopped = true;
+    finalExit = 2;
+    deps.out(internalLine());
+  }
+
   /** Writes one line through the guard; false if the guard replaced it (the output then stops with exit 2). */
   function write(line: string): boolean {
     if (stopped) return false;
-    const secrets = [...o.secrets(), deps.env.OP8X_TEST_TOKEN];
-    if (secrets.some((s) => typeof s === "string" && s.length >= MIN_SECRET && line.includes(s))) {
-      stopped = true;
-      finalExit = 2;
-      deps.out(internalLine());
+    if (holdsSecret([line])) {
+      refuse();
       return false;
     }
     deps.out(line);
@@ -430,6 +491,12 @@ export function createOutput(o: OutputOptions): Output {
       stopped = true;
       finalExit = ok ? 0 : 2;
       return finalExit;
+    },
+    guard: (values) => {
+      if (stopped) return false;
+      if (!holdsSecret(values)) return true;
+      refuse();
+      return false;
     },
     error: (e, f = {}) => {
       const { state, ...fields } = e;
