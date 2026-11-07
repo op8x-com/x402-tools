@@ -257,11 +257,11 @@ test("report: Retry-After is clamped to 1..60 seconds; absent or not an integer 
   }
 });
 
-test("report: busy for longer than 2 minutes ends as busy (exit 2), Retry-After or not", async (t) => {
+test("report: busy for longer than 2 minutes or 12 requests ends as busy (exit 2), Retry-After or not", async (t) => {
   const cases: [string | null, number[]][] = [
     ["60", [60_000, 60_000]],
-    ["5", Array(24).fill(5_000)],
-    [null, Array(12).fill(10_000)],
+    ["5", Array(11).fill(5_000)],
+    [null, Array(11).fill(10_000)],
   ];
   for (const [header, sleeps] of cases) {
     const s = await setup(t);
@@ -520,5 +520,16 @@ test("report: a deeply nested document is checked without overflowing the stack"
       assert.equal(code, 0);
       assert.ok(s.deps.stdout().startsWith("op8x report · last (array) days"));
     }
+  }
+});
+
+test("report: a busy collector gets at most 12 requests in all, however short its Retry-After", async (t) => {
+  for (const header of ["1", "0"]) {
+    const s = await setup(t);
+    s.fake.respond("report", busyAnswer(header), 1000);
+    assert.equal(await run(["report", "--json"], s.deps), 2);
+    assert.equal(s.reports().length, 12, header);
+    assert.deepEqual(s.deps.sleeps, Array(11).fill(1_000), header);
+    oneCliLine(s, "busy", 2);
   }
 });

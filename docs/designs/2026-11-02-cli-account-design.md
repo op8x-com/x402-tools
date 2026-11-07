@@ -248,7 +248,7 @@ special case, listed after the first.
 | `config_unreadable` | the wrangler configuration could not be read | 1 | The wrangler configuration could not be read. |
 | `permissions_failed` | a file could not be protected, written or removed | 1 | The op8x file could not be protected; nothing was written. After the account was deleted: The account is deleted (receipt {action_id}), but the op8x file could not be updated. Delete it by hand: {path}. |
 | `network_error` | network, timeout, redirect, any 5xx except `503 busy`; waiting longer than 90 seconds | 2 | Check the connection and run the command again. |
-| `busy` | `503 busy` for longer than 2 minutes (retried every 10 seconds; `report` waits as long as `Retry-After` says) | 2 | The service is busy; try again in a minute. |
+| `busy` | `503 busy` for longer than 2 minutes (retried every 10 seconds; `report` waits as long as `Retry-After` says and sends at most 12 requests) | 2 | The service is busy; try again in a minute. |
 | `unexpected_response` | any other status or code, a body that is not JSON or has the wrong shape, a `retry_after_s` over one day (86400), a link that is not on the fixed host | 2 | op8x got an answer it does not expect (status {status}, code {code}). Update op8x and run the command again; if it stays, please report it. |
 | `schema_unsupported` | `report`: the answer is a JSON object whose `schema` is not `op8x.metrics/1` | 2 | The report has a format this version of op8x cannot read. Update @op8x/cli (npx @op8x/cli@latest report) and run the command again. |
 | `internal_error` | the output guard found a secret in a line, or a programming error | 2 | op8x stopped because of an internal error. Please report this. |
@@ -370,7 +370,8 @@ follows one) and the body read up to a fixed limit. `OP8X_COLLECTOR_URL` may
 replace the address only with `http://127.0.0.1:<port>`, `http://localhost:<port>`
 or `http://[::1]:<port>`, for tests against a local collector. Requests are sent
 one after another; `503 busy` is retried every 10 seconds for up to 2 minutes
-(on `GET /api/v1/tenant/report` after the seconds of its `Retry-After` header).
+(on `GET /api/v1/tenant/report` after the seconds of its `Retry-After` header,
+for at most 12 requests).
 
 | Request | Body |
 | --- | --- |
@@ -599,7 +600,8 @@ file it ends with `not_logged_in` and sends nothing.
     repeated one or another value is a usage error (exit code 4).
 *   **Busy.** `503 busy` is retried after the seconds of the `Retry-After`
     header (whole seconds, at least 1, at most 60; without a valid header after
-    10 seconds), for up to 2 minutes in all, then `busy`.
+    10 seconds), for up to 2 minutes and at most 12 requests in all, then
+    `busy`.
 *   **`--json`.** On success stdout holds exactly one line: the collector's
     `op8x.metrics/1` document unchanged, or an equivalent one-line JSON with
     unsafe characters escaped, followed by a newline. The document is printed

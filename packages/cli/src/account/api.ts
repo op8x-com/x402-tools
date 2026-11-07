@@ -9,7 +9,8 @@ import type { KeyKind } from "./keys.ts";
 // against the contract of its route; an answer without a row of its own becomes
 // unexpected_response, a network fault, a redirect or a 5xx other than 503 busy becomes
 // network_error, and 503 busy is retried every 10 s for at most 2 minutes on every route (on the
-// report route as long as its Retry-After header says, within the same 2 minutes).
+// report route as long as its Retry-After header says, within the same 2 minutes and for at most
+// 12 requests).
 // Requests go out one at a time (the collector has two shared slots).
 
 /** The fixed collector. */
@@ -300,6 +301,8 @@ function nonceStatusShape(v: unknown): NonceStatus | null {
 const TIMEOUT_MS = 10_000;
 const BUSY_STEP_MS = 10_000;
 const BUSY_MAX_MS = 120_000;
+/** The report route follows Retry-After (down to 1 s), so it also stops after this many requests. */
+const REPORT_MAX_ATTEMPTS = 12;
 /** The longest retry_after_s taken from the collector: one day (a rotation's overlap). */
 const MAX_RETRY_AFTER_S = 86_400;
 /** A problem code is passed on only in this form; anything else is reported as null. */
@@ -374,14 +377,17 @@ export function createApi(deps: Pick<Deps, "now" | "sleep" | "fetchImpl">, base:
   /**
    * One request with the busy rule: every 10 s again, at most 2 minutes, then busy. With
    * `retryAfter` (the report route only) the wait is the answer's Retry-After (1..60 s), else 10 s;
-   * the 2 minutes stay the limit.
+   * the 2 minutes stay the limit, and the route gets at most 12 requests in all.
    */
   async function request(method: "GET" | "POST", path: string, secret: string | null, body: unknown, retryAfter: boolean): Promise<Raw> {
     const started = deps.now();
     let waited = 0;
+    let attempts = 0;
     for (;;) {
       const r = await once(method, path, secret, body);
+      attempts += 1;
       if (!("busy" in r)) return r;
+      if (retryAfter && attempts >= REPORT_MAX_ATTEMPTS) return fail({ state: "busy" });
       const step = retryAfter && r.busy !== null ? r.busy : BUSY_STEP_MS;
       if (waited + step > BUSY_MAX_MS || deps.now() - started + step > BUSY_MAX_MS) return fail({ state: "busy" });
       await deps.sleep(step);
