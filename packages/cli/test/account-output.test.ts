@@ -54,7 +54,7 @@ const CATALOG: [FinalState, number, string | null, Parameters<typeof agentHint>[
   [
     "server_key_missing",
     1,
-    "This computer has no server key. Run op8x import-key <path to the op8x file of your other computer>, or run op8x rotate and then op8x init in every worker folder within 24 hours.",
+    "This computer has no server key. Run op8x import-key <path to the op8x file of your other computer>, or run op8x rotate and then op8x init in every worker folder within 24 hours. After a rotate on a new computer, returning-buyer counts restart.",
   ],
   ["key_mismatch", 1, "The key on this computer is not the account's current key. Run op8x rotate."],
   ["key_previous", 1, "This key is the old one. Run op8x rotate."],
@@ -73,7 +73,7 @@ const CATALOG: [FinalState, number, string | null, Parameters<typeof agentHint>[
   ["code_exhausted", 1, "Too many wrong codes. Run the command again for a new code."],
   ["rate_limited", 1, "Too many requests. Try again after 2026-11-04T00:00:00Z.", { retry_at: "2026-11-04T00:00:00Z" }],
   ["key_conflict", 1, "Run the command again."],
-  ["deleted_partial", 1, "The account is deleted. Remove OP8X_KEY by hand from: api.", { names: ["api"] }],
+  ["deleted_partial", 1, "The account is deleted. Remove OP8X_KEY and OP8X_SALT by hand from: api.", { names: ["api"] }],
   ["not_logged_in", 1, "This computer is not signed in. Run op8x init or op8x login."],
   ["key_auth", 1, "This computer's access is no longer valid. Run op8x login."],
   ["import_failed", 1, "The file could not be read as an op8x file."],

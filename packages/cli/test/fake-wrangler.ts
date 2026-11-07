@@ -43,6 +43,8 @@ export interface FakeAnswer {
 }
 
 export type FakeOp = "whoami" | "put" | "bulk" | "delete" | "list" | "other";
+/** An operation, or `put:<NAME>` / `delete:<NAME>` for one secret only (wins over the plain operation). */
+export type FakeAnswerKey = FakeOp | `${"put" | "delete"}:${string}`;
 
 export interface FakeWrangler {
   /** The project folder (the worker folder; cwd of the command). */
@@ -58,7 +60,7 @@ export interface FakeWrangler {
    */
   held: () => Record<string, string>;
   /** Sets the answer of one operation for the following starts. */
-  answer: (op: FakeOp, a: FakeAnswer) => void;
+  answer: (op: FakeAnswerKey, a: FakeAnswer) => void;
   /** Writes a file into the project folder (a wrangler configuration, for example). */
   file: (name: string, text: string) => void;
 }
@@ -93,7 +95,7 @@ process.stdin.on("end", () => {
   const argv = process.argv.slice(2);
   const op = argv[0] === "whoami" ? "whoami" : argv[0] === "secret" && (argv[1] === "put" || argv[1] === "bulk" || argv[1] === "delete" || argv[1] === "list") ? argv[1] : "other";
   const all = JSON.parse(fs.readFileSync(ANSWERS, "utf8"));
-  const a = all[op] || { exit: 0 };
+  const a = all[op + ":" + (argv[2] || "")] || all[op] || { exit: 0 };
   fs.appendFileSync(LOG, JSON.stringify({
     argv,
     stdin: Buffer.concat(chunks).toString("utf8"),
@@ -131,7 +133,7 @@ export function createFakeWrangler(o: FakeWranglerOptions = {}): FakeWrangler {
   const side = tempDir("op8x-wrangler-log-");
   const log = join(side, "calls.jsonl");
   const answersPath = join(side, "answers.json");
-  const answers: Record<FakeOp, FakeAnswer> = {
+  const answers: Partial<Record<FakeAnswerKey, FakeAnswer>> = {
     whoami: { exit: 0, stdout: LOGGED_IN },
     put: { exit: 0 },
     bulk: { exit: 0 },

@@ -450,7 +450,7 @@ test("signed in without K: server_key_missing with the file's path; with a runni
   let final = s.final();
   assert.equal(final.state, "server_key_missing");
   assert.equal(final.path, accountPath(s.deps));
-  assert.ok(String(final.agent_hint).endsWith("or run op8x rotate and then op8x init in every worker folder within 24 hours."));
+  assert.ok(String(final.agent_hint).endsWith("or run op8x rotate and then op8x init in every worker folder within 24 hours. After a rotate on a new computer, returning-buyer counts restart."));
   assert.equal(s.wrangler.calls().length, 0);
 
   const r = await setup(t);

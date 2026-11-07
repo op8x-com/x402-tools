@@ -165,7 +165,7 @@ const HINTS: Record<FinalState | "waiting_for_human", ((v: HintVars, mode: Mode)
   server_key_missing: (v) =>
     v.rotation_running === true
       ? "This computer has no server key. Run op8x import-key <path to the op8x file of your other computer>, or run op8x rotate --now."
-      : "This computer has no server key. Run op8x import-key <path to the op8x file of your other computer>, or run op8x rotate and then op8x init in every worker folder within 24 hours.",
+      : "This computer has no server key. Run op8x import-key <path to the op8x file of your other computer>, or run op8x rotate and then op8x init in every worker folder within 24 hours. After a rotate on a new computer, returning-buyer counts restart.",
   key_mismatch: () => "The key on this computer is not the account's current key. Run op8x rotate.",
   key_previous: () => "This key is the old one. Run op8x rotate.",
   partial: (v) => `The new key is not in every worker: ${list(v.names)}. Fix them and run the command again; nothing was stopped.`,
@@ -181,7 +181,7 @@ const HINTS: Record<FinalState | "waiting_for_human", ((v: HintVars, mode: Mode)
   code_exhausted: () => "Too many wrong codes. Run the command again for a new code.",
   rate_limited: (v, m) => `Too many requests. Try again after ${time(v.retry_at, m)}.`,
   key_conflict: () => "Run the command again.",
-  deleted_partial: (v) => `The account is deleted. Remove OP8X_KEY by hand from: ${list(v.names)}.`,
+  deleted_partial: (v) => `The account is deleted. Remove OP8X_KEY and OP8X_SALT by hand from: ${list(v.names)}.`,
   not_logged_in: () => "This computer is not signed in. Run op8x init or op8x login.",
   key_auth: () => "This computer's access is no longer valid. Run op8x login.",
   import_failed: () => "The file could not be read as an op8x file.",

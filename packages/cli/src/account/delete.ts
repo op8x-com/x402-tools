@@ -7,8 +7,9 @@ import type { FinalState, Output } from "./output.ts";
 import { clearsPending, matchPending, readCode, startStepUp } from "./stepup.ts";
 import { ACCOUNT_SCHEMA, accountPath, deleteAccount as removeAccountFile, writeAccount } from "./store.ts";
 import type { AccountFile, ActiveAccount, DeletedRemainder, PendingStepUp, WorkerEntry } from "./store.ts";
-import { createSecrets, findWrangler } from "./wrangler.ts";
-import type { SecretResult, Secrets } from "./wrangler.ts";
+import { WRANGLER_SECRET, createSecrets, findWrangler } from "./wrangler.ts";
+import type { SecretName, SecretResult, Secrets } from "./wrangler.ts";
+import { SALT_SECRET } from "./salt.ts";
 
 // op8x delete [--code-stdin]. Deletes the account with a code from the mail (POST delete {code}),
 // then removes OP8X_KEY from every known worker (wrangler secret delete, or the line in the env
@@ -207,7 +208,7 @@ interface Stage {
 }
 
 /**
- * Steps remove_secrets and remove_file: OP8X_KEY out of every worker, each success saved at once
+ * Steps remove_secrets and remove_file: OP8X_KEY and OP8X_SALT out of every worker, each success saved at once
  * (the remainder file then names only the workers still to do), then the op8x file goes, or (some
  * worker failed) the remainder file names only those workers: deleted_partial.
  */
@@ -251,12 +252,13 @@ async function removeStage(deps: Deps, out: Output, o: Stage): Promise<number> {
 }
 
 /**
- * OP8X_KEY out of one known worker: the line in an env file (a file that is gone counts as done),
+ * OP8X_KEY and OP8X_SALT out of one known worker: the lines in an env file (a file that is gone counts as done),
  * or wrangler secret delete with the project's wrangler in the worker's folder. wrangler fails on
  * a secret that is not there (the API answers the DELETE with an error), so on the remainder file
  * (`again`: an earlier run may have removed it already, or the human did) a failed secret delete
- * is followed by the read-only secret list: OP8X_KEY absent counts as removed. "stopped": the
- * output guard hit.
+ * is followed by the read-only secret list: OP8X_KEY absent counts as removed. Once OP8X_KEY is
+ * gone, OP8X_SALT goes the same way; a failed delete of it is always followed by secret list,
+ * since workers set up by older versions have no salt. "stopped": the output guard hit.
  */
 async function removeFromWorker(deps: Deps, secrets: Secrets, out: Output, w: WorkerEntry, again: boolean): Promise<SecretResult> {
   if (out.stopped) return "stopped";
@@ -272,9 +274,16 @@ async function removeFromWorker(deps: Deps, secrets: Secrets, out: Output, w: Wo
   const found = await findWrangler(deps, w.dir);
   if (!found.ok) return "failed";
   const target = { dir: w.dir, name: w.name, env: w.env };
-  const r = await secrets.remove(found.bin, target);
-  if (r !== "failed" || !again) return r;
-  const held = await secrets.holds(found.bin, target);
-  if (held === "stopped") return "stopped";
-  return held === "absent" ? "ok" : "failed";
+  const bin = found.bin;
+  /** One secret out; a failed delete with `check` asks secret list whether it is gone anyway. */
+  const removeOne = async (name: SecretName, check: boolean): Promise<SecretResult> => {
+    const r = await secrets.remove(bin, target, name);
+    if (r !== "failed" || !check) return r;
+    const held = await secrets.holds(bin, target, name);
+    if (held === "stopped") return "stopped";
+    return held === "absent" ? "ok" : "failed";
+  };
+  const key = await removeOne(WRANGLER_SECRET, again);
+  if (key !== "ok") return key;
+  return removeOne(SALT_SECRET, true);
 }
