@@ -230,28 +230,44 @@ export async function envFileAllowed(deps: Pick<Deps, "exec" | "env" | "platform
   }
 }
 
-const KEY_LINE = /^[ \t]*(?:export[ \t]+)?OP8X_KEY[ \t]*=/;
+/** The names op8x writes into an env file. */
+type EnvName = "OP8X_KEY" | "OP8X_SALT";
+const setsName = (name: EnvName) => new RegExp(`^[ \\t]*(?:export[ \\t]+)?${name}[ \\t]*=`);
+const SETS: Record<EnvName, RegExp> = { OP8X_KEY: setsName("OP8X_KEY"), OP8X_SALT: setsName("OP8X_SALT") };
 
 /**
- * The env file with the line OP8X_KEY=<key>: every line that sets OP8X_KEY is replaced, else the
- * line is appended (after a line break if the file lacks one at its end). Every other byte stays as
- * it is (the file is handled as bytes, lines end with \n or \r\n).
+ * The env file with a line NAME=<value> for each pair: every line that sets NAME is replaced, else
+ * the line is appended (after a line break if the file lacks one at its end), in the given order.
+ * Names not given stay as they are. Every other byte stays as it is (the file is handled as bytes,
+ * lines end with \n or \r\n).
  */
-export function withEnvKey(existing: Buffer | null, key: string): Buffer {
-  const line = `OP8X_KEY=${key}`;
-  if (existing === null || existing.length === 0) return Buffer.from(`${line}\n`, "latin1");
-  const text = existing.toString("latin1");
+export function withEnvValues(existing: Buffer | null, values: readonly (readonly [EnvName, string])[]): Buffer {
+  const text = existing === null ? "" : existing.toString("latin1");
   const eol = text.includes("\r\n") ? "\r\n" : "\n";
-  let found = false;
-  const lines = text.split("\n").map((part) => {
-    const cr = part.endsWith("\r");
-    if (!KEY_LINE.test(cr ? part.slice(0, -1) : part)) return part;
-    found = true;
-    return cr ? `${line}\r` : line;
-  });
+  const found = new Set<EnvName>();
+  const lines =
+    text === ""
+      ? []
+      : text.split("\n").map((part) => {
+          const cr = part.endsWith("\r");
+          const bare = cr ? part.slice(0, -1) : part;
+          const hit = values.find(([name]) => SETS[name].test(bare));
+          if (hit === undefined) return part;
+          found.add(hit[0]);
+          const line = `${hit[0]}=${hit[1]}`;
+          return cr ? `${line}\r` : line;
+        });
   let result = lines.join("\n");
-  if (!found) result += `${result.endsWith("\n") ? "" : eol}${line}${eol}`;
+  for (const [name, value] of values) {
+    if (found.has(name)) continue;
+    result += `${result === "" || result.endsWith("\n") ? "" : eol}${name}=${value}${eol}`;
+  }
   return Buffer.from(result, "latin1");
+}
+
+/** The env file with the line OP8X_KEY=<key> (see withEnvValues). */
+export function withEnvKey(existing: Buffer | null, key: string): Buffer {
+  return withEnvValues(existing, [["OP8X_KEY", key]]);
 }
 
 /** The env file's bytes, or null if there is none. Not a regular file, too big, unreadable → throws. */
@@ -282,33 +298,38 @@ async function readEnvFile(path: string): Promise<Buffer | null> {
 }
 
 /**
- * Puts OP8X_KEY=<key> into the env file at `path` with the same routine as the op8x file (temp
- * file in the target folder, on Windows SID and ACL set and checked before the content goes in,
- * then renamed). The folder's own rights are left alone. Any failure → StoreError permissions_failed;
- * the file's other content is never shown.
+ * Puts OP8X_KEY=<key> (and with `salt` also OP8X_SALT=<salt>, in the same write) into the env
+ * file at `path` with the same routine as the op8x file (temp file in the target folder, on
+ * Windows SID and ACL set and checked before the content goes in, then renamed). Without `salt`
+ * an OP8X_SALT line stays as it is. The folder's own rights are left alone. Any failure →
+ * StoreError permissions_failed; the file's other content is never shown.
  */
-export async function writeEnvKey(deps: Pick<Deps, "platform" | "env" | "exec" | "sleep">, path: string, key: string): Promise<void> {
+export async function writeEnvKey(deps: Pick<Deps, "platform" | "env" | "exec" | "sleep">, path: string, key: string, salt?: string): Promise<void> {
   let existing: Buffer | null;
   try {
     existing = await readEnvFile(path);
   } catch (e) {
     throw new StoreError("permissions_failed", "The env file could not be read.", { cause: e });
   }
-  await writeSecureFile(deps, path, withEnvKey(existing, key), { ownDir: false });
+  const values: [EnvName, string][] = [["OP8X_KEY", key], ...(salt === undefined ? [] : [["OP8X_SALT", salt] as [EnvName, string]])];
+  await writeSecureFile(deps, path, withEnvValues(existing, values), { ownDir: false });
 }
 
 /**
- * The env file without its OP8X_KEY lines, each with its own line end; null if it has none. Every
- * other byte stays as it is (the file is handled as bytes).
+ * The env file without its OP8X_KEY and OP8X_SALT lines, each with its own line end; null if it
+ * has none. Every other byte stays as it is (the file is handled as bytes).
  */
 export function withoutEnvKey(existing: Buffer): Buffer | null {
   const lines = existing.toString("latin1").match(/[^\n]*\n|[^\n]+$/g) ?? [];
-  const kept = lines.filter((line) => !KEY_LINE.test(line.replace(/\r?\n$/, "")));
+  const kept = lines.filter((line) => {
+    const bare = line.replace(/\r?\n$/, "");
+    return !SETS.OP8X_KEY.test(bare) && !SETS.OP8X_SALT.test(bare);
+  });
   return kept.length === lines.length ? null : Buffer.from(kept.join(""), "latin1");
 }
 
 /**
- * Removes the OP8X_KEY lines from the env file at `path` with the same routine as writeEnvKey. A
+ * Removes the OP8X_KEY and OP8X_SALT lines from the env file at `path` with the same routine as writeEnvKey. A
  * file that is gone, or has no such line, is left as it is. Any failure → StoreError
  * permissions_failed; the file's other content is never shown.
  */
