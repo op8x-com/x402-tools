@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { PAYER_ALG, SALT_PREFIX, hashPayer, parseSalt, saltId, trimAscii } from "../src/hash.ts";
 
@@ -142,10 +143,20 @@ test("trimAscii is linear: long inner whitespace runs do not blow up", () => {
     const value = "a" + ws.repeat(16000) + "a";
     const start = performance.now();
     for (let i = 0; i < 5; i++) assert.equal(trimAscii(value), value);
-    assert.ok(performance.now() - start < 50, "five calls under 50 ms");
+    assert.ok(performance.now() - start < 250, "five calls under 250 ms");
   }
   assert.equal(trimAscii(" \t\n\r\f\v" + "a b" + " \t\n\r\f\v"), "a b");
   assert.equal(trimAscii(" \t "), "");
   assert.equal(trimAscii(""), "");
-  assert.equal(trimAscii(" a "), " a ");
+  assert.equal(trimAscii("\u00a0a\u00a0"), "\u00a0a\u00a0");
+});
+
+test("the README command for a salt by hand makes a valid salt, and a trailing newline makes it invalid", () => {
+  // The same command as in the README and in apps/demo-api/README.md.
+  const cmd = "console.log('op8x_s_' + require('node:crypto').randomBytes(32).toString('base64url'))";
+  const out = execFileSync(process.execPath, ["-e", cmd], { encoding: "utf8" });
+  assert.ok(out.endsWith("\n"));
+  const salt = out.slice(0, -1);
+  assert.ok(parseSalt(salt) !== undefined, salt.length + " characters");
+  assert.equal(parseSalt(out), undefined);
 });

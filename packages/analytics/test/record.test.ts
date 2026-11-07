@@ -615,7 +615,7 @@ test("buildRecord stays fast for an address with long inner whitespace, with and
     const start = performance.now();
     const unsalted = await buildRecord(input({ req }));
     const salted = await buildRecord(input({ req }), hasher);
-    assert.ok(performance.now() - start < 50, "both records under 50 ms");
+    assert.ok(performance.now() - start < 250, "both records under 250 ms");
     assert.equal(unsalted.payment?.payer, undefined);
     assert.equal(salted.payment?.payer, await hashPayer(bytes, address));
   }

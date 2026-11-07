@@ -2,6 +2,7 @@ export type {
   AnalyticsOptions,
   AnalyticsRecord,
   ChallengeInfo,
+  PayerHasher,
   PaymentInfo,
   ReceiptInfo,
   UaClass,

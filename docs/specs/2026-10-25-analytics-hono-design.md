@@ -142,7 +142,9 @@ interface PaymentInfo {
   network?: string;
   amount?: string;            // v2 accepted.amount
   asset?: string;
-  payer?: string;             // hex HMAC-SHA-256(salt, trimmed lowercase address), first 32 hex chars; only with salt
+  payer?: string;             // first 32 hex chars of HMAC-SHA-256 keyed with the 32 decoded salt bytes over "op8x.payer.v1", 0x00 and the normalized address; only with a valid salt
+  payer_alg?: string;         // "op8x.payer.v1"; always with payer
+  payer_salt_id?: string;     // 8 hex chars identifying the salt; always with payer
 }
 
 interface ReceiptInfo {

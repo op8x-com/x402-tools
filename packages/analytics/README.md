@@ -139,13 +139,20 @@ app.use(analytics({ endpoint: "https://ingest.op8x.com/v1/events" }));
 With a salt, each paid request carries a pseudonym of the payer, so you can see how many different buyers came back. The pseudonym is `payer`: a keyed hash (HMAC-SHA-256) of the payer address, 32 hex characters. Next to it go `payer_alg` (`op8x.payer.v1`, the construction) and `payer_salt_id` (8 hex characters that tell salts apart). The three fields belong together.
 
 - **The salt stays with you.** It is a random value (`op8x_s_` plus 43 base64url characters, 32 bytes) that only your Worker holds. It is never sent, logged or recorded; only the pseudonym, the algorithm name and the salt id leave the Worker. Without the salt nobody can turn a pseudonym back into an address or recompute it from a known address.
-- **Create it with the CLI.** `npx @op8x/cli init` creates the salt and stores it as the Worker secret `OP8X_SALT`. To set it up by hand, store a salt in that secret: `npx wrangler secret put OP8X_SALT`.
+- **Create it with the CLI.** `npx @op8x/cli init` creates the salt and stores it as the Worker secret `OP8X_SALT`. To set it up by hand, make a salt and store it in that secret:
+
+  ```sh
+  node -e "console.log('op8x_s_' + require('node:crypto').randomBytes(32).toString('base64url'))"
+  npx wrangler secret put OP8X_SALT
+  ```
+
+  The salt is used exactly as given: a trailing newline (from `echo … |`, for example) makes it invalid and disables the fields. Paste it at the prompt of `wrangler secret put`, or prefer `npx @op8x/cli init`.
 - **Read on every request.** The middleware reads `OP8X_SALT` from the Worker environment per request (for any endpoint), so a new secret applies to the next request. The `salt` option wins over the environment; an invalid option disables the fields and does not fall back to the environment.
 - **Changing the salt starts a new series.** The same buyer then gets a different pseudonym and a different `payer_salt_id`. Do not rotate it without a reason.
 - **Address normalization.** ASCII whitespace at both ends of the address is removed; EVM addresses (`0x` plus 40 hex digits) are lowercased, other addresses such as Solana are kept as they are. Exact definition and test vectors: [ingest contract](https://github.com/op8x-com/x402-tools/blob/main/packages/analytics/docs/ingest-contract.md).
 - **Invalid salt.** The fields are left out and one warning is logged per isolate. Your API and its responses are not affected.
 
-Requires `@op8x/analytics` 0.0.3 or later; older versions do not send `payer_alg` and `payer_salt_id`, and a collector then counts the payer as "without pseudonym".
+Requires `@op8x/analytics` 0.0.3 or later; older versions do not send `payer_alg` and `payer_salt_id`, and a collector then counts the payer as "without pseudonym". 0.0.3 also changes `hashPayer` (the salt is now the decoded 32 bytes, not the string) and `buildRecord` (it takes a `PayerHasher`).
 
 ## Record fields
 
