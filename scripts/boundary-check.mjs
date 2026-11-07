@@ -9,7 +9,7 @@
 //   <term>               matched case-insensitively on word boundaries in every file
 //   in:<prefix> <term>   the same, but only in files whose repository path starts with <prefix>
 //   path:<prefix>        a path (exact file, or a folder ending in /) reserved for private repos
-// Lines starting with # are comments. A malformed in: line is a configuration error.
+// Lines starting with # are comments. A malformed in: line (the keyword in any case) is a configuration error, also a prefix that starts with ./ / \ or a quote, or has a backslash.
 //
 // Usage: node scripts/boundary-check.mjs [--staged | --all] [--redact] [--rules <file>]
 // Exit codes: 0 clean, 1 findings, 2 configuration or git error.
@@ -56,10 +56,14 @@ export function parseRules(text) {
     const line = raw.trim();
     if (!line || line.startsWith("#")) return;
     if (line.startsWith("path:")) paths.push(line.slice("path:".length).trim());
-    else if (line.startsWith("in:")) {
+    else if (/^in:/i.test(line)) {
       // The message names only the line number: the rules themselves are not public.
-      const m = /^in:(\S+)\s+(\S.*)$/.exec(line);
+      const m = /^in:(\S+)\s+(\S.*)$/i.exec(line);
       if (!m) throw new Error(`Malformed rule on line ${i + 1}: expected "in:<prefix> <term>".`);
+      // A prefix is a repository path as git prints it: relative, with forward slashes, unquoted.
+      if (/^(\.\/|\/|\\|["'`])/.test(m[1]) || m[1].includes("\\")) {
+        throw new Error(`Malformed rule on line ${i + 1}: the prefix of an in: rule must be a repository path like src/ (no ./, leading /, backslash or quote).`);
+      }
       scoped.push({ prefix: m[1], term: m[2].toLowerCase() });
     } else terms.push(line.toLowerCase());
   });

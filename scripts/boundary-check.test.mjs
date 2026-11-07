@@ -277,3 +277,28 @@ test("main reports a scoped term inside its prefix and ignores it outside", () =
   const outside = runCheck(["README.md", "docs/a.md"], undefined, { rulesText: "in:packages/ hello\n" });
   assert.equal(outside.status, 0, outside.stderr);
 });
+
+test("in: is detected case-insensitively", () => {
+  for (const kw of ["IN:", "In:", "iN:"]) {
+    assert.deepEqual(parseRules(`${kw}packages/ Hello
+`).scoped, [{ prefix: "packages/", term: "hello" }], kw);
+    assert.deepEqual(parseRules(`${kw}packages/ Hello
+`).terms, [], kw);
+  }
+});
+
+test("an in: prefix that starts with ./, / or a quote, or has a backslash, is a configuration error naming only the line", () => {
+  for (const prefix of ["./packages/", "/packages/", "\\packages\\", "packages\\sub/", '"packages/"', "'packages/'", "`packages/`"]) {
+    const text = `ok
+in:${prefix} term
+`;
+    assert.throws(() => parseRules(text), (err) => err instanceof Error && /malformed rule on line 2/i.test(err.message) && !err.message.includes("packages") && !err.message.includes("term"), prefix);
+  }
+});
+
+test("main exits 2 on an in: prefix with ./ and does not echo it", () => {
+  const r = runCheck(["README.md"], undefined, { rulesText: "in:./secretdir/ hello\n" });
+  assert.equal(r.status, 2, r.stderr);
+  assert.match(r.stderr, /malformed rule on line 1/i);
+  assert.equal(r.stderr.includes("secretdir"), false);
+});
