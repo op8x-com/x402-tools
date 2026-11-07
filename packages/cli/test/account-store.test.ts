@@ -20,6 +20,7 @@ import type { Deps, ExecOptions, ExecResult } from "../src/cli.ts";
 import { recordingExec, tempDir, testDeps } from "./account-deps.ts";
 import type { ExecHandler } from "./account-deps.ts";
 import { configDirFor } from "../src/account/system.ts";
+import { newSalt } from "../src/account/salt.ts";
 
 // Keys are built at runtime, never written out in a file.
 const R = "op8x_r_" + "R".repeat(43);
@@ -36,6 +37,7 @@ function full(): AccountFile {
     read_token: R,
     write_key: K,
     write_key_next: K2,
+    salt: null,
     pending_step_up: {
       purpose: "replace_current",
       command: "rotate",
@@ -90,6 +92,7 @@ function remainder(): AccountFile {
     read_token: null,
     write_key: null,
     write_key_next: null,
+    salt: null,
     pending_step_up: null,
     deleted: { action_id: "act_123" },
     workers: [full().workers[0]],
@@ -130,6 +133,27 @@ test("schema: contact_hint null, write_key null, no pending step and no workers 
   assert.deepEqual(parseAccount(JSON.stringify(a)), a);
   const e2e = { ...full(), account: "e2e-abcd2345" };
   assert.deepEqual(parseAccount(JSON.stringify(e2e)), e2e);
+});
+
+test("schema: a file without salt (older versions) stays valid and reads as salt null", () => {
+  const { salt: _unused, ...older } = full();
+  assert.equal(parseAccount(JSON.stringify(older)).salt, null);
+  const { salt: _gone, ...olderRemainder } = remainder();
+  assert.equal(parseAccount(JSON.stringify(olderRemainder)).salt, null);
+});
+
+test("schema: a valid salt round-trips", async () => {
+  const deps = testDeps();
+  const salt = newSalt();
+  await writeAccount(deps, { ...full(), salt } as AccountFile);
+  assert.equal((await readAccount(deps))?.salt, salt);
+  assert.equal(JSON.parse(readFileSync(accountPath(deps), "utf8")).salt, salt);
+});
+
+test("schema: an invalid salt, or a salt in a remainder file, is schema_invalid", () => {
+  const bad = ["", "op8x_k_" + "A".repeat(43), "op8x_s_" + "A".repeat(42) + "B", " " + newSalt(), 42];
+  for (const salt of bad) assert.equal(storeCode(() => parseAccount(JSON.stringify({ ...full(), salt }))), "schema_invalid", String(salt));
+  assert.equal(storeCode(() => parseAccount(JSON.stringify({ ...remainder(), salt: newSalt() }))), "schema_invalid");
 });
 
 test("schema: every pending_step_up row of the continuation table is valid", () => {

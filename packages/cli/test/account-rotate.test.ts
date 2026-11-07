@@ -128,6 +128,7 @@ async function setup(t: TestContext, o: SetupOptions = {}): Promise<Setup> {
     read_token: read,
     write_key: localKey,
     write_key_next: null,
+    salt: null,
     pending_step_up: null,
     deleted: null,
     workers: entries,

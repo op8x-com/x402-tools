@@ -30,6 +30,7 @@ async function setup(t: TestContext, o: { collector?: string; local?: "none" | "
     read_token: r,
     write_key: null,
     write_key_next: null,
+    salt: null,
     pending_step_up: null,
     deleted: null,
     workers: [],

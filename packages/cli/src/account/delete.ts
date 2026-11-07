@@ -191,6 +191,7 @@ function remainder(collector: string, actionId: string, workers: WorkerEntry[]):
     read_token: null,
     write_key: null,
     write_key_next: null,
+    salt: null,
     pending_step_up: null,
     deleted: { action_id: actionId },
     workers,
