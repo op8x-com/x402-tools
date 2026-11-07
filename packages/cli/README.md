@@ -198,7 +198,7 @@ Buyers on the way to paying (per route)
     Unpaid requests          1,203
     Price offers (402)       4,210   from x402 clients: 18.0 % (758 of 4,210)
     Payment attempts         mainnet 38 · testnet 4
-      mainnet: paid 31 · possibly paid 1 · rejected 1 · no confirmation 5 (with 402: 4)
+      mainnet: paid 31 · possibly paid 1 · rejected 1 · no confirmation 5 (with a new price offer: 4)
                delivered 30 · not delivered 1 · delivery unknown 0
 ```
 

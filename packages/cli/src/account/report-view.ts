@@ -11,7 +11,9 @@ import { textTime } from "./output.ts";
 // - hint texts are op8x's own fixed sentences: printed in full, control and format characters
 //   escaped;
 // - a status, reason or code this version does not know is shown raw and escaped, and fields it
-//   does not know are left out, so a newer document never breaks the view.
+//   does not know are left out, so a newer document never breaks the view;
+// - a value that is no string is never converted to text or serialized: where no number or
+//   string of the expected form stands, only its type is printed, e.g. (object).
 
 /** The documentation site; the definitions are at /metrics/, each finding at /findings/<id>/. */
 export const DOCS_BASE = "https://docs.op8x.com";
@@ -37,10 +39,13 @@ const PARAM = /^[A-Za-z0-9._:-]{1,64}$/;
 
 // --- values -----------------------------------------------------------------------------------
 
-/** Any value of the document printed escaped: a string through printEscaped, anything else as JSON. */
+/** Any value of the document printed escaped: a string through printEscaped, anything else as its type only. */
 function raw(v: unknown): string {
   if (v === undefined) return MISSING;
-  return printEscaped(typeof v === "string" ? v : (JSON.stringify(v) ?? String(v)));
+  if (typeof v === "string") return printEscaped(v);
+  if (v === null) return "(null)";
+  if (Array.isArray(v)) return "(array)";
+  return `(${typeof v})`;
 }
 
 /** A string that matches `form` as it is; anything else escaped. */
@@ -74,12 +79,12 @@ function ref(map: unknown, key: unknown): string {
  * status this version does not know shows raw (`status "new_value"`), an unknown reason in brackets.
  */
 function stateText(status: unknown, reason: unknown, texts: Record<string, string>): string {
-  if (typeof status !== "string" || !Object.hasOwn(texts, status)) return `status ${raw(status)}`;
+  const why = reason === undefined ? "" : ` (reason ${raw(reason)})`;
+  if (typeof status !== "string" || !Object.hasOwn(texts, status)) return `status ${raw(status)}${why}`;
   const plain = texts[status] as string;
   if (reason === undefined) return plain;
-  const key = `${status}/${String(reason)}`;
-  if (typeof reason === "string" && Object.hasOwn(texts, key)) return texts[key] as string;
-  return `${plain} (reason ${raw(reason)})`;
+  if (typeof reason === "string" && Object.hasOwn(texts, `${status}/${reason}`)) return texts[`${status}/${reason}`] as string;
+  return `${plain}${why}`;
 }
 
 // --- layout -----------------------------------------------------------------------------------
@@ -129,13 +134,13 @@ const COPIES = "partial: too many copies to check";
 const FUNNEL: Record<string, string> = { partial: "partial", "partial/too_many_copies": COPIES };
 const RATIO: Record<string, string> = {
   ok: "ok",
-  insufficient_data: "too few data",
+  insufficient_data: "not enough data",
   partial: "partial",
   "partial/too_many_copies": COPIES,
 };
 const REVENUE: Record<string, string> = {
   ok: "ok",
-  insufficient_data: "too few data",
+  insufficient_data: "not enough data",
   "insufficient_data/no_paid_payments": "no paid payments yet",
   partial: "partial",
   "partial/unsummed_payments": "partial: some payments are not in the sum",
@@ -143,7 +148,7 @@ const REVENUE: Record<string, string> = {
 };
 const walletTexts = (since: unknown): Record<string, string> => ({
   ok: "ok",
-  insufficient_data: "too few data",
+  insufficient_data: "not enough data",
   "insufficient_data/no_paid_payments": "no paid payments yet",
   unavailable: "unavailable",
   "unavailable/no_salt": "unavailable: no salt set (run npx @op8x/cli init)",
@@ -222,7 +227,7 @@ function attempts(byNetwork: unknown): string[] {
     const marker = n.attempts_with_test_marker;
     const marked = marker === undefined || marker === 0 ? "" : ` · marked as test ${count(marker)}`;
     lines.push(
-      `${head}paid ${count(n.paid)} · possibly paid ${count(n.possibly_paid)} · rejected ${count(n.rejected)} · no confirmation ${count(n.no_confirmation)} (with 402: ${count(n.no_confirmation_402)})`,
+      `${head}paid ${count(n.paid)} · possibly paid ${count(n.possibly_paid)} · rejected ${count(n.rejected)} · no confirmation ${count(n.no_confirmation)} (with a new price offer: ${count(n.no_confirmation_402)})`,
       `${" ".repeat(head.length)}delivered ${count(n.delivered)} · not delivered ${count(n.not_delivered)} · delivery unknown ${count(n.delivery_unknown)}${marked}`,
     );
   }
@@ -241,7 +246,7 @@ function route(v: unknown, data: Obj, findings: Finding[]): string[] {
     ...row(4, "Paid per 100 offers", ratio(r.paid_per_100_offers, "paid")),
   ];
   const texts = arr(r.text_refs).map((t) => ref(data.texts, t));
-  if (texts.length > 0) lines.push(...row(4, "Error texts from buyers", texts[0] as string, texts.slice(1)));
+  if (texts.length > 0) lines.push(...row(4, "Error texts", texts[0] as string, texts.slice(1)));
   return lines;
 }
 
@@ -270,7 +275,9 @@ function revenue(doc: Obj, data: Obj, findings: Finding[]): string[] {
   const r = obj(doc.revenue_reported);
   for (const h of arr(r.hints)) findings.push({ hint: obj(h), where: null });
   const lines = [title("Revenue (as reported by payments)", r.status === "ok" ? null : stateText(r.status, r.reason, REVENUE))];
-  for (const v of arr(r.by_asset)) {
+  const assets = arr(r.by_asset);
+  if (assets.length === 0) lines.push(...row(2, "Amounts", "none"));
+  for (const v of assets) {
     const a = obj(v);
     const payments = a.payments === 1 ? "payment" : "payments";
     lines.push(

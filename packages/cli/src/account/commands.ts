@@ -676,5 +676,13 @@ async function report(json: boolean, deps: Deps, days: number): Promise<number> 
   if (!s.ok) return s.exit;
   const r = await createApi(deps, s.base).report(s.file.read_token, days);
   if (!r.ok) return out.error(r.error);
-  return out.document(json ? r.value.text : renderReportView(r.value.doc));
+  if (json) return out.document(r.value.text);
+  let view: string;
+  try {
+    view = renderReportView(r.value.doc);
+  } catch {
+    // A document the view cannot handle is a fault of this version, never an unhandled rejection.
+    return out.final("internal_error");
+  }
+  return out.document(view);
 }

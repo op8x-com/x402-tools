@@ -148,7 +148,12 @@ export function printFull(value: string, max = MAX_PRINTED): string {
  * \u{XXXX} and the two cannot look the same. An empty value prints as "".
  */
 export function printEscaped(value: string, max = MAX_PRINTED): string {
-  const chars = Array.from(value);
+  // Only the first max + 1 code points are read: one more than fits shows whether there is a cut.
+  const chars: string[] = [];
+  for (const c of value) {
+    if (chars.length > max) break;
+    chars.push(c);
+  }
   return escapeCapped(chars.slice(0, max), chars.length > max, max);
 }
 

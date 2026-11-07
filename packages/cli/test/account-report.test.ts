@@ -371,3 +371,72 @@ test("the view survives a document with missing blocks", () => {
   assert.ok(view.startsWith("op8x report"));
   assert.ok(view.endsWith(`Definitions: ${DOCS_BASE}/metrics/ (definitions (missing))\n`));
 });
+
+// --- robustness of the view -------------------------------------------------------------------
+
+test("the view never converts a value of the document to text: a reason or status with its own toString is shown as a type", () => {
+  const cases = [
+    `{"schema":"op8x.metrics/1","liveness":{"status":"ok","reason":{"toString":1}}}`,
+    `{"schema":"op8x.metrics/1","wallets":{"status":"partial","reason":{"toString":{},"valueOf":{}}}}`,
+    `{"schema":"op8x.metrics/1","liveness":{"status":{"toString":1},"reason":"x"}}`,
+  ];
+  const views = cases.map((c) => renderReportView(JSON.parse(c) as Record<string, unknown>));
+  assert.ok(views[0]?.includes("Is my API sending data?                                 ok (reason (object))"), views[0]);
+  assert.ok(views[1]?.includes("Wallets                                                 partial (reason (object))"), views[1]);
+  assert.ok(views[2]?.includes(`status (object) (reason "x")`), views[2]);
+});
+
+test("the view prints non-string values as a type, never serialized: deep nesting cannot overflow the stack", () => {
+  const deep = "[".repeat(200_000) + "]".repeat(200_000);
+  const view = renderReportView(JSON.parse(`{"schema":"op8x.metrics/1","window":{"days":${deep}}}`) as Record<string, unknown>);
+  assert.ok(view.startsWith("op8x report · last (array) days"), view.slice(0, 80));
+  const types = renderReportView({
+    schema: "op8x.metrics/1",
+    liveness: { events_today: -1, events_last_24h: { a: 1 }, active_days_prev_7: true, last_event_at: 5 },
+    wallets: { since: null },
+  });
+  assert.ok(types.includes("  Events today               (number)\n"), types);
+  assert.ok(types.includes("  Events last 24 hours       (object)\n"), types);
+  assert.ok(types.includes("  Active days (previous 7)   (boolean) of 7\n"), types);
+  assert.ok(types.includes("  Last event                 (number)\n"), types);
+  assert.ok(types.includes("since (null)"), types);
+});
+
+test("an unknown status keeps its reason, both escaped", () => {
+  const view = renderReportView({ schema: "op8x.metrics/1", liveness: { status: "x\u001b", reason: "y\u202e" } });
+  assert.ok(view.includes(String.raw`status "x\u{001B}" (reason "y\u{202E}")`), view);
+});
+
+test("the view's labels: not enough data, a new price offer, error texts, no amounts", () => {
+  const view = renderReportView({
+    schema: "op8x.metrics/1",
+    wallets: { status: "insufficient_data" },
+    revenue_reported: { status: "ok", by_asset: [] },
+    data: { texts: { t: "boom" } },
+    funnel: { routes: [{ route_ref: "r", by_network: [{ kind: "mainnet", no_confirmation_402: 2 }], text_refs: ["t"] }] },
+  });
+  assert.ok(view.includes("Wallets                                                 not enough data\n"), view);
+  assert.ok(view.includes("(with a new price offer: 2)"), view);
+  assert.ok(view.includes(`    Error texts              "boom"\n`), view);
+  assert.ok(view.includes("Revenue (as reported by payments)\n  Amounts                    none\n"), view);
+  assert.equal(view.includes("too few data"), false);
+  assert.equal(view.includes("from buyers"), false);
+});
+
+test("report: an error inside the view ends as internal_error (exit 2), never as an unhandled rejection", async (t) => {
+  const s = await setup(t);
+  s.fake.reportBody = compact("metrics-example.json");
+  // The view is the only part of a report run that pads text.
+  const padEnd = String.prototype.padEnd;
+  String.prototype.padEnd = () => {
+    throw new Error("view broke");
+  };
+  let code: number;
+  try {
+    code = await run(["report"], s.deps);
+  } finally {
+    String.prototype.padEnd = padEnd;
+  }
+  assert.equal(code, 2);
+  assert.equal(s.deps.stdout(), "op8x stopped because of an internal error. Please report this.\n");
+});

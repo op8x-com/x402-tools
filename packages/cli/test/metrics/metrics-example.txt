@@ -11,18 +11,18 @@ Buyers on the way to paying (per route)
     Unpaid requests          1,203
     Price offers (402)       4,210   from x402 clients: 18.0 % (758 of 4,210)
     Payment attempts         mainnet 38 · testnet 4
-      mainnet: paid 31 · possibly paid 1 · rejected 1 · no confirmation 5 (with 402: 4)
+      mainnet: paid 31 · possibly paid 1 · rejected 1 · no confirmation 5 (with a new price offer: 4)
                delivered 30 · not delivered 1 · delivery unknown 0
-      testnet: paid 4 · possibly paid 0 · rejected 0 · no confirmation 0 (with 402: 0)
+      testnet: paid 4 · possibly paid 0 · rejected 0 · no confirmation 0 (with a new price offer: 0)
                delivered 4 · not delivered 0 · delivery unknown 0
     Paid per 100 offers      0.7 (31 of 4,210)
-    Error texts from buyers  "insufficient_funds: payer balance too low"
+    Error texts              "insufficient_funds: payer balance too low"
                              "payment verification failed: invalid signature"
   "POST /alerts"
     Unpaid requests          0
     Price offers (402)       14   from x402 clients: 9 of 14 (too few for a percentage)
     Payment attempts         mainnet 2
-      mainnet: paid 2 · possibly paid 0 · rejected 0 · no confirmation 0 (with 402: 0)
+      mainnet: paid 2 · possibly paid 0 · rejected 0 · no confirmation 0 (with a new price offer: 0)
                delivered 2 · not delivered 0 · delivery unknown 0
     Paid per 100 offers      too few offers (14 of 20 needed)
   Other requests             37

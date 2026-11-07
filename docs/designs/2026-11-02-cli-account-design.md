@@ -612,12 +612,16 @@ file it ends with `not_logged_in` and sends nothing.
     characters), the quote characters and the backslash as `\u{XXXX}`, cut after 100
     printed characters with `…`. Any other value that does not have the form
     the format gives it (a day, a time, an id, a decimal amount) is printed the
-    same way. Hint texts are printed in full with control and format
-    characters escaped.
+    same way. A value that is not a string where the view expects a string or
+    a count is never converted to text or serialized; only its type is
+    printed, for example `(object)`. Hint texts are printed in full with
+    control and format characters escaped. A fault while the view is built
+    ends the run with `internal_error` (exit code 2).
 *   **Newer documents.** A status, reason, network kind or code the CLI does
-    not know is shown raw and escaped (for example `status "new_value"`), a
-    finding with an unknown id is shown with its text, and unknown fields are
-    left out of the view; nothing of this is an error.
+    not know is shown raw and escaped (for example `status "new_value"`, with
+    a reason `status "new_value" (reason "why")`), a finding with an unknown
+    id is shown with its text, and unknown fields are left out of the view;
+    nothing of this is an error.
 
 ## Test request
 

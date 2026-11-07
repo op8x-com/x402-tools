@@ -6,15 +6,15 @@ Is my API sending data?                                 status "hibernating"
   Events last 24 hours       0
   Active days (previous 7)   0 of 7
 
-Buyers on the way to paying (per route)                 status "sampled"
+Buyers on the way to paying (per route)                 status "sampled" (reason "new_reason")
   "\u{001B}[2J\u{001B}[31mGET /pwn\u{0007}\u{000D}\u{000A}OK \u{202E}evil\u{202C} \u{009B}31m"
     Unpaid requests          5
     Price offers (402)       25   from x402 clients: 40.0 % (10 of 25) · status "estimated"
     Payment attempts         "sidechain" 3
-      "sidechain": paid 1 · possibly paid 0 · rejected 2 · no confirmation 0 (with 402: 0)
+      "sidechain": paid 1 · possibly paid 0 · rejected 2 · no confirmation 0 (with a new price offer: 0)
                    delivered 1 · not delivered 0 · delivery unknown 0 · marked as test 1
     Paid per 100 offers      4.0 (1 of 25) · status "estimated"
-    Error texts from buyers  "line one\u{000A}line two\u{0009}tab \u{001B}]8;;https://evil.example\u{0007}link\u{001B}]8;;\u{0007}"
+    Error texts              "line one\u{000A}line two\u{0009}tab \u{001B}]8;;https://evil.example\u{0007}link\u{001B}]8;;\u{0007}"
                              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…"
                              (not in the report: "t9")
   (not in the report: "r9")
