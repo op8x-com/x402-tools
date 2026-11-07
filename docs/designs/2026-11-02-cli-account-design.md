@@ -40,8 +40,8 @@ Goals:
 
 Non-goals:
 
-*   Numbers. `op8x report` exists, but answers `not_available_yet` in this
-    version.
+*   Own calculations. `op8x report` shows the numbers op8x sends and computes
+    none itself.
 *   A browser dashboard. Everything happens in the CLI.
 *   Finding the `workers.dev` address or whether a worker was ever deployed:
     wrangler offers no machine-readable source for either, so the test request
@@ -66,7 +66,8 @@ values that break a pattern and forbidden combinations are usage errors
 | `rotate` | `--force-stop` | only with `--now` |
 | `rotate` | `--code-stdin` | only with `--now` |
 | `delete` | `--code-stdin` | |
-| `report` | `--week`, `--month` | not both |
+| `report` | `--days <n>` | `^\d{1,3}$`, 1 to 30 |
+| `report` | `--week` (7 days), `--month` (30 days) | at most one of `--days`, `--week` and `--month`, each once |
 
 What each command does:
 
@@ -91,7 +92,8 @@ What each command does:
     after a quiet check and a code from a mail (see "Stopping the old key").
 *   **`delete`** deletes the account (code from a mail), removes `OP8X_KEY` and
     `OP8X_SALT` from every known worker, then removes the op8x file.
-*   **`report`** prints `not_available_yet`.
+*   **`report`** prints the numbers of the account for the last 7 days (or
+    `--days <n>`, `--week`, `--month`), see "Report".
 
 The help of an account command is printed on stderr together with a usage
 error. `op8x <command> --help` is therefore a usage error too (exit code 4).
@@ -245,10 +247,10 @@ special case, listed after the first.
 | `import_failed` | the file is missing, not an op8x file, or holds no server key; also an unreadable own op8x file | 1 | The file could not be read as an op8x file. |
 | `config_unreadable` | the wrangler configuration could not be read | 1 | The wrangler configuration could not be read. |
 | `permissions_failed` | a file could not be protected, written or removed | 1 | The op8x file could not be protected; nothing was written. After the account was deleted: The account is deleted (receipt {action_id}), but the op8x file could not be updated. Delete it by hand: {path}. |
-| `not_available_yet` | `report` | 1 | Numbers are not available in this version yet. |
 | `network_error` | network, timeout, redirect, any 5xx except `503 busy`; waiting longer than 90 seconds | 2 | Check the connection and run the command again. |
-| `busy` | `503 busy` for longer than 2 minutes (retried every 10 seconds) | 2 | The service is busy; try again in a minute. |
+| `busy` | `503 busy` for longer than 2 minutes (retried every 10 seconds; `report` waits as long as `Retry-After` says) | 2 | The service is busy; try again in a minute. |
 | `unexpected_response` | any other status or code, a body that is not JSON or has the wrong shape, a `retry_after_s` over one day (86400), a link that is not on the fixed host | 2 | op8x got an answer it does not expect (status {status}, code {code}). Update op8x and run the command again; if it stays, please report it. |
+| `schema_unsupported` | `report`: the answer is a JSON object whose `schema` is not `op8x.metrics/1` | 2 | The report has a format this version of op8x cannot read. Update @op8x/cli (npx @op8x/cli@latest report) and run the command again. |
 | `internal_error` | the output guard found a secret in a line, or a programming error | 2 | op8x stopped because of an internal error. Please report this. |
 | `usage_error` | unknown word or wrong option | 4 | (none; the help goes to stderr) |
 | `invalid_input` | the code is not 8 letters or digits | 4 | The code must be 8 letters or digits. Ask your human for the code from the mail and pass it again. |
@@ -367,7 +369,8 @@ redirects refused (a redirect is `network_error`, so `Authorization` never
 follows one) and the body read up to a fixed limit. `OP8X_COLLECTOR_URL` may
 replace the address only with `http://127.0.0.1:<port>`, `http://localhost:<port>`
 or `http://[::1]:<port>`, for tests against a local collector. Requests are sent
-one after another; `503 busy` is retried every 10 seconds for up to 2 minutes.
+one after another; `503 busy` is retried every 10 seconds for up to 2 minutes
+(on `GET /api/v1/tenant/report` after the seconds of its `Retry-After` header).
 
 | Request | Body |
 | --- | --- |
@@ -381,6 +384,7 @@ one after another; `503 busy` is retried every 10 seconds for up to 2 minutes.
 | `POST /api/v1/tenant/sign-out` | `{}` |
 | `POST /api/v1/tenant/test-nonce` | `{}`; returns a nonce |
 | `GET /api/v1/tenant/test-nonce/<nonce>` | none; returns whether and when op8x saw the test event |
+| `GET /api/v1/tenant/report?days=<n>` | none; returns the `op8x.metrics/1` document |
 
 Never sent: the server key itself, the contents of the op8x file, wrangler's
 output, the seller's configuration, request or response bodies of the seller's
@@ -576,6 +580,44 @@ the server key (current or next), the salt, the device secret, a mail code of
 the run or `OP8X_TEST_TOKEN`. A line that does is replaced by the final line
 `internal_error` (exit code 2), the original is written nowhere, and the run
 stops before its next side effect.
+
+## Report
+
+`op8x report` sends `GET /api/v1/tenant/report?days=<n>` with the read token
+of the op8x file (never the server key) and shows the answer. Without an op8x
+file it ends with `not_logged_in` and sends nothing.
+
+*   **Period.** The last 7 UTC days including today; `--days <n>` (1 to 30),
+    `--week` (7) or `--month` (30) pick another. More than one of the three, a
+    repeated one or another value is a usage error (exit code 4).
+*   **Busy.** `503 busy` is retried after the seconds of the `Retry-After`
+    header (whole seconds, at least 1, at most 60; without a valid header after
+    10 seconds), for up to 2 minutes in all, then `busy`.
+*   **`--json`.** On success stdout holds exactly the `op8x.metrics/1` document
+    as op8x sent it, followed by a newline. The CLI checks only its `schema`;
+    another schema is `schema_unsupported`. Fields and values the CLI does not
+    know pass through unchanged. Every other end is one `op8x.cli/1` final
+    line, as for the other commands. The output guard applies to the document
+    too.
+*   **Text.** A view with one block per part of the document (liveness, the
+    routes from price offer to delivery, wallets, revenue as reported, data
+    basis), then every finding with its full text and its link
+    `https://docs.op8x.com/findings/<hint_id>/`, and the link to the
+    definitions, `https://docs.op8x.com/metrics/`, with the
+    `definitions_version` of the document. The exit code is 0.
+*   **Text from events.** Routes, error texts and asset addresses (`data` in
+    the document) are text that buyers and servers control. The view prints
+    them only in double quotes, with every character outside printable ASCII
+    (control characters, ANSI sequences, bidirectional and invisible
+    characters), the quote characters and the backslash as `\u{XXXX}`, cut after 100
+    printed characters with `…`. Any other value that does not have the form
+    the format gives it (a day, a time, an id, a decimal amount) is printed the
+    same way. Hint texts are printed in full with control and format
+    characters escaped.
+*   **Newer documents.** A status, reason, network kind or code the CLI does
+    not know is shown raw and escaped (for example `status "new_value"`), a
+    finding with an unknown id is shown with its text, and unknown fields are
+    left out of the view; nothing of this is an error.
 
 ## Test request
 

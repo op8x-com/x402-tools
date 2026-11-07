@@ -174,7 +174,37 @@ npx @op8x/cli logout                                                       # sig
 npx @op8x/cli delete                                                       # delete the account and remove OP8X_KEY and OP8X_SALT from every known worker
 ```
 
-`op8x report` exists but answers `not_available_yet` in this version.
+### Report
+
+```sh
+npx @op8x/cli report              # the last 7 days (UTC, today included)
+npx @op8x/cli report --days 14    # 1 to 30 days; or --week (7), --month (30)
+npx @op8x/cli report --json       # the op8x.metrics/1 document as op8x sends it
+```
+
+`op8x report` shows the numbers op8x has for your account: whether your API sends data, per route how many requests got a price offer and how many payments were attempted, paid and delivered, paying and returning wallets, the revenue your server reported, and what the numbers leave out. It computes nothing itself. The beginning of a view:
+
+```text
+op8x report · last 7 days (2026-10-27 to 2026-11-02, UTC, today so far)
+
+Is my API sending data?                                 ok
+  Last event                 2026-11-02 14:04 UTC
+  Events today               412
+  Events last 24 hours       655
+  Active days (previous 7)   7 of 7
+
+Buyers on the way to paying (per route)
+  "GET /forecast/:city"
+    Unpaid requests          1,203
+    Price offers (402)       4,210   from x402 clients: 18.0 % (758 of 4,210)
+    Payment attempts         mainnet 38 · testnet 4
+      mainnet: paid 31 · possibly paid 1 · rejected 1 · no confirmation 5 (with 402: 4)
+               delivered 30 · not delivered 1 · delivery unknown 0
+```
+
+It ends with every finding in full, each with a link under `https://docs.op8x.com/findings/`, and the link to the definitions of every number: [docs.op8x.com/metrics](https://docs.op8x.com/metrics/). Routes, error texts and asset addresses come from your traffic, so the view prints them in double quotes and escaped (control characters, terminal escape sequences and invisible or right-to-left characters as `\u{XXXX}`), at most 100 characters.
+
+With `--json` stdout holds exactly the document and nothing else; the CLI checks only its `schema` (`op8x.metrics/1`). An error is one `op8x.cli/1` line as for the other commands; a document of a newer format ends with `schema_unsupported` (update `@op8x/cli`). When op8x is busy, the CLI waits as long as its `Retry-After` header says, for up to 2 minutes.
 
 ### Node hosts
 
@@ -222,10 +252,12 @@ The op8x file is not in the project. It lives in your user's config folder: `$XD
 
 ### What the CLI trusts and sends
 
-The CLI uses only `node_modules/wrangler` of the folder it runs in, starts it with its own Node.js without a shell, passes it a fixed list of environment variables (plus `WRANGLER_LOG_SANITIZE=true` and `WRANGLER_WRITE_LOGS=false`, so no dotenv file can make wrangler log the key or the salt) and never shows its output. Helper programs on Windows (`icacls.exe`, `whoami.exe`, `rundll32.exe`) run by absolute path from `System32`. To op8x it sends only the hashes of the keys it creates and its name and version; after the sign-in it authenticates with the read token from the op8x file and sends the codes you enter and the requests for test nonces. It never sends the server key itself, never the salt and never the bodies of your traffic. The test request is one `GET` to your `--url` with the header `op8x-test: <nonce>` and nothing secret. The full contract (states, exit codes, file schema, requests) is in [docs/designs/2026-11-02-cli-account-design.md](https://github.com/op8x-com/x402-tools/blob/main/docs/designs/2026-11-02-cli-account-design.md).
+The CLI uses only `node_modules/wrangler` of the folder it runs in, starts it with its own Node.js without a shell, passes it a fixed list of environment variables (plus `WRANGLER_LOG_SANITIZE=true` and `WRANGLER_WRITE_LOGS=false`, so no dotenv file can make wrangler log the key or the salt) and never shows its output. Helper programs on Windows (`icacls.exe`, `whoami.exe`, `rundll32.exe`) run by absolute path from `System32`. To op8x it sends only the hashes of the keys it creates and its name and version; after the sign-in it authenticates with the read token from the op8x file and sends the codes you enter, the requests for test nonces and the period of a report. It never sends the server key itself, never the salt and never the bodies of your traffic. The test request is one `GET` to your `--url` with the header `op8x-test: <nonce>` and nothing secret. The full contract (states, exit codes, file schema, requests) is in [docs/designs/2026-11-02-cli-account-design.md](https://github.com/op8x-com/x402-tools/blob/main/docs/designs/2026-11-02-cli-account-design.md).
 
 ## Related
 
 For listing checks (Bazaar metadata, `/.well-known/x402`, OpenAPI), run [`x402-listing-check`](https://www.npmjs.com/package/x402-listing-check). What `op8x check` leaves out is listed under "What op8x check does not check" above.
+
+Documentation: [docs.op8x.com](https://docs.op8x.com).
 
 MIT · [op8x.com](https://op8x.com)
