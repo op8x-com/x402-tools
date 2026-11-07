@@ -67,6 +67,7 @@ export const EXIT_CODES = {
   import_failed: 1,
   config_unreadable: 1,
   permissions_failed: 1,
+  env_file_unsupported: 1,
   network_error: 2,
   busy: 2,
   unexpected_response: 2,
@@ -206,6 +207,7 @@ const HINTS: Record<FinalState | "waiting_for_human", ((v: HintVars, mode: Mode)
       ? "There is no step waiting for a code. Run the command without --code-stdin."
       : `The waiting step belongs to op8x ${text(v.command)}. Run that same command with --code-stdin, or run this one without --code-stdin.`,
   env_file_not_ignored: () => "Use a file that git ignores (and not .dev.vars).",
+  env_file_unsupported: () => "The env file has a carriage return that does not end a line, which op8x does not rewrite. Save it with LF or CRLF line endings and run the command again.",
   collector_url_not_allowed: () => "OP8X_COLLECTOR_URL may only point to 127.0.0.1, localhost or [::1].",
   collector_mismatch: () =>
     "The op8x file on this computer was made for a different service address. Unset OP8X_COLLECTOR_URL, or set it to the address the file was made for.",
@@ -222,11 +224,13 @@ export function agentHint(state: FinalState | "waiting_for_human", vars: HintVar
 export const NOTICES = {
   code_already_sent: "A code was already sent in the last 10 minutes. Check your mail for it.",
   contact_unknown: "This computer does not know the contact address of this account.",
-  secret_put_deploys: "wrangler secret put deploys the worker right away.",
+  secret_put_deploys: "Changing the worker's secrets with wrangler deploys it right away.",
   test_host: "Sending one test request to {host}.",
   logout_removes_key: "This computer holds the server key. It is deleted with the op8x file; your workers keep their copy.",
   logout_removes_salt:
     "This computer holds the account's salt. It is deleted with the op8x file; your workers keep their copy. A later op8x init here makes a new salt unless op8x import-key brings it back, and returning-buyer counts restart after a new salt.",
+  import_replaces_salt:
+    "The salt was replaced by the one from the imported file. Workers set up on this computer keep the old one until you run op8x init in their folder again; returning-buyer counts restart there.",
 } as const;
 
 export type NoticeId = keyof typeof NOTICES;

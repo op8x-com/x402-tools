@@ -230,6 +230,20 @@ export async function envFileAllowed(deps: Pick<Deps, "exec" | "env" | "platform
   }
 }
 
+/**
+ * An env file op8x does not rewrite: it holds a carriage return that does not end a line (a CR
+ * not followed by LF). Other tools may read such a CR as a line end, so a line op8x leaves alone
+ * could hide OP8X_KEY or OP8X_SALT. Thrown before anything is written.
+ */
+export class EnvFileFormatError extends Error {
+  constructor() {
+    super("the env file has a carriage return that does not end a line");
+    this.name = "EnvFileFormatError";
+  }
+}
+
+const LONE_CR = /\r(?!\n)/;
+
 /** The names op8x writes into an env file. */
 type EnvName = "OP8X_KEY" | "OP8X_SALT";
 const setsName = (name: EnvName) => new RegExp(`^[ \\t]*(?:export[ \\t]+)?${name}[ \\t]*=`);
@@ -239,10 +253,11 @@ const SETS: Record<EnvName, RegExp> = { OP8X_KEY: setsName("OP8X_KEY"), OP8X_SAL
  * The env file with a line NAME=<value> for each pair: every line that sets NAME is replaced, else
  * the line is appended (after a line break if the file lacks one at its end), in the given order.
  * Names not given stay as they are. Every other byte stays as it is (the file is handled as bytes,
- * lines end with \n or \r\n).
+ * lines end with \n or \r\n). A carriage return that does not end a line → EnvFileFormatError.
  */
 export function withEnvValues(existing: Buffer | null, values: readonly (readonly [EnvName, string])[]): Buffer {
   const text = existing === null ? "" : existing.toString("latin1");
+  if (LONE_CR.test(text)) throw new EnvFileFormatError();
   const eol = text.includes("\r\n") ? "\r\n" : "\n";
   const found = new Set<EnvName>();
   const lines =
@@ -317,9 +332,11 @@ export async function writeEnvKey(deps: Pick<Deps, "platform" | "env" | "exec" |
 
 /**
  * The env file without its OP8X_KEY and OP8X_SALT lines, each with its own line end; null if it
- * has none. Every other byte stays as it is (the file is handled as bytes).
+ * has none. Every other byte stays as it is (the file is handled as bytes). A carriage return that
+ * does not end a line → EnvFileFormatError.
  */
 export function withoutEnvKey(existing: Buffer): Buffer | null {
+  if (LONE_CR.test(existing.toString("latin1"))) throw new EnvFileFormatError();
   const lines = existing.toString("latin1").match(/[^\n]*\n|[^\n]+$/g) ?? [];
   const kept = lines.filter((line) => {
     const bare = line.replace(/\r?\n$/, "");

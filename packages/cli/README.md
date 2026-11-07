@@ -215,7 +215,7 @@ echo ".env.op8x" >> .gitignore
 npx @op8x/cli init --env-file .env.op8x --url http://127.0.0.1:3000/paid
 ```
 
-The CLI refuses a file that git does not ignore, a tracked file, a file outside a git repository and `.dev.vars`. It adds or replaces the lines `OP8X_KEY=…` and `OP8X_SALT=…` and leaves every other line as it is. Load the file as the environment and pass both to the module as the `key` and `salt` options (outside Workers the module does not read them itself):
+The CLI refuses a file that git does not ignore, a tracked file, a file outside a git repository and `.dev.vars`. It adds or replaces the lines `OP8X_KEY=…` and `OP8X_SALT=…` and leaves every other line as it is. A file with a carriage return that does not end a line (CR without LF) is refused with `env_file_unsupported` and left as it is. Load the file as the environment and pass both to the module as the `key` and `salt` options (outside Workers the module does not read them itself):
 
 ```sh
 node --env-file=.env.op8x server.js
@@ -232,7 +232,7 @@ app.use(analytics({ endpoint: "https://ingest.op8x.com/v1/events", key: process.
 `@op8x/analytics` 0.0.3 and later can count returning buyers: it replaces each payer address with a keyed hash of the address under the account's salt, so the same buyer gets the same pseudonym in every worker and op8x never sees the address. The CLI makes the salt once per account (32 random bytes, `op8x_s_` plus 43 base64url characters), keeps it in the op8x file and puts the same salt into every worker it sets up. It never computes a pseudonym.
 
 - `rotate` changes only the server key; the salt stays.
-- On another computer, `import-key` brings the salt along with the key.
+- On another computer, `import-key` brings the salt along with the key. If that computer already had a different salt, `import-key` replaces it and says so: workers set up there keep the old salt until you run `init` in their folder again, and returning-buyer counts restart in them.
 - `logout` deletes the local copy of the salt. A later `init` without `import-key` makes a new one, and returning-buyer counts restart after a new salt.
 - After a rotate on a new computer, returning-buyer counts restart.
 

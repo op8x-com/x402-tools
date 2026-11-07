@@ -702,6 +702,22 @@ test("--env-file that git does not ignore, tracks, outside a repo, or .dev.vars:
   }
 });
 
+test("--env-file with a carriage return that does not end a line: env_file_unsupported, the file stays as it is", async (t) => {
+  const s = await envFileSetup(t);
+  await signedIn(s);
+  const before = "OP8X_SALT=old\rDATABASE_URL=keep\r";
+  writeFileSync(s.path, before);
+  assert.equal(await run(["init", "--json", "--env-file", s.path, "--url", s.url], s.deps), 1);
+  assert.deepEqual(steps(s.lines()), [["key", "failed"]]);
+  assert.equal(s.final().state, "env_file_unsupported");
+  assert.equal(
+    s.final().agent_hint,
+    "The env file has a carriage return that does not end a line, which op8x does not rewrite. Save it with LF or CRLF line endings and run the command again.",
+  );
+  assert.equal(readFileSync(s.path, "latin1"), before);
+  assert.equal(s.file().workers.length, 0);
+});
+
 // --- the salt -----------------------------------------------------------------------------------
 
 /** No salt anywhere: output, wrangler's argv and environment, the worker's requests, the collector's requests. */
@@ -822,4 +838,40 @@ test("the salt of the op8x file is one of the output guard's secrets", async (t)
   assert.equal(out.stopped, true);
   assert.equal(s.deps.stdout().includes("op8x_s_"), false);
   assert.equal(s.final().state, "internal_error");
+});
+
+test("two inits at the same time on a signed-in computer without salt end with one salt for both workers", async (t) => {
+  const fake = await startFakeCollector();
+  t.after(() => fake.close());
+  const read = generateKey("r");
+  const write = generateKey("w");
+  const tenant = fake.addTenant({ readKey: read, writeKey: write, contactHint: CONTACT });
+  const env = { OP8X_COLLECTOR_URL: fake.url, ...(process.platform === "win32" ? { SystemRoot: "C:\\Windows" } : {}) };
+  const a = createFakeWrangler();
+  a.file("wrangler.toml", 'name = "api"\n');
+  const b = createFakeWrangler();
+  b.file("wrangler.toml", 'name = "shop"\n');
+  const sleep = async (ms: number) => fake.advance(ms);
+  const dA = testDeps({ cwd: a.dir, exec: realExec, now: () => fake.now(), sleep, env });
+  const dB = testDeps({ cwd: b.dir, exec: realExec, now: () => fake.now(), sleep, env, configDir: dA.configDir });
+  await writeAccount(dA, {
+    schema: "op8x.account/1",
+    collector: fake.url,
+    account: tenant.name,
+    contact_hint: CONTACT,
+    read_token: read,
+    write_key: write,
+    write_key_next: null,
+    salt: null,
+    pending_step_up: null,
+    deleted: null,
+    workers: [],
+  });
+  await Promise.all([run(["init", "--json"], dA), run(["init", "--json"], dB)]);
+  const saltA = lastPut(a, "OP8X_SALT");
+  const saltB = lastPut(b, "OP8X_SALT");
+  const file = JSON.parse(readFileSync(accountPath(dA), "utf8")) as ActiveAccount;
+  assert.ok(isSalt(saltA), String(saltA));
+  assert.equal(saltB, saltA);
+  assert.equal(file.salt, saltA);
 });

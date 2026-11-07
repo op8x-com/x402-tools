@@ -771,13 +771,13 @@ test("secret put: notice secret_put_deploys once, before the first put of a run;
   await secrets.put(bin, { dir: fake.dir, name: "api-staging", env: "staging" }, generateKey("w"));
   const notices = jsonLines(deps).filter((l) => l.event === "notice");
   assert.deepEqual(notices, [
-    { schema: "op8x.cli/1", command: "init", final: false, event: "notice", id: "secret_put_deploys", text: "wrangler secret put deploys the worker right away." },
+    { schema: "op8x.cli/1", command: "init", final: false, event: "notice", id: "secret_put_deploys", text: "Changing the worker's secrets with wrangler deploys it right away." },
   ]);
 });
 
 test("secret put: nothing runs once the output guard stopped the output", async () => {
   const { fake, deps, bin } = await secretSetup();
-  const secrets = createSecrets(deps, output(deps, () => ["deploys the worker right away"]));
+  const secrets = createSecrets(deps, output(deps, () => ["deploys it right away"]));
   assert.equal(await secrets.put(bin, { dir: fake.dir, name: "api", env: null }, generateKey("w")), "stopped");
   assert.equal(fake.calls().length, 0);
   assert.equal(jsonLines(deps).at(-1)!.state, "internal_error");

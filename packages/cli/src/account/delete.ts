@@ -12,14 +12,14 @@ import type { SecretName, SecretResult, Secrets } from "./wrangler.ts";
 import { SALT_SECRET } from "./salt.ts";
 
 // op8x delete [--code-stdin]. Deletes the account with a code from the mail (POST delete {code}),
-// then removes OP8X_KEY from every known worker (wrangler secret delete, or the line in the env
-// file), then the op8x file. Workers whose secret could not be removed stay listed in a remainder
+// then removes OP8X_KEY and OP8X_SALT from every known worker (wrangler secret delete, or the
+// lines in the env file), then the op8x file. Workers whose secret could not be removed stay listed in a remainder
 // file (deleted_partial); delete on that file only retries them, without asking the collector.
 
 export const DELETE_USAGE = `Usage: op8x delete [--code-stdin] [--json]
 
-Deletes the op8x account (asks for the code from a mail), removes OP8X_KEY from every worker this
-computer knows, then removes the op8x file.
+Deletes the op8x account (asks for the code from a mail), removes OP8X_KEY and OP8X_SALT from every
+worker this computer knows, then removes the op8x file.
 
 Options:
   --code-stdin         read the code from the mail on stdin

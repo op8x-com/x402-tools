@@ -297,12 +297,37 @@ test("import-key from a file without a salt keeps this computer's salt; with nei
   assert.equal((JSON.parse(n.read()) as ActiveAccount).salt, null);
 });
 
-test("import-key replaces this computer's salt with the other file's salt", async (t) => {
+const REPLACES_SALT = "The salt was replaced by the one from the imported file. Workers set up on this computer keep the old one until you run op8x init in their folder again; returning-buyer counts restart there.";
+
+test("import-key replaces this computer's salt with the other file's salt and says so (notice import_replaces_salt)", async (t) => {
   const s = await setup(t);
   await writeAccount(s.deps, { ...s.local, salt: newSalt() });
   const theirs = newSalt();
   assert.equal(await run(["import-key", otherWithSalt(s, s.current, theirs), "--json"], s.deps), 0);
   assert.equal((JSON.parse(s.read()) as ActiveAccount).salt, theirs);
+  const notices = s.lines().filter((l) => l.event === "notice");
+  assert.deepEqual(notices, [{ schema: "op8x.cli/1", command: "import-key", final: false, event: "notice", id: "import_replaces_salt", text: REPLACES_SALT }]);
+  assert.equal(s.final().state, "imported");
+
+  const tx = await setup(t);
+  await writeAccount(tx.deps, { ...tx.local, salt: newSalt() });
+  assert.equal(await run(["import-key", otherWithSalt(tx, tx.current, newSalt())], tx.deps), 0);
+  assert.ok(tx.deps.stdout().includes(`${REPLACES_SALT}\n`), tx.deps.stdout());
+});
+
+test("import-key says nothing about the salt when it stays: same salt, no local salt, or none in the other file", async (t) => {
+  const same = newSalt();
+  const cases: [string | null, string | null][] = [
+    [same, same],
+    [null, newSalt()],
+    [newSalt(), null],
+  ];
+  for (const [mine, theirs] of cases) {
+    const s = await setup(t);
+    await writeAccount(s.deps, { ...s.local, salt: mine });
+    assert.equal(await run(["import-key", otherWithSalt(s, s.current, theirs), "--json"], s.deps), 0);
+    assert.deepEqual(s.lines().filter((l) => l.event === "notice"), []);
+  }
 });
 
 test("import-key with an invalid salt in the other file: import_failed, the salt not printed, the file stays", async (t) => {

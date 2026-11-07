@@ -3,6 +3,7 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { TestContext } from "node:test";
+import { DELETE_USAGE } from "../src/account/delete.ts";
 import { generateKey, keyFingerprint } from "../src/account/keys.ts";
 import { newSalt } from "../src/account/salt.ts";
 import { accountPath, writeAccount } from "../src/account/store.ts";
@@ -790,4 +791,8 @@ test("OP8X_SALT that cannot be removed: deleted_partial names the worker; the ne
   assert.equal(s.final().state, "deleted");
   assert.equal(s.file(), null);
   assert.equal(s.deps.stdout().includes("op8x_s_"), false);
+});
+
+test("the help of delete names both secrets it removes", () => {
+  assert.ok(DELETE_USAGE.replace(/\s+/g, " ").includes("removes OP8X_KEY and OP8X_SALT from every worker"));
 });

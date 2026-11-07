@@ -8,7 +8,7 @@ import { collectorBase, collectorMismatch, createApi } from "./api.ts";
 import type { Api } from "./api.ts";
 import { fileSecrets, loadFile, resumeNextKey, settleReplacedNext, settledNext, signedIn, storeState, workerName, writeSlot } from "./common.ts";
 import type { Save } from "./common.ts";
-import { envFileAllowed, isoNow, upsertWorker, verifyWorker, workerLine, writeEnvKey } from "./connect.ts";
+import { EnvFileFormatError, envFileAllowed, isoNow, upsertWorker, verifyWorker, workerLine, writeEnvKey } from "./connect.ts";
 import { deviceKeys, deviceLogin } from "./device.ts";
 import type { DeviceFailure, DeviceKeys } from "./device.ts";
 import { keyFingerprint } from "./keys.ts";
@@ -244,7 +244,8 @@ type Place =
  * ignored ends with server_key_missing (only a key the collector accepted is ever used). On a
  * signed-in computer only key and test: write_key_next is settled first, then K must be the
  * account's current key. Step key takes the account's salt from the op8x file (an op8x file
- * without one gets a new salt, saved before anything is put), then puts K and the salt (one
+ * without one is read again, in case another init made one meanwhile; else it gets a new salt,
+ * saved before anything is put), then puts K and the salt (one
  * wrangler secret bulk with both on stdin, or the lines OP8X_KEY=… and OP8X_SALT=… in the
  * --env-file); step test sends one test request with a nonce and waits for the collector to see it
  * (connected, whose hint names the account's address so the human can check it is theirs).
@@ -362,16 +363,30 @@ async function init(json: boolean, deps: Deps, o: InitOptions): Promise<number> 
       : { dir: place.target.dir, name: place.target.name, env: place.target.env, env_file: null, url: o.url ?? place.target.url, deployed_at: "", verified_at: null, key_fingerprint: "" };
   let salt = file!.salt;
   if (salt === null) {
-    salt = newSalt();
-    madeSalt = salt;
-    const savedSalt = await save({ ...file!, salt });
-    if (savedSalt !== null) {
-      out.end("failed");
-      return out.final(savedSalt);
+    // Another init on this computer may have made the salt since this run read the op8x file:
+    // read it again right before a new one is made, and take that one.
+    const again = await loadFile(deps);
+    const theirs = again.ok && again.file !== null && again.file.deleted === null && again.file.account === file!.account ? again.file.salt : null;
+    if (theirs !== null) {
+      salt = theirs;
+      file = { ...file!, salt };
+      held = file;
+    } else {
+      salt = newSalt();
+      madeSalt = salt;
+      const savedSalt = await save({ ...file!, salt });
+      if (savedSalt !== null) {
+        out.end("failed");
+        return out.final(savedSalt);
+      }
     }
   }
   const put = await putKey(deps, out, place, key, salt);
   if (put === "stopped") return stopped();
+  if (put === "unsupported") {
+    out.end("failed");
+    return out.final("env_file_unsupported");
+  }
   if (put === "failed") {
     out.end("failed");
     return place.kind === "env_file"
@@ -432,16 +447,16 @@ async function findPlace(deps: Deps, o: InitOptions): Promise<FoundPlace> {
 
 /**
  * K and the salt into the place: one wrangler secret bulk (notice secret_put_deploys first), or
- * both lines in one write of the env file.
+ * both lines in one write of the env file ("unsupported": an env file op8x does not rewrite).
  */
-async function putKey(deps: Deps, out: Output, place: Place, key: string, salt: string): Promise<SecretResult> {
+async function putKey(deps: Deps, out: Output, place: Place, key: string, salt: string): Promise<SecretResult | "unsupported"> {
   if (out.stopped) return "stopped";
   if (place.kind === "wrangler") return createSecrets(deps, out).putWithSalt(place.bin, place.target, key, salt);
   try {
     await writeEnvKey(deps, place.path, key, salt);
     return "ok";
-  } catch {
-    return "failed";
+  } catch (e) {
+    return e instanceof EnvFileFormatError ? "unsupported" : "failed";
   }
 }
 
@@ -610,8 +625,9 @@ async function readKeyFile(path: string): Promise<{ key: string; salt: string | 
  * op8x import-key <path>: takes K and the salt from the op8x file of another computer, and only
  * if K is the account's current key. K never leaves this computer: GET /tenant with R, then K's
  * fingerprint is compared with the account's keys. Current → stored (imported); previous →
- * key_previous; else key_mismatch. The other file's salt replaces this computer's; a file without
- * one keeps this computer's salt (if neither has one, the next init makes it).
+ * key_previous; else key_mismatch. The other file's salt replaces this computer's (a different
+ * one gives notice import_replaces_salt); a file without one keeps this computer's salt (if
+ * neither has one, the next init makes it).
  */
 async function importKey(json: boolean, deps: Deps, path: string): Promise<number> {
   let held: AccountFile | null = null;
@@ -650,6 +666,7 @@ async function importKey(json: boolean, deps: Deps, path: string): Promise<numbe
     return out.final(storeState(e));
   }
   out.end("ok");
+  if (s.file.salt !== null && salt !== s.file.salt) out.notice("import_replaces_salt");
   return out.final("imported");
 }
 

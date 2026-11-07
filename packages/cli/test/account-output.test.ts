@@ -98,6 +98,11 @@ const CATALOG: [FinalState, number, string | null, Parameters<typeof agentHint>[
   ["code_missing", 4, "Internal error: the code was not sent. Please report this."],
   ["no_pending_step", 4, "There is no step waiting for a code. Run the command without --code-stdin."],
   ["env_file_not_ignored", 4, "Use a file that git ignores (and not .dev.vars)."],
+  [
+    "env_file_unsupported",
+    1,
+    "The env file has a carriage return that does not end a line, which op8x does not rewrite. Save it with LF or CRLF line endings and run the command again.",
+  ],
   ["collector_url_not_allowed", 4, "OP8X_COLLECTOR_URL may only point to 127.0.0.1, localhost or [::1]."],
   [
     "collector_mismatch",
@@ -180,7 +185,7 @@ test("JSON Lines: step events, a link event, notices and one final line with the
       expires_at: "2026-11-03T14:10:00.000Z",
     },
     { ...base, event: "step", n: 1, of: 3, name: "browser", status: "ok", elapsed_ms: 812 },
-    { ...base, event: "notice", id: "secret_put_deploys", text: "wrangler secret put deploys the worker right away." },
+    { ...base, event: "notice", id: "secret_put_deploys", text: "Changing the worker's secrets with wrangler deploys it right away." },
     { ...base, event: "step", n: 2, of: 3, name: "key", status: "start" },
     { ...base, event: "step", n: 2, of: 3, name: "key", status: "failed", elapsed_ms: 40 },
     { ...base, event: "step", n: 3, of: 3, name: "test", status: "skipped", elapsed_ms: 0 },
@@ -210,11 +215,13 @@ test("every notice text verbatim, in JSON and in text; test_host carries the cle
   assert.deepEqual(NOTICES, {
     code_already_sent: "A code was already sent in the last 10 minutes. Check your mail for it.",
     contact_unknown: "This computer does not know the contact address of this account.",
-    secret_put_deploys: "wrangler secret put deploys the worker right away.",
+    secret_put_deploys: "Changing the worker's secrets with wrangler deploys it right away.",
     test_host: "Sending one test request to {host}.",
     logout_removes_key: "This computer holds the server key. It is deleted with the op8x file; your workers keep their copy.",
     logout_removes_salt:
       "This computer holds the account's salt. It is deleted with the op8x file; your workers keep their copy. A later op8x init here makes a new salt unless op8x import-key brings it back, and returning-buyer counts restart after a new salt.",
+    import_replaces_salt:
+      "The salt was replaced by the one from the imported file. Workers set up on this computer keep the old one until you run op8x init in their folder again; returning-buyer counts restart there.",
   });
   const j = setup();
   j.out.notice("test_host", { host: "api.example\u001b[2J\n.com" });
@@ -232,10 +239,11 @@ test("every notice text verbatim, in JSON and in text; test_host carries the cle
   assert.deepEqual(t.lines(), [
     "A code was already sent in the last 10 minutes. Check your mail for it.",
     "This computer does not know the contact address of this account.",
-    "wrangler secret put deploys the worker right away.",
+    "Changing the worker's secrets with wrangler deploys it right away.",
     "Sending one test request to api.example.",
     "This computer holds the server key. It is deleted with the op8x file; your workers keep their copy.",
     "This computer holds the account's salt. It is deleted with the op8x file; your workers keep their copy. A later op8x init here makes a new salt unless op8x import-key brings it back, and returning-buyer counts restart after a new salt.",
+    "The salt was replaced by the one from the imported file. Workers set up on this computer keep the old one until you run op8x init in their folder again; returning-buyer counts restart there.",
   ]);
 });
 

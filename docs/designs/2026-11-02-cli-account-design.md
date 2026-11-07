@@ -140,10 +140,11 @@ and may show `agent_hint`. Times are ISO 8601 in UTC in JSON and
 | --- | --- | --- |
 | `code_already_sent` | A code was already sent in the last 10 minutes. Check your mail for it. | a repeated request for a mail code within 10 minutes; no new mail is sent |
 | `contact_unknown` | This computer does not know the contact address of this account. | the sign-in answer was lost and the CLI recovered the account without it |
-| `secret_put_deploys` | wrangler secret put deploys the worker right away. | before the first `wrangler secret put` or `secret bulk` of a run |
+| `secret_put_deploys` | Changing the worker's secrets with wrangler deploys it right away. | before the first `wrangler secret put` or `secret bulk` of a run |
 | `test_host` | Sending one test request to {host}. | before every test request |
 | `logout_removes_key` | This computer holds the server key. It is deleted with the op8x file; your workers keep their copy. | `logout` on a computer that holds the server key |
 | `logout_removes_salt` | This computer holds the account's salt. It is deleted with the op8x file; your workers keep their copy. A later op8x init here makes a new salt unless op8x import-key brings it back, and returning-buyer counts restart after a new salt. | `logout` on a computer that holds the salt |
+| `import_replaces_salt` | The salt was replaced by the one from the imported file. Workers set up on this computer keep the old one until you run op8x init in their folder again; returning-buyer counts restart there. | `import-key` replaced a salt of this computer with a different one from the imported file |
 
 ### Step names
 
@@ -257,6 +258,7 @@ special case, listed after the first.
 | `code_missing` | op8x says the code was not sent | 4 | Internal error: the code was not sent. Please report this. |
 | `no_pending_step` | `--code-stdin` without a waiting step, or for another command | 4 | There is no step waiting for a code. Run the command without --code-stdin. For another command: The waiting step belongs to op8x {command}. Run that same command with --code-stdin, or run this one without --code-stdin. |
 | `env_file_not_ignored` | `--env-file` is not ignored by git, is tracked, is outside a repository, or is `.dev.vars` | 4 | Use a file that git ignores (and not .dev.vars). |
+| `env_file_unsupported` | the `--env-file` holds a carriage return that does not end a line (CR without LF); nothing is written | 1 | The env file has a carriage return that does not end a line, which op8x does not rewrite. Save it with LF or CRLF line endings and run the command again. |
 | `collector_url_not_allowed` | `OP8X_COLLECTOR_URL` points elsewhere than loopback | 4 | OP8X_COLLECTOR_URL may only point to 127.0.0.1, localhost or [::1]. |
 | `collector_mismatch` | the op8x file was made for another service address | 4 | The op8x file on this computer was made for a different service address. Unset OP8X_COLLECTOR_URL, or set it to the address the file was made for. |
 
@@ -311,7 +313,12 @@ the current user's SID, without inherited entries; the CLI reads the list back
 and refuses to write if it holds anything else. The file is written to a
 temporary file in the same folder and renamed. If protection fails, nothing is
 written (`permissions_failed`). The `--env-file` is written the same way
-(without changing its folder).
+(without changing its folder). An `--env-file` that holds a carriage return
+that does not end a line (CR without LF) is not rewritten: `init` ends with
+`env_file_unsupported`, and `rotate` and `delete` list that worker as failed.
+Other lines, multi-line quoted values included, are kept byte for byte; a line
+inside such a value that starts with `OP8X_KEY=` or `OP8X_SALT=` is treated as
+a line of its own.
 
 Schema `op8x.account/1`, with every secret value replaced here:
 

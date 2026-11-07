@@ -18,6 +18,7 @@ import {
   withEnvValues,
   withoutEnvKey,
   writeEnvKey,
+  EnvFileFormatError,
 } from "../src/account/connect.ts";
 import { generateKey } from "../src/account/keys.ts";
 import { newSalt } from "../src/account/salt.ts";
@@ -393,6 +394,17 @@ test("withEnvValues: OP8X_KEY and OP8X_SALT replaced in place or appended in ord
   assert.equal(withEnvValues(Buffer.from("OP8X_SALTY=x\n"), both).toString(), `OP8X_SALTY=x\nOP8X_KEY=${key}\nOP8X_SALT=${salt}\n`);
   // Only K given (rotate): the salt line stays as it is.
   assert.equal(withEnvValues(Buffer.from(`OP8X_KEY=old\nOP8X_SALT=${salt}\n`), [["OP8X_KEY", key]]).toString(), `OP8X_KEY=${key}\nOP8X_SALT=${salt}\n`);
+});
+
+test("an env file with a carriage return that does not end a line is refused, not rewritten", () => {
+  const key = generateKey("w");
+  for (const text of ["OP8X_SALT=old\rDATABASE_URL=keep\r", "A=1\r\nB=2\rC=3\n", "\r"]) {
+    assert.throws(() => withEnvValues(Buffer.from(text), [["OP8X_KEY", key]]), EnvFileFormatError, JSON.stringify(text));
+    assert.throws(() => withoutEnvKey(Buffer.from(text)), EnvFileFormatError, JSON.stringify(text));
+  }
+  // CRLF and LF files stay fine.
+  assert.equal(withEnvValues(Buffer.from("A=1\r\n"), [["OP8X_KEY", key]]).toString(), `A=1\r\nOP8X_KEY=${key}\r\n`);
+  assert.equal(withoutEnvKey(Buffer.from("A=1\r\nOP8X_KEY=x\r\n"))?.toString(), "A=1\r\n");
 });
 
 test("withoutEnvKey: removes the OP8X_KEY and OP8X_SALT lines, keeps every other line", () => {
