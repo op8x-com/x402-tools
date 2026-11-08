@@ -2,7 +2,7 @@ name: Release CLI
 
 # Stages packages/cli on npm via trusted publishing (OIDC), no token.
 # A maintainer approves the staged version on npmjs.com (2FA) before it goes live.
-# Trigger: push a tag like cli-v0.0.2 whose version matches packages/cli/package.json.
+# Trigger: push a tag like cli-v0.1.1 whose version matches packages/cli/package.json.
 
 on:
   push:
@@ -21,20 +21,22 @@ jobs:
         working-directory: packages/cli
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
           package-manager-cache: false
-      # Trusted publishing needs npm >= 11.5.1.
-      - run: npm install -g npm@latest
+      # Trusted publishing needs npm >= 11.5.1; pinned to an exact version so the release does not change underneath us.
+      - run: npm install -g npm@11.21.1
+      - name: npm must be the pinned version
+        run: test "$(npm -v)" = "11.21.1" || { echo "npm $(npm -v) is not the pinned 11.21.1"; exit 1; }
       - name: Tag must match package version
-        run: |
-          expected="cli-v$(node -p "require('./package.json').version")"
-          if [ "$GITHUB_REF_NAME" != "$expected" ]; then
-            echo "Tag $GITHUB_REF_NAME does not match package version ($expected)"
-            exit 1
-          fi
+        run: node ../../scripts/check-release-tag.mjs packages/cli
       - run: npm ci
-      # prepublishOnly runs typecheck, tests and build.
+      # Explicit checks fail fast with clear logs; npm stage publish runs prepublishOnly and prepack again.
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
       - run: npm stage publish .
