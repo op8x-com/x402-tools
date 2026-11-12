@@ -14,9 +14,9 @@
   },
   "dependencies": {
     "@op8x/analytics": "file:vendor/op8x-analytics-0.0.3.tgz",
-    "@x402/core": "2.29.0",
-    "@x402/evm": "2.29.0",
-    "@x402/hono": "2.29.0",
+    "@x402/core": "2.30.0",
+    "@x402/evm": "2.30.0",
+    "@x402/hono": "2.30.0",
     "hono": "4.13.14"
   },
   "devDependencies": {
